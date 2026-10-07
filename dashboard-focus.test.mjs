@@ -50,10 +50,34 @@ console.log("\nA teacher sees their own practice, an admin sees the school's");
 {
   check("the scope is named once and reused",
     /const seesAll = isAdmin \|\| \(currentUser && currentUser\.role === 'pbis'\)/.test(code));
+  // 2026-10-06: the week's rows come from cashGaugeWeekRows, which Cash
+  // Analytics' "This week so far" strip shares, so the strip can say it is this
+  // gauge's number. Run here, not just matched: the whole school when the
+  // person sees all, otherwise only their own rows.
+  const at = code.indexOf("        function cashGaugeWeekRows(");
+  const gaugeRows = new Function(code.slice(at, code.indexOf("\n        }\n", at) + 10) + "\nreturn cashGaugeWeekRows;")();
+  const now = new Date().toISOString();
+  const rows = [{ teacherId: "t1", timestamp: now }, { teacherId: "t2", timestamp: now }, { teacherId: "", timestamp: now },
+                { addedBy: "t1", timestamp: now }, { teacherId: "t1", timestamp: "2020-01-01T00:00:00Z" }];
+  const weekStart = Date.now() - 86400000;
+  // The actor the gauge passes, RUN (review, 2026-10-06): null means the
+  // whole school, so a signed-in person with no id must come out as '' --
+  // nobody's rows, as the old inline filter gave -- never null.
+  const actorSrc = (/cashGaugeWeekRows\(cashTransactions, weekStart, null,\s*(seesAll \? null : [^;]*?)\);/.exec(code) || [])[1] || "undefined";
+  const actorFor = (src, seesAll, currentUser) => new Function("seesAll", "currentUser", "return " + src + ";")(seesAll, currentUser);
+  check("a teacher without an id gets nobody's rows, not the whole school",
+    gaugeRows(rows, weekStart, null, actorFor(actorSrc, false, { id: null, role: "teacher" })).length === 0 &&
+    gaugeRows(rows, weekStart, null, actorFor(actorSrc, false, null)).length === 0 &&
+    gaugeRows(rows, weekStart, null, actorFor(actorSrc, false, { id: "t1", role: "teacher" })).length === 2 &&
+    gaugeRows(rows, weekStart, null, actorFor(actorSrc, true, { id: "a1", role: "admin" })).length === 4, actorSrc);
+  check("TEETH: the earlier `currentUser ? currentUser.id : ''` hands a teacher with no id the whole school",
+    gaugeRows(rows, weekStart, null, actorFor("seesAll ? null : (currentUser ? currentUser.id : '')", false, { id: null })).length === 4);
   check("cash is filtered by actor unless they see all",
-    /if \(seesAll\) return true;[\s\S]{0,220}actor === currentUser\.id/.test(code));
+    /cashGaugeWeekRows\(cashTransactions, weekStart, null,\s*seesAll \? null : \(\(currentUser && currentUser\.id\) \|\| ''\)\)/.test(code) &&
+    gaugeRows(rows, weekStart, null, null).length === 4 && gaugeRows(rows, weekStart, null, "t1").length === 2 &&
+    gaugeRows(rows, weekStart, null, "t2").length === 1);
   check("an unattributed movement matches nobody here either",
-    /return actor && currentUser && actor === currentUser\.id/.test(code));
+    gaugeRows(rows, weekStart, null, "").length === 0 && gaugeRows([{ timestamp: now }], weekStart, null, undefined).length === 0);
   check("referrals go through the discipline rules, not a hand-rolled filter",
     /visibleReferrals\(\)\.filter\(r => r && r\.status !== 'closed'\)/.test(code));
   check("and the tile labels change with the scope",

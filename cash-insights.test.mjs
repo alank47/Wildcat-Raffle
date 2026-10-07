@@ -60,7 +60,8 @@ function liftFn(src, name) {
   return src.slice(start, end + 10);
 }
 function liftConst(src, name) {
-  const m = new RegExp("^        const " + name + " = [^\\n]*;$", "m").exec(src);
+  // A single-line const -- or the one top-level var the view memory uses (WC_CASH_VIEW_KEY).
+  const m = new RegExp("^        (?:const|var) " + name + " = [^\\n]*;$", "m").exec(src);
   if (!m) throw new Error("missing const " + name);
   return m[0];
 }
@@ -91,8 +92,12 @@ const R = MODS.WildcatRoster;
 
 function makeEl(id) {
   const cls = new Set();
+  const attrs = new Map();
   return {
     id, innerHTML: "", textContent: "", value: "", hidden: false, style: {},
+    setAttribute: (k, v) => attrs.set(k, String(v)),
+    getAttribute: (k) => (attrs.has(k) ? attrs.get(k) : null),
+    removeAttribute: (k) => attrs.delete(k),
     classList: {
       add: (...c) => c.forEach((x) => cls.add(x)),
       remove: (...c) => c.forEach((x) => cls.delete(x)),
@@ -107,14 +112,12 @@ function makeDom(opts = {}) {
     if (!new RegExp(`\\bid="${id}"`).test(html)) return null;
     return els[id] || (els[id] = makeEl(id));
   };
-  const subtabs = ["dashboardSubtab", "teacherInteractionsSubtab", "transactionsSubtab", "trendsSubtab"];
-  const panes = ["analyticsDashboard", "analyticsTeacherInteractions", "analyticsTransactions", "analyticsTrends"];
+  // The tab bar and panes are reached BY ID since 2026-10-06 (switchAnalyticsSubtab
+  // walks CASH_VIEW_BUTTONS / CASH_VIEW_PANES), so no class selector is faked here.
   return {
     els,
     getElementById: byId,
     querySelectorAll: (sel) => {
-      if (sel === ".analytics-subtab") return subtabs.map(byId);
-      if (sel === ".analytics-subtab-content") return panes.map(byId);
       if (sel === ".grade-filter-checkbox:checked") return (opts.grades || ["6", "7", "8", "9", "10", "11", "12"]).map((v) => ({ value: v }));
       if (sel === ".campus-filter-checkbox:checked") return (opts.campuses || ["middle", "high"]).map((v) => ({ value: v }));
       return [];
@@ -136,13 +139,22 @@ const FNS = [
   "cashPraiseHtml", "cashShareWords", "cashReachHtml", "cashNeverNoticedHtml", "cashOutcomeHtml", "cashBalanceHtml",
   "cashPaneOpen", "cashTrendsContextNow", "cashNoticeMarksNow", "loadCashTrendsContext", "loadCashNeverNoticedMarks",
   "dashSelectedGrades",
+  // One tab per question, sorting, folds and the week strip (2026-10-06).
+  "cashViewKey", "cashRememberView", "cashRememberedView", "openCashAnalytics", "cashHistorySinceLabel", "cashSinceChips",
+  "cashChipsHtml", "cashMovedNoteKey", "cashMovedNoteHtml", "renderCashMovedNote", "dismissCashMovedNote", "openCashGlossary",
+  "closeCashGlossary", "cashFoldKey", "cashFoldHtml", "setCashFoldOpen", "cashFoldToggled", "wcSortCellText", "wcSortValue", "wcSortColumnType",
+  "wcSortOrder", "wcSortSet", "wcSortTh", "wcSortRowCellText", "wcSortRowsHtml", "wcSortMarkHead", "wcSortApplyDom", "wcSortClick", "cashViewerChanged", "cashBarIntoView",
+  "cashKeepPlace", "cashGlossaryKeydown",
+  "cashGaugeWeekStartMs", "cashGaugeWeekRows", "cashRowKindCounts", "cashWeekStripModel", "cashWeekStripHtml", "renderCashWeekStrip",
 ];
 const CONSTS = [
   "CASH_STAFF_VIEW_ROLES", "CASH_RATIO_GOAL", "CASH_RATIO_MIN_DEDUCTIONS", "CASH_LAUNCH_WEEK", "CASH_TREND_GRADES",
   "CASH_CORE_EXPECTATIONS", "CASH_EXPECTATION_ORDER", "CASH_EXPECTATION_NAMES", "CASH_CLICK_GAP_MS", "CASH_CLICK_WHOLE",
   "CASH_REACH_SCHOOL_DAYS", "CASH_BALANCE_WEEKS", "CASH_MANY_ADULTS_MIN", "CASH_MANY_ADULTS_TOP_SHARE",
   "CASH_NAMED_LIST_MAX_SHARE", "CASH_OUTCOME_WEEKS_NEEDED", "CASH_MARKS_MIN_COVERAGE", "CASH_TRENDS_CONTEXT_MS",
-  "CASH_COUNT_UNIT_KEY", "CASH_PART_DAY_QUESTION_FROM",
+  "CASH_COUNT_UNIT_KEY", "CASH_PART_DAY_QUESTION_FROM", "QUIET_WINDOW_DAYS",
+  "CASH_VIEW_KEYS", "CASH_VIEW_ALIASES", "CASH_VIEW_BUTTONS", "CASH_VIEW_PANES", "WC_CASH_VIEW_KEY",
+  "_cashMovedNoteGone", "_cashOpenFolds", "_wcSortState", "WC_SORT_ARROWS", "_cashViewOwner",
 ];
 /** Counts every build of the click model, so "not on this path" can be checked. */
 const counted = (src) => breakOnce(breakOnce(src, "        function cashClickModel(rows, reversedIds) {\n",
@@ -161,6 +173,8 @@ function loadApp(src, G) {
     let _cashLedgerVersion = 0, _cashClickMemo = null, _cashTrendsCtx = null, _cashNoticeMarks = null, _cashNoticeGen = 0;
     let _cashNoticeSince = null, _cashCountUnitHere = null, _cashTrendsDrawnForStaff = false, _cashBalanceDrawnForStaff = false;
     let _paCache = G.paCache || null;
+    let _cashGlossaryOpener = null;
+    function switchTab(name) { (G.switched = G.switched || []).push(name); }
     const localStorage = G.localStorage;
     const document = G.document;
     const window = G.window;
@@ -253,7 +267,11 @@ function world(src, o = {}) {
     localStorage: o.localStorage || { store: {}, getItem(k) { return this.store[k] ?? null; }, setItem(k, v) { this.store[k] = String(v); } },
     queries: [],
   };
+  const session = new Map();
+  G.session = session;
   G.window = Object.assign({}, MODS, {
+    sessionStorage: o.sessionStorage || { getItem: (k) => (session.has(k) ? session.get(k) : null),
+      setItem: (k, v) => session.set(k, String(v)), removeItem: (k) => session.delete(k) },
     WildcatAuth: {
       getSession: () => ({ idToken: "tok" }),
       convexQuery: async (name, args) => {
@@ -411,20 +429,23 @@ function ratioWorld(src, o = {}) {
   check("CONTROL: students + left out = the old per-row count, week by week (nothing existing moved)",
     wk.students.awards + wk.students.deductions + wk.students.leftOut === trend.awards + trend.deductions && wk.students.leftOut === 2,
     `${wk.students.awards}+${wk.students.deductions}+${wk.students.leftOut} vs ${trend.awards}+${trend.deductions}`);
-  check("the table opens in clicks", /counted in <b>clicks<\/b>/.test(html1) && /aria-pressed="true">Clicks</.test(html1));
+  // The switch reads "Per press of Award | Per student" since 2026-10-06 (beside a Students TAB,
+  // "Clicks | Students" read as the tab); the stored values are still clicks / students.
+  check("the table opens in presses of Award (clicks)", /counted <b>per press of Award<\/b>/.test(html1) &&
+    /aria-pressed="true">Per press of Award</.test(html1));
   w.app.setCashCountUnit("students");
   const html2 = el(w, "cashTrendsBody").innerHTML;
-  check("the switch moves to students and the split cells change", /counted in <b>students<\/b>/.test(html2) &&
-    /aria-pressed="true">Students</.test(html2) && w.G.localStorage.store.wcCashCountUnit === "students");
-  const weekRow = (h) => h.split("<tr>").find((r) => /Sep 21–25/.test(r)) || "";
+  check("the switch moves to per student and the split cells change", /counted <b>per student<\/b>/.test(html2) &&
+    /aria-pressed="true">Per student</.test(html2) && w.G.localStorage.store.wcCashCountUnit === "students");
+  const weekRow = (h) => h.split(/<tr\b/).find((r) => /Sep 21–25/.test(r)) || "";
   check("...the all-awards ratio's n moves (3 to 4 presses, 9 to 4 students: the Spirit Week press counts there) but never the one-to-one ratio's (1 to 4)",
     /wc-insight-n">3 to 4</.test(weekRow(html1)) && /wc-insight-n">9 to 4</.test(weekRow(html2)) &&
     /wc-insight-n">1 to 4</.test(weekRow(html1)) && /wc-insight-n">1 to 4</.test(weekRow(html2)), weekRow(html2).slice(0, 400));
   const throwing = { getItem() { throw new Error("blocked"); }, setItem() { throw new Error("blocked"); } };
   const wt = ratioWorld(scriptSrc, { localStorage: throwing });
-  check("with storage throwing, the page renders in clicks", /counted in <b>clicks<\/b>/.test(await openTrends(wt)));
+  check("with storage throwing, the page renders in clicks", /counted <b>per press of Award<\/b>/.test(await openTrends(wt)));
   wt.app.setCashCountUnit("students");
-  check("...and the switch still works for this tab", /counted in <b>students<\/b>/.test(el(wt, "cashTrendsBody").innerHTML));
+  check("...and the switch still works for this tab", /counted <b>per student<\/b>/.test(el(wt, "cashTrendsBody").innerHTML));
   const plain = w.app.cashRatioPlain(30, 10);
   const plainHtml = w.app.cashRatioPlainHtml(plain);
   check("the one-to-one ratio is a reading: never 'goal', never amber or green",
@@ -563,7 +584,7 @@ for (const who of [PBIS, ADMIN, SUPER]) {
   check("entering teacher view empties the named list and grade rows from the page and drops the names",
     !/Stu7|Grade 7/.test(w.dom.text()) && w.app.state().marks === null && w.app.state().drawnForStaff === false);
   const asTeacher = await openTrends(w);
-  check("...and Trends reopens as the teacher's version", !/Grade 7|Stu7/.test(asTeacher) && /Who is being noticed/.test(asTeacher));
+  check("...and Trends reopens as the teacher's version", !/Grade 7|Stu7/.test(asTeacher) && /Reach: expectation awards/.test(asTeacher));
   w.app.set("currentUser", null);
   w.app.applyCashAnalyticsGate();
   check("logout drops the calendar too (it was fetched for someone else)", w.app.state().ctx === null);
@@ -603,11 +624,13 @@ console.log("\n9. The named list: a working list, with attendance beside it");
   const w = roleWorld(scriptSrc, PBIS);
   const out = await openTrends(w);
   const list = out.slice(out.indexOf('id="cashNeverNoticedList"'));
-  check("two names, sorted by grade, the HTML in a name escaped", /Stu7 Last7[\s\S]*&lt;b&gt;Bold&lt;\/b&gt; Kid/.test(list) && !/<b>Bold<\/b>/.test(list));
+  check("two names, by grade until a heading is clicked, the HTML in a name escaped", /Stu7 Last7[\s\S]*&lt;b&gt;Bold&lt;\/b&gt; Kid/.test(list) && !/<b>Bold<\/b>/.test(list));
   // Since 9/14 through 10/5 is 16 school days. s7: absent 9/15 and 9/16 (8/20
   // is before the date; 10/9 is not a school day yet), late 9/21.
+  // A sortable table since 2026-10-06: Absent (any period) | Late without an excuse, one column each.
   check("absence context counts only school days inside the window",
-    /Stu7 Last7[\s\S]*?absent \(any period\) on 2 of 16 school days; late without an excuse on 1</.test(list), list.slice(0, 600));
+    /Absent \(any period\)[\s\S]*Late without an excuse/.test(list) &&
+    /Stu7 Last7<\/th><td>7<\/td><td[^>]*>2 of 16 school days<\/td><td>1<\/td>/.test(list), list.slice(0, 600));
   check("a student who joined after the date is tagged, from their own first day", /Bold[\s\S]*?of 11 school days[\s\S]*?joined Sep 21/.test(list));
   check("a row without tardy codes says so instead of zero", /late days not yet refreshed/.test(list));
   check("no staff name and no note text anywhere on Trends", !/Ms\. Lee|Mr\. Park|Pat PBIS|SECRET-NOTE/.test(out));
@@ -624,7 +647,7 @@ console.log("\n9. The named list: a working list, with attendance beside it");
   const noCap = breakOnce(scriptSrc, "                overCap: rows.length > CASH_NAMED_LIST_MAX_SHARE * G.enrolled.all\n",
     "                overCap: false\n", "cap");
   const capOff = await openTrends(world(noCap, { currentUser: PBIS, students: many, rows }));
-  check("TEETH: remove the tenth-of-the-school cap and 70 names render", (capOff.match(/<li><b>Stu/g) || []).length === 70);
+  check("TEETH: remove the tenth-of-the-school cap and 70 names render", (capOff.match(/<th scope="row" class="wc-pin"[^>]*>Stu/g) || []).length === 70);
   const picked = roleWorld(scriptSrc, PBIS);
   await openTrends(picked);
   picked.app.setCashNoticeSince("2026-09-28");
@@ -792,7 +815,7 @@ console.log("\n12. Privacy across every new panel");
   const all = trends + el(w, "cashAnalyticsDetails").innerHTML;
   check("note text never appears", !/SECRET-NOTE/.test(all));
   check("staff names never appear", !/Ms\. Lee|Mr\. Park|Mx\. Quinn|Pat PBIS|Dr\. Admin|Casey Aide|Owner Person/.test(all));
-  const outsideList = trends.slice(0, trends.indexOf('id="cashNeverNoticedList"')) + trends.slice(trends.indexOf("</ul>", trends.indexOf('id="cashNeverNoticedList"'))) +
+  const outsideList = trends.slice(0, trends.indexOf('id="cashNeverNoticedList"')) + trends.slice(trends.indexOf("</table>", trends.indexOf('id="cashNeverNoticedList"'))) +
     el(w, "cashAnalyticsDetails").innerHTML;
   check("student names appear only inside cashNeverNoticedList", /Stu7/.test(trends) && !/Stu\d|Last\d|Hidden Name/.test(outsideList));
   check("no dollar sign in any new panel", !/\$/.test(all));
@@ -819,7 +842,7 @@ function dashWorld(src, who, o = {}) {
   check("a teacher with only grade 8 ticked reads Middle School, never grade 8 (6 to 6 = 1.0, not 0.1)",
     el(t, "avgPositivityRatio").textContent === "1.0 to 1", el(t, "avgPositivityRatio").textContent);
   check("...the filter offers campuses, not grades", el(t, "dashCampusFilter").style.display === "grid" &&
-    el(t, "dashGradeFilter").style.display === "none" && el(t, "dashFilterTitle").textContent === "Filter by Campus");
+    el(t, "dashGradeFilter").style.display === "none" && el(t, "dashFilterTitle").textContent === "These tiles count (by campus):");
   const p = dashWorld(scriptSrc, PBIS, { grades: ["8"] });
   p.app.applyCashAnalyticsGate();
   p.app.updateDashboard();
@@ -916,7 +939,7 @@ console.log("\n14. Wiring: the server read, the loaders, the markup, the stamps"
     stamps.length === 26 && new Set(stamps).size === 1 && stamps[0] > "20261005b", [...new Set(stamps)].join(","));
   check("the new styles are there, and every new table scrolls inside its card",
     /\.wc-unit-toggle \{/.test(css) && /\.wc-insight-n \{/.test(css) && /tr\.wc-insight-grey td/.test(css) &&
-    (code.match(/'<div class="wu-scroll-x"><table class="student-table wc-trend-table">'/g) || []).length >= 5);
+    (code.match(/'<div class="wu-scroll-x"><table class="student-table wc-trend-table[^']*/g) || []).length >= 5);
   check("this suite and the server rules' run after cash-read-walls in npm test",
     /node cash-read-walls\.test\.mjs && node --experimental-strip-types convex\/cashInsightsRules\.test\.mjs && node cash-insights\.test\.mjs/.test(pkg.scripts.test));
 }
@@ -1051,7 +1074,7 @@ async function ratioScreens(src) {
 {
   const { out, html } = outcomeOf(scriptSrc, contextFor({ marks: MARKS40 }));
   const wk = (m) => out.weeks.find((w) => w.monday === m);
-  const rowOf = (label) => (html.split("<tr>").find((r) => r.includes(label)) || "").split("</tr>")[0];
+  const rowOf = (label) => (html.split(/<tr\b/).find((r) => r.includes(label)) || "").split("</tr>")[0];
   check("weeks with days on or after Sep 25 carry the part-day question; earlier weeks do not",
     wk("2026-09-14").partQuestion === false && wk("2026-09-21").partQuestion === true && wk("2026-09-28").partQuestion === true);
   check("...each such part-day cell is tagged 'recording question', and the caption dates and explains it",

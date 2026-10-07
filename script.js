@@ -17744,6 +17744,8 @@
            than a transient position.
            ============================================================ */
         var WC_VIEW_KEY = 'wc_view_tab';
+        /** The Cash Analytics tab open inside Analytics (2026-10-06): same lifetime, same reasons. */
+        var WC_CASH_VIEW_KEY = 'wcCashAnalyticsView';
 
         function wcRememberTab(tabName) {
             try {
@@ -17753,6 +17755,9 @@
 
         function wcForgetTab() {
             try { window.sessionStorage.removeItem(WC_VIEW_KEY); } catch (e) { /* as above */ }
+            // And the Analytics tab inside it, or the next person on a shared
+            // Chromebook would open Cash Analytics on the last one's choice.
+            try { window.sessionStorage.removeItem(WC_CASH_VIEW_KEY); } catch (e) { /* as above */ }
         }
 
         /**
@@ -18205,9 +18210,14 @@
                     updateStudentAccounts();
                 });
             } else if (tabName === 'cashAnalytics') {
-                updateCashAnalytics();
-                // Initialize dashboard view
-                switchAnalyticsSubtab('dashboard');
+                // THE TAB YOU WERE ON (2026-10-06), from this browser tab's
+                // session: so a silent self-update (wcRestoreTab calls this)
+                // and the home gauge's arrow (openCashAnalytics) land on the
+                // right view. A remembered Staff view falls back to Overview
+                // for anyone outside admin and PBIS, by the redirect inside
+                // switchAnalyticsSubtab. Expectation balance is drawn when its
+                // own tab opens now, not here on every open.
+                switchAnalyticsSubtab(cashRememberedView());
             } else if (tabName === 'cashAudit') {
                 updateCashAuditLogTable();
             }
@@ -30062,11 +30072,13 @@
             updateStudentAccounts();
         }
 
-        // Update Cash Analytics
+        // Expectation balance, on the Expectations tab.
         function updateCashAnalytics() {
-            // This function is called when switching to the Analytics tab
-            // The dashboard is now updated via updateDashboard() which is called
-            // when the subtab is initialized
+            // DRAWN WHEN THE EXPECTATIONS TAB OPENS (2026-10-06), from
+            // switchAnalyticsSubtab('expectations') and nowhere else. It used
+            // to be drawn once per open of Analytics and shown under every
+            // tab, so it could be staler than Trends, and a privacy wipe left
+            // it blank until Analytics was reopened. Never on a gate run.
             const container = document.getElementById('cashAnalyticsDetails');
             if (!container) return;
 
@@ -32380,6 +32392,13 @@
             if (dropdown) dropdown.innerHTML = '<option value="">All Teachers</option>';
             const pane = document.getElementById('analyticsTeacherInteractions');
             if (pane) pane.style.display = 'none';
+            // THE FLAGGED LIST LEFT THE STAFF PANE FOR STUDENTS (2026-10-06),
+            // so the pane's hide no longer covers it: its own card is hidden
+            // and its count goes with its rows.
+            const flagged = document.getElementById('interventionCard');
+            if (flagged) flagged.style.display = 'none';
+            const flaggedCount = document.getElementById('interventionFlaggedCount');
+            if (flaggedCount) flaggedCount.textContent = 'Admins and the PBIS team only';
 
             // THE NAMED NO-AWARD LIST, THE GRADE ROWS AND THE ADULT COUNTS
             // (2026-10-06). Emptied, not redrawn: this runs on every sign-in
@@ -32414,17 +32433,33 @@
          * gets their own answer without anybody reloading anything.
          */
         function applyCashAnalyticsGate() {
+            // A different person on this page starts unsorted, with the two
+            // static folds shut (cashViewerChanged). First, so the wipe and
+            // every draw below already see the new person's state; never in
+            // the way of the wipe, which is what keeps names off the page.
+            try {
+                cashViewerChanged();
+            } catch (e) { /* the gate and the wipe still run */ }
             const allowed = cashStaffViewsAllowed();
             const btn = document.getElementById('teacherInteractionsSubtab');
             if (btn) btn.style.display = allowed ? '' : 'none';
+            // Overview's "What's on each tab" names Staff for the same people.
+            const guide = document.getElementById('cashGuideStaff');
+            if (guide) guide.style.display = allowed ? '' : 'none';
+            // FLAGGED, ON STUDENTS SINCE 2026-10-06: names students and their
+            // primary teachers, so its own card is shown only here, by role.
+            // It used to be safe partly because the whole Teacher
+            // Interactions pane was hidden; on Students it is not.
+            const flagged = document.getElementById('interventionCard');
+            if (flagged) flagged.style.display = allowed ? '' : 'none';
             // GRADES FOR ADMINS AND PBIS, CAMPUSES FOR EVERYONE ELSE on the
-            // Data Dashboard's filter (2026-10-06). See dashSelectedGrades.
+            // Overview filter (2026-10-06). See dashSelectedGrades.
             const grades = document.getElementById('dashGradeFilter');
             if (grades) grades.style.display = allowed ? 'grid' : 'none';
             const campuses = document.getElementById('dashCampusFilter');
             if (campuses) campuses.style.display = allowed ? 'none' : 'grid';
             const title = document.getElementById('dashFilterTitle');
-            if (title) title.textContent = allowed ? 'Filter by Grade Level' : 'Filter by Campus';
+            if (title) title.textContent = allowed ? 'These tiles count (by grade):' : 'These tiles count (by campus):';
             if (!allowed) wipeStaffCashViews();
             return allowed;
         }
@@ -32496,44 +32531,104 @@
             if (note) note.textContent = v.note;
         }
 
+        // ========================================
+        // ONE TAB PER QUESTION (owner, 2026-10-06: "the full version")
+        // ========================================
+        //
+        // Overview | Trends | Students | Expectations | Staff. THE INTERNAL
+        // KEYS ARE THE OLD ONES -- 'dashboard' is Overview and
+        // 'teacherInteractions' is Staff -- so every caller, link and test
+        // that names them still lands; only the labels moved. Trends and
+        // Students share one pane and one drawing (renderCashTrends), so the
+        // privacy wipe still empties one place.
+
+        /** The five tabs, in bar order. Staff last, so the first four sit in the same place for every role. */
+        const CASH_VIEW_KEYS = ['dashboard', 'trends', 'students', 'expectations', 'teacherInteractions'];
+        /** Old and friendly names: the Transactions placeholder is gone, and Overview / Staff are what the buttons say. */
+        const CASH_VIEW_ALIASES = { transactions: 'dashboard', overview: 'dashboard', staff: 'teacherInteractions' };
+        /** Each tab's button, by id: scoped by id, never by class (Discipline clears every '.analytics-tabs .analytics-tab'). */
+        const CASH_VIEW_BUTTONS = { dashboard: 'dashboardSubtab', trends: 'trendsSubtab', students: 'studentsSubtab', expectations: 'expectationsSubtab', teacherInteractions: 'teacherInteractionsSubtab' };
+        /** Each tab's pane. Trends and Students share one: data-cview on it says which sections show. */
+        const CASH_VIEW_PANES = { dashboard: 'analyticsDashboard', trends: 'analyticsTrends', students: 'analyticsTrends', expectations: 'analyticsExpectations', teacherInteractions: 'analyticsTeacherInteractions' };
+
+        /** A tab name as a key: aliases resolved, anything unknown is Overview. */
+        function cashViewKey(view) {
+            const v = String(view == null ? '' : view);
+            const k = Object.prototype.hasOwnProperty.call(CASH_VIEW_ALIASES, v) ? CASH_VIEW_ALIASES[v] : v;
+            return CASH_VIEW_KEYS.indexOf(k) !== -1 ? k : 'dashboard';
+        }
+
+        /** Remember the open tab for THIS browser tab only (sessionStorage), the way wcRememberTab does the page. */
+        function cashRememberView(view) {
+            try { window.sessionStorage.setItem(WC_CASH_VIEW_KEY, cashViewKey(view)); } catch (e) { /* private mode: Overview next time */ }
+        }
+
+        /** The tab to open Analytics on: the one remembered, else Overview. Never trusted for the gate: switchAnalyticsSubtab decides. */
+        function cashRememberedView() {
+            let saved = null;
+            try { saved = window.sessionStorage.getItem(WC_CASH_VIEW_KEY); } catch (e) { saved = null; }
+            return cashViewKey(saved);
+        }
+
+        /**
+         * Open Cash Analytics on one tab, from anywhere (the home gauge's
+         * arrow). The view is stored BEFORE switchTab, so a remembered Trends
+         * is never drawn and read only to be swapped for this one.
+         */
+        function openCashAnalytics(view) {
+            cashRememberView(view);
+            switchTab('cashAnalytics');
+        }
+
         // Analytics Subtab Functions
         function switchAnalyticsSubtab(subtab) {
+            subtab = cashViewKey(subtab);
             // THE GATE FIRST (2026-10-01). Asked here, on every switch, because
             // this is where both the tab's own open and the subtab buttons
             // arrive -- a teacher reaching Teacher Interactions by any route
             // lands on the Data Dashboard instead.
             if (!applyCashAnalyticsGate() && subtab === 'teacherInteractions') subtab = 'dashboard';
+            // What actually opened is what is remembered: a teacher's stored
+            // Staff becomes Overview here, never a door that will not open.
+            cashRememberView(subtab);
 
-            // Update button styles
-            document.querySelectorAll('.analytics-subtab').forEach(btn => {
-                btn.style.background = '#f5f5f5';
-                btn.style.color = '#333';
+            // The bar: one pressed button, by id.
+            CASH_VIEW_KEYS.forEach(k => {
+                const b = document.getElementById(CASH_VIEW_BUTTONS[k]);
+                if (!b) return;
+                b.classList.toggle('active', k === subtab);
+                if (typeof b.setAttribute === 'function') b.setAttribute('aria-pressed', k === subtab ? 'true' : 'false');
             });
-            
-            // Hide all subtab contents
-            document.querySelectorAll('.analytics-subtab-content').forEach(content => {
-                content.style.display = 'none';
+            // The panes: only this tab's.
+            const shown = CASH_VIEW_PANES[subtab];
+            ['analyticsDashboard', 'analyticsTrends', 'analyticsExpectations', 'analyticsTeacherInteractions'].forEach(id => {
+                const pane = document.getElementById(id);
+                if (pane) pane.style.display = id === shown ? 'block' : 'none';
             });
-            
-            // Show selected subtab
+            renderCashMovedNote();
+            cashSinceChips();
+
             if (subtab === 'dashboard') {
-                document.getElementById('dashboardSubtab').style.background = '#FF6B35';
-                document.getElementById('dashboardSubtab').style.color = 'white';
-                document.getElementById('analyticsDashboard').style.display = 'block';
                 updateDashboard();
+                // Its own function, never inside updateDashboard: that one is
+                // called from the home page too, and must not build the click
+                // model there.
+                renderCashWeekStrip();
             } else if (subtab === 'teacherInteractions') {
-                document.getElementById('teacherInteractionsSubtab').style.background = '#FF6B35';
-                document.getElementById('teacherInteractionsSubtab').style.color = 'white';
-                document.getElementById('analyticsTeacherInteractions').style.display = 'block';
                 updateTeacherInteractions();
-            } else if (subtab === 'transactions') {
-                document.getElementById('transactionsSubtab').style.background = '#FF6B35';
-                document.getElementById('transactionsSubtab').style.color = 'white';
-                document.getElementById('analyticsTransactions').style.display = 'block';
-            } else if (subtab === 'trends') {
-                document.getElementById('trendsSubtab').style.background = '#FF6B35';
-                document.getElementById('trendsSubtab').style.color = 'white';
-                document.getElementById('analyticsTrends').style.display = 'block';
+            } else if (subtab === 'expectations') {
+                updateCashAnalytics();
+            } else if (subtab === 'trends' || subtab === 'students') {
+                // ONE BRANCH FOR BOTH (critique, 2026-10-06): the two tabs are
+                // one drawing, and the server reads below must exist exactly
+                // once. data-cview says which tab's sections show.
+                const pane = document.getElementById('analyticsTrends');
+                if (pane && typeof pane.setAttribute === 'function') pane.setAttribute('data-cview', subtab);
+                // FLAGGED IS FILLED HERE, not only from Staff: a PBIS lead who
+                // opens Students first must never read the empty table as an
+                // all-clear. Admins and PBIS only; the gate above hid the card
+                // for everyone else.
+                if (subtab === 'students' && cashStaffViewsAllowed()) updateInterventionStudents();
                 renderCashTrends();
                 // THE SERVER'S HALF, asked for here and never inside the
                 // renderer. Both reads go out together and Trends is redrawn
@@ -32543,6 +32638,573 @@
                 Promise.all([loadCashTrendsContext(), cashStaffViewsAllowed() ? loadCashNeverNoticedMarks() : false])
                     .then(got => { if (got.some(Boolean) && cashPaneOpen('analyticsTrends')) renderCashTrends(); });
             }
+            cashBarIntoView();
+        }
+
+        /**
+         * AN IN-PAGE LINK LANDS ON THE NEW TAB'S TOP (review, 2026-10-06).
+         * "Open Staff" at the foot of Overview's guide switched the tab but
+         * left the reader where they were, partway down it, with the tab bar
+         * and the new tab's question above the screen: on a phone nothing
+         * seemed to happen. The bar is brought back under the sticky top bar
+         * only when it is out of sight, so a press on the bar never moves the
+         * page. Returns whether it scrolled.
+         */
+        function cashBarIntoView() {
+            const bar = document.getElementById('cashAnalyticsViews');
+            if (!bar || typeof bar.getBoundingClientRect !== 'function' || typeof bar.scrollIntoView !== 'function') return false;
+            const r = bar.getBoundingClientRect();
+            if (!r || !r.height) return false; // not laid out: Cash Analytics is not the open tab
+            const topbar = typeof document.querySelector === 'function' ? document.querySelector('.app-topbar') : null;
+            const under = (topbar && typeof topbar.getBoundingClientRect === 'function') ? topbar.getBoundingClientRect().bottom : 0;
+            // Math.max(0, ...): on the real page #mainApp.container keeps
+            // overflow:hidden, so the sticky top bar scrolls away with the page
+            // and its bottom goes negative -- a bar above the screen must still
+            // be brought back (final review, 2026-10-06).
+            if (r.top >= Math.max(0, under)) return false;
+            bar.scrollIntoView({ block: 'start' });
+            return true;
+        }
+
+        /** "Sep 14": the day cash history starts, for the "All time since" chips, or null with no cutoff. */
+        function cashHistorySinceLabel() {
+            return _historyCutoffMs === null ? null : cashShortDate(wcIsoDay(new Date(_historyCutoffMs)));
+        }
+
+        /** The time-window chips on the static cards: "All time since Sep 14". */
+        function cashSinceChips() {
+            const since = cashHistorySinceLabel();
+            const text = since ? 'All time since ' + since : 'All time since cash history began';
+            ['dashTilesSince', 'dashBreakdownSince', 'staffCardsSince', 'staffTableSince', 'interventionSince'].forEach(id => {
+                const el = document.getElementById(id);
+                if (el) el.textContent = text;
+            });
+        }
+
+        /** A time-window chip and, for anything counted, a unit chip: the same two small labels under every panel title. */
+        function cashChipsHtml(windowText, unitText, extra) {
+            return '<div class="wc-chips"><span class="wc-chip">' + windowText + '</span>' +
+                (unitText ? '<span class="wc-chip wc-chip-unit">' + unitText + '</span>' : '') +
+                (extra ? '<span class="wc-chip">' + extra + '</span>' : '') + '</div>';
+        }
+
+        // ---- What moved where: once per person on this browser (2026-10-06)
+
+        /** People who closed the note in this page, for when storage will not remember it. */
+        const _cashMovedNoteGone = new Set();
+
+        /** Per PERSON, not per browser: on a shared Chromebook the first to sign in must not use it up for everyone. */
+        function cashMovedNoteKey(user) {
+            return 'wcCashNavNote:' + String((user && user.id) || '');
+        }
+
+        /** The note's words, by role: teachers never had Teacher Interactions, and their audit log is their own rows. */
+        function cashMovedNoteHtml(staffView) {
+            const words = staffView
+                ? 'Data Dashboard is now <b>Overview</b>, and Teacher Interactions is now <b>Staff</b>. ' +
+                  'Who is being noticed (now called Reach) and the flagged students are on <b>Students</b>. ' +
+                  'Expectation balance has its own tab, <b>Expectations</b>. The empty Transactions tab is gone; ' +
+                  'every movement is in the Cash Audit Log.'
+                : 'Data Dashboard is now <b>Overview</b>. Who is being noticed (now called Reach) is on the new <b>Students</b> tab, ' +
+                  'and Expectation balance has its own tab, <b>Expectations</b>. The empty Transactions tab is gone; ' +
+                  'your own movements are in My Activity and the Cash Audit Log.';
+            return '<div class="wc-moved" role="note"><svg class="wc-icon" aria-hidden="true" focusable="false"><use href="#wci-info"></use></svg>' +
+                '<p><b>What moved where.</b> ' + words + '</p>' +
+                '<button type="button" class="wc-moved-x" aria-label="Close this note" onclick="dismissCashMovedNote()">' +
+                '<svg class="wc-icon" aria-hidden="true" focusable="false"><use href="#wci-x"></use></svg></button></div>';
+        }
+
+        function renderCashMovedNote() {
+            const host = document.getElementById('cashMovedNote');
+            if (!host) return;
+            let seen = !currentUser || _cashMovedNoteGone.has(String(currentUser.id));
+            if (!seen) {
+                try { seen = localStorage.getItem(cashMovedNoteKey(currentUser)) === '1'; } catch (e) { seen = false; }
+            }
+            if (seen) { host.hidden = true; host.innerHTML = ''; return; }
+            host.innerHTML = cashMovedNoteHtml(cashStaffViewsAllowed());
+            host.hidden = false;
+        }
+
+        function dismissCashMovedNote() {
+            if (currentUser) {
+                _cashMovedNoteGone.add(String(currentUser.id));
+                try { localStorage.setItem(cashMovedNoteKey(currentUser), '1'); } catch (e) { /* this page still remembers */ }
+            }
+            const host = document.getElementById('cashMovedNote');
+            if (host) { host.hidden = true; host.innerHTML = ''; }
+        }
+
+        // ---- The word list: one dialog, opened from every tab (2026-10-06)
+
+        let _cashGlossaryOpener = null;
+
+        function openCashGlossary(opener) {
+            const modal = document.getElementById('cashGlossaryModal');
+            if (!modal) return;
+            _cashGlossaryOpener = opener || null;
+            modal.classList.remove('hidden');
+            const close = document.getElementById('cashGlossaryClose');
+            if (close && typeof close.focus === 'function') close.focus();
+        }
+
+        function closeCashGlossary() {
+            const modal = document.getElementById('cashGlossaryModal');
+            if (modal) modal.classList.add('hidden');
+            // Back where the reader was, so a keyboard user is not dropped at the top of the page.
+            const back = _cashGlossaryOpener;
+            _cashGlossaryOpener = null;
+            if (back && typeof back.focus === 'function') back.focus();
+        }
+
+        /**
+         * ESCAPE CLOSES THE WORD LIST WHEREVER FOCUS IS (review, 2026-10-06).
+         * It listened on the dialog itself, so once a click on a definition
+         * moved focus to the page, Escape did nothing. On the document, like
+         * the app's other dialogs.
+         */
+        function cashGlossaryKeydown(ev) {
+            if (!ev || ev.key !== 'Escape') return;
+            const modal = document.getElementById('cashGlossaryModal');
+            if (modal && !modal.classList.contains('hidden')) closeCashGlossary();
+        }
+        try {
+            if (typeof document !== 'undefined' && typeof document.addEventListener === 'function') {
+                document.addEventListener('keydown', cashGlossaryKeydown);
+            }
+        } catch (e) { /* no document: no dialog */ }
+
+        // ---- Folds that stay open across redraws (critique, 2026-10-06)
+        //
+        // Trends and Students are redrawn whole (innerHTML) when the server's
+        // answers land, on every "No award since" change and on every press
+        // of the unit switch; Expectations on every open. A <details> drawn
+        // inside them would snap shut each time -- the PBIS lead opens the
+        // named list, the marks land a second later, and it closes. So which
+        // folds are open is kept here, by name, and drawn back open.
+
+        /** The folds open in this page, as "person + fold name". Names, never contents. */
+        const _cashOpenFolds = new Set();
+
+        /**
+         * PER PERSON, like the "what moved" note: on a shared Chromebook the
+         * next admin to sign in starts with every list closed, not open on
+         * the last one's names.
+         */
+        function cashFoldKey(id) {
+            return String((currentUser && currentUser.id) || '') + '\u0001' + String(id);
+        }
+
+        /** A fold, drawn open if this person had it open before the redraw. */
+        function cashFoldHtml(id, summaryHtml, bodyHtml, cls) {
+            return '<details class="wc-fold' + (cls ? ' ' + cls : '') + '" data-fold="' + id + '"' + (_cashOpenFolds.has(cashFoldKey(id)) ? ' open' : '') + '>' +
+                '<summary>' + summaryHtml + '</summary><div class="wc-fold-body">' + bodyHtml + '</div></details>';
+        }
+
+        /** Record one fold opened or closed, for the person signed in. */
+        function setCashFoldOpen(id, open) {
+            if (!id) return;
+            if (open) _cashOpenFolds.add(cashFoldKey(id));
+            else _cashOpenFolds.delete(cashFoldKey(id));
+        }
+
+        /**
+         * The page's 'toggle' listener, in the CAPTURE phase: a <details>
+         * toggle does not bubble, so a listener on an ancestor only hears it
+         * on the way down. Registered once, below.
+         */
+        function cashFoldToggled(ev) {
+            const d = ev && ev.target;
+            if (!d || typeof d.getAttribute !== 'function') return;
+            const id = d.getAttribute('data-fold');
+            if (id) setCashFoldOpen(id, !!d.open);
+        }
+        try {
+            if (typeof document !== 'undefined' && typeof document.addEventListener === 'function') {
+                document.addEventListener('toggle', cashFoldToggled, true);
+            }
+        } catch (e) { /* no document: nothing to fold */ }
+
+        // ========================================
+        // CLICK A COLUMN HEADING TO SORT (owner, 2026-10-06: "can you make it
+        // sort the charts by clicking the column header?")
+        // ========================================
+        //
+        // ONE SMALL HELPER FOR EVERY TABLE. A heading is a <button> inside the
+        // <th> (so Tab reaches it and Enter or Space presses it): the first
+        // press sorts ascending, the next reverses it. The <th> carries
+        // aria-sort and the button a visible arrow.
+        //
+        // IT ONLY MOVES ROWS. The key is read off the cell as drawn -- its
+        // data-sort attribute when it has one (a week's Monday, a movement's
+        // time), else its text: numbers as numbers ($, commas and % ignored,
+        // "4.8 to 1" by its 4.8), dates as dates, words A to Z. A cell whose
+        // column is numbers but which holds words -- "too few deductions to
+        // judge", "no cash record", a dash -- goes to the BOTTOM whichever way
+        // the column runs, and rows that tie keep the order they were drawn in.
+        //
+        // IT SURVIVES A REDRAW. The column and direction are kept per table
+        // (in memory: they hold no names), and every renderer passes its rows
+        // through wcSortRowsHtml, so a table redrawn by a server answer, a
+        // date pick or the unit switch comes back sorted the same way. A
+        // click re-sorts the rows already on screen, so the table's own
+        // sideways scroll and the button's focus stay where they were.
+
+        /** tableId -> { col, dir: 'asc' | 'desc', type: '' | 'text' | 'num' | 'date' }. */
+        const _wcSortState = new Map();
+        /** The arrow beside a heading: not sorted, ascending, descending. */
+        const WC_SORT_ARROWS = { none: '⇅', asc: '▲', desc: '▼' };
+
+        /** A cell's markup as plain text: tags out (as spaces), entities decoded, spaces collapsed. */
+        function wcSortCellText(html) {
+            const NAMED = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: ' ', mdash: '—', ndash: '–',
+                            hellip: '…', rsquo: '’', lsquo: '‘', ldquo: '“', rdquo: '”', middot: '·' };
+            return String(html == null ? '' : html)
+                .replace(/<[^>]*>/g, ' ')
+                .replace(/&(#x[0-9a-f]+|#\d+|[a-z]+);/gi, (m, e) => {
+                    if (e[0] === '#') {
+                        const code = e[1] === 'x' || e[1] === 'X' ? parseInt(e.slice(2), 16) : parseInt(e.slice(1), 10);
+                        return isFinite(code) ? String.fromCodePoint(code) : m;
+                    }
+                    const k = e.toLowerCase();
+                    return Object.prototype.hasOwnProperty.call(NAMED, k) ? NAMED[k] : m;
+                })
+                .replace(/\s+/g, ' ')
+                .trim();
+        }
+
+        /**
+         * What a cell's text can be sorted as. null for nothing at all (empty
+         * or a dash); otherwise { num, date, text }, num and date null when the
+         * text is not one. A number must START the text, so "a ratio is shown
+         * from 5 deductions" is words, not a 5.
+         */
+        function wcSortValue(text) {
+            const t = String(text == null ? '' : text).replace(/\s+/g, ' ').trim();
+            if (!t || /^[—–\-]+$/.test(t)) return null;
+            let date = null;
+            if (/^\d{4}-\d{2}-\d{2}/.test(t)) {
+                const ms = Date.parse(t);
+                if (isFinite(ms)) date = ms;
+            }
+            let num = null;
+            if (date === null) {
+                const m = /^([+\-−])?\s*\$?\s*([+\-−])?\s*(\d[\d,]*(?:\.\d+)?)/.exec(t);
+                if (m) {
+                    const n = Number(m[3].replace(/,/g, ''));
+                    if (isFinite(n)) num = /[\-−]/.test((m[1] || '') + (m[2] || '')) ? -n : n;
+                }
+            }
+            return { num: num, date: date, text: t };
+        }
+
+        /**
+         * A column's kind, from the heading's hint or its cells: dates when
+         * every filled cell is a date, numbers when any cell is a number (the
+         * rest are verdicts and sink), otherwise words.
+         */
+        function wcSortColumnType(values, hint) {
+            if (hint === 'text' || hint === 'num' || hint === 'date') return hint;
+            const live = (values || []).filter(Boolean);
+            if (live.length && live.every(v => v.date !== null)) return 'date';
+            if (live.some(v => v.num !== null)) return 'num';
+            return 'text';
+        }
+
+        /**
+         * THE ORDER, PURE: the cells' texts in, the row indices out. Blanks and
+         * verdicts last in BOTH directions; ties by `orig` (the drawn order),
+         * so the second press reverses the values and never the ties.
+         */
+        function wcSortOrder(texts, dir, hint, orig) {
+            const vals = (texts || []).map(wcSortValue);
+            const type = wcSortColumnType(vals, hint);
+            const keyOf = (v) => !v ? null : (type === 'num' ? v.num : (type === 'date' ? v.date : v.text));
+            const sign = dir === 'desc' ? -1 : 1;
+            const items = vals.map((v, i) => ({ i: i, k: keyOf(v), o: (orig && isFinite(orig[i])) ? Number(orig[i]) : i }));
+            items.sort((a, b) => {
+                const an = a.k === null, bn = b.k === null;
+                if (an !== bn) return an ? 1 : -1;
+                if (!an) {
+                    const c = type === 'text'
+                        ? String(a.k).localeCompare(String(b.k), undefined, { sensitivity: 'base', numeric: true })
+                        : (a.k < b.k ? -1 : (a.k > b.k ? 1 : 0));
+                    if (c) return c * sign;
+                }
+                return a.o - b.o;
+            });
+            return items.map(x => x.i);
+        }
+
+        /** A heading pressed: the same column reverses, another starts ascending. */
+        function wcSortSet(tableId, col, hint) {
+            const prev = _wcSortState.get(tableId);
+            const dir = (prev && prev.col === col && prev.dir === 'asc') ? 'desc' : 'asc';
+            const st = { col: col, dir: dir, type: hint || '' };
+            _wcSortState.set(tableId, st);
+            return st;
+        }
+
+        /** One sortable heading for a table drawn as a string, showing the sort it is in. */
+        function wcSortTh(tableId, col, labelHtml, o) {
+            const opt = o || {};
+            const st = _wcSortState.get(tableId);
+            const on = !!st && st.col === col;
+            return '<th scope="col"' + (opt.cls ? ' class="' + opt.cls + '"' : '') + (opt.attrs || '') +
+                (on ? ' aria-sort="' + (st.dir === 'asc' ? 'ascending' : 'descending') + '"' : '') + '>' +
+                '<button type="button" class="wc-sort-btn" data-sort-table="' + tableId + '" data-sort-col="' + col + '"' +
+                (opt.type ? ' data-sort-type="' + opt.type + '"' : '') + ' onclick="wcSortClick(this)">' + labelHtml +
+                '<span class="wc-sort-arrow" aria-hidden="true">' + (on ? WC_SORT_ARROWS[st.dir] : WC_SORT_ARROWS.none) + '</span>' +
+                '</button></th>';
+        }
+
+        /** One cell's sort text out of a row drawn as a string: its data-sort, else its text. */
+        function wcSortRowCellText(rowHtml, col) {
+            const re = /<(td|th)\b([^>]*)>([\s\S]*?)<\/\1>/g;
+            let m, k = 0;
+            while ((m = re.exec(String(rowHtml)))) {
+                if (k++ !== col) continue;
+                const a = /\bdata-sort="([^"]*)"/.exec(m[2]);
+                return wcSortCellText(a ? a[1] : m[3]);
+            }
+            return '';
+        }
+
+        /**
+         * A table's body rows, in the order this table is sorted in. Every
+         * row is tagged with the place it was drawn in (data-sort-i), which is
+         * what a later click breaks ties by. Unsorted, the rows come back as
+         * drawn.
+         */
+        function wcSortRowsHtml(tableId, rows) {
+            const tagged = (Array.isArray(rows) ? rows : []).map((h, i) => String(h).replace(/^(\s*)<tr\b/, '$1<tr data-sort-i="' + i + '"'));
+            const st = _wcSortState.get(tableId);
+            if (!st || tagged.length < 2) return tagged.join('');
+            const texts = tagged.map(h => wcSortRowCellText(h, st.col));
+            return wcSortOrder(texts, st.dir, st.type).map(i => tagged[i]).join('');
+        }
+
+        /** The arrows and aria-sort on a table already on screen. */
+        function wcSortMarkHead(table, tableId) {
+            if (!table || typeof table.querySelectorAll !== 'function') return;
+            const st = _wcSortState.get(tableId);
+            let label = '';
+            table.querySelectorAll('.wc-sort-btn').forEach(b => {
+                if (b.getAttribute('data-sort-table') !== tableId) return;
+                const on = !!st && parseInt(b.getAttribute('data-sort-col'), 10) === st.col;
+                const th = typeof b.closest === 'function' ? b.closest('th') : null;
+                if (th) {
+                    if (on) th.setAttribute('aria-sort', st.dir === 'asc' ? 'ascending' : 'descending');
+                    else th.removeAttribute('aria-sort');
+                }
+                const arrow = b.querySelector('.wc-sort-arrow');
+                if (arrow) arrow.textContent = on ? WC_SORT_ARROWS[st.dir] : WC_SORT_ARROWS.none;
+                if (on) label = String(b.textContent || '').replace(/[⇅▲▼]/g, '').trim();
+            });
+            // A CHIP THAT NAMES THE ORDER says the order the rows are in now
+            // (review, 2026-10-06): Latest 100's "Newest first" stayed after
+            // its rows were sorted by Amount. Unsorted, it reads its default.
+            if (typeof document !== 'undefined' && typeof document.querySelectorAll === 'function') {
+                document.querySelectorAll('[data-sort-chip="' + tableId + '"]').forEach(c => {
+                    c.textContent = st ? (label ? 'Sorted by ' + label : 'Sorted') : (c.getAttribute('data-sort-default') || '');
+                });
+            }
+        }
+
+        /** Re-sort the rows already on screen: the same keys and the same order as wcSortRowsHtml. */
+        function wcSortApplyDom(table, tableId) {
+            const st = _wcSortState.get(tableId);
+            const body = table && table.tBodies ? table.tBodies[0] : null;
+            if (st && body) {
+                const rows = Array.from(body.rows || []);
+                if (rows.length > 1) {
+                    const texts = rows.map(r => {
+                        const c = r.cells ? r.cells[st.col] : null;
+                        if (!c) return '';
+                        const ds = c.getAttribute('data-sort');
+                        return wcSortCellText(ds !== null && ds !== undefined ? ds : c.innerHTML);
+                    });
+                    const orig = rows.map((r, i) => {
+                        const v = parseInt(r.getAttribute('data-sort-i'), 10);
+                        return isFinite(v) ? v : i;
+                    });
+                    wcSortOrder(texts, st.dir, st.type, orig).forEach(i => body.appendChild(rows[i]));
+                }
+            }
+            wcSortMarkHead(table, tableId);
+        }
+
+        /** A heading's button was pressed (by mouse, or by Enter or Space: it is a real button). */
+        function wcSortClick(btn) {
+            if (!btn || typeof btn.getAttribute !== 'function') return;
+            const tableId = btn.getAttribute('data-sort-table');
+            const col = parseInt(btn.getAttribute('data-sort-col'), 10);
+            if (!tableId || !isFinite(col)) return;
+            wcSortSet(tableId, col, btn.getAttribute('data-sort-type') || '');
+            const table = typeof btn.closest === 'function' ? btn.closest('table') : null;
+            if (table) wcSortApplyDom(table, tableId);
+        }
+
+        // ---- A different person on this page (review, 2026-10-06)
+        //
+        // Sign-out does not reload the page, and teacher view swaps
+        // currentUser in place. The sorts above are kept per table, and the
+        // two folds written in index.html (Flagged, Latest 100) are never
+        // redrawn, so the next person inherited both: an admin's sort on a
+        // column that a teacher's narrower table puts somewhere else, and the
+        // last admin's Flagged names already open for the PBIS lead. The folds
+        // drawn by cashFoldHtml were already kept per person (cashFoldKey).
+
+        /** Whose sorts and static folds the page holds: a person's id, '' for nobody, null before anyone. */
+        var _cashViewOwner = null;
+
+        /**
+         * Run by applyCashAnalyticsGate, which runs on every sign-in, restored
+         * session, teacher-view change and sign-out. For the same person it
+         * does nothing, so a person's own sort survives their tab switches.
+         */
+        function cashViewerChanged() {
+            const who = String((currentUser && currentUser.id) || '');
+            if (who === _cashViewOwner) return false;
+            _cashViewOwner = who;
+            _wcSortState.clear();
+            ['interventionFold', 'teacherInteractionDetailsFold'].forEach(id => {
+                const d = document.getElementById(id);
+                if (d) d.open = false;
+            });
+            // The static tables' arrows (and Latest 100's order chip) back to
+            // unsorted; the drawn tables are redrawn from the state on open.
+            ['teacherActivity', 'interventionStudents', 'teacherInteractionDetails'].forEach(id => wcSortMarkHead(document, id));
+            return true;
+        }
+
+        // ========================================
+        // THIS WEEK SO FAR, ON OVERVIEW (2026-10-06)
+        // ========================================
+        //
+        // The whole school's week, counted both ways side by side, so nobody
+        // has to flip a switch to see why the Home gauge and Trends disagree:
+        //   per student         THE HOME GAUGE'S OWN COUNT -- the same two
+        //                       functions renderTeacherDashboard calls, the
+        //                       same Monday -- so for admins and PBIS it is
+        //                       the gauge's number, not a fourth 5 to 1 figure
+        //   per press of Award  Trends' own weeks (cashPraiseWeeks)
+        // Beside it the last week, read the same two ways, because on a Monday
+        // morning "so far" is nearly empty.
+
+        /** The Monday the home gauge's week starts on, at local midnight. PURE. */
+        function cashGaugeWeekStartMs(nowMs) {
+            const d = new Date(nowMs);
+            d.setHours(0, 0, 0, 0);
+            // Monday. getDay() is 0 on Sunday, which unadjusted would start
+            // the week the day before it ends.
+            d.setDate(d.getDate() - ((d.getDay() + 6) % 7));
+            return d.getTime();
+        }
+
+        /**
+         * The home gauge's rows for a week: stamped from `fromMs` (and before
+         * `toMs`, when given), and for one adult when `actorId` is a string --
+         * null is the whole school. PURE.
+         */
+        function cashGaugeWeekRows(rows, fromMs, toMs, actorId) {
+            return (Array.isArray(rows) ? rows : []).filter(t => {
+                if (!t || !t.timestamp) return false;
+                const ms = new Date(t.timestamp).getTime();
+                if (ms < fromMs) return false;
+                if (toMs !== null && toMs !== undefined && !(ms < toMs)) return false;
+                if (actorId === null) return true;
+                // An unattributed movement belongs to nobody, not everybody
+                // -- the same rule My Activity needed.
+                const actor = t.teacherId || t.addedBy || t.removedBy;
+                return !!(actor && actorId && actor === actorId);
+            });
+        }
+
+        /** Awards and deductions among those rows, one per row (per student), by KIND. PURE. */
+        function cashRowKindCounts(rows, reversedIds) {
+            let awards = 0, deductions = 0;
+            (Array.isArray(rows) ? rows : []).forEach(t => {
+                const kind = cashBehaviourKind(t, reversedIds);
+                if (kind === 'award') awards++;
+                else if (kind === 'deduct') deductions++;
+            });
+            return { awards: awards, deductions: deductions };
+        }
+
+        /**
+         * The strip's figures. PURE: the ledger, its reversals, now, today and
+         * Trends' weeks in. Per student by the gauge's rule; per press from
+         * Trends' row for the same Monday, or null when Trends has none.
+         */
+        function cashWeekStripModel(o) {
+            const rows = (o && o.rows) || [];
+            const reversedIds = (o && o.reversedIds) || new Set();
+            const todayIso = String((o && o.todayIso) || '');
+            const thisStart = cashGaugeWeekStartMs(o && o.nowMs);
+            const lastStartDate = new Date(thisStart);
+            lastStartDate.setDate(lastStartDate.getDate() - 7);
+            const thisMonday = cashWeekMonday(todayIso);
+            const lastMonday = cashAddDays(thisMonday, -7);
+            const dow = new Date(todayIso + 'T12:00:00').getDay();
+            const praiseBy = new Map((((o && o.praise) || {}).weeks || []).map(w => [w.monday, w]));
+            const week = (monday, from, to) => {
+                const s = cashRowKindCounts(cashGaugeWeekRows(rows, from, to, null), reversedIds);
+                const p = praiseBy.get(monday);
+                return {
+                    monday: monday,
+                    label: cashWeekLabel(monday),
+                    perStudent: { awards: s.awards, deductions: s.deductions, verdict: cashRatioVerdict(s.awards, s.deductions) },
+                    perPress: p ? { awards: p.clicks.allAwards, deductions: p.clicks.allDeductions, verdict: p.verdict.clicks } : null
+                };
+            };
+            const now = week(thisMonday, thisStart, null);
+            now.soFar = dow >= 1 && dow <= 5;
+            return { thisWeek: now, lastWeek: week(lastMonday, lastStartDate.getTime(), thisStart) };
+        }
+
+        /** The strip as markup. Nameless; the caption depends on whose gauge it can be compared with. */
+        function cashWeekStripHtml(m, staffView) {
+            const n = (x) => Number(x || 0).toLocaleString();
+            const fig = (unit, f) => {
+                if (!f) return '<div class="wc-week-fig"><span class="wc-chip wc-chip-unit">' + unit + '</span>' +
+                    '<span class="wc-trend-of">no cash history that week</span></div>';
+                const v = (f.awards === 0 && f.deductions === 0)
+                    ? '<span class="wc-ratio is-neutral">nothing yet</span>'
+                    : cashRatioHtml(f.verdict);
+                return '<div class="wc-week-fig"><span class="wc-chip wc-chip-unit">' + unit + '</span>' + v +
+                    '<span class="wc-insight-n">' + n(f.awards) + ' to ' + n(f.deductions) + '</span></div>';
+            };
+            const block = (title, w) => '<div class="wc-week-block"><h4>' + title + ' &middot; ' + escapeHtml(w.label) + '</h4>' +
+                '<div class="wc-week-figs">' + fig('per student', w.perStudent) + fig('per press of Award', w.perPress) + '</div></div>';
+            const caption = staffView
+                ? 'Per student is the same count as your Dashboard gauge. Per press of Award is the same as the 5 to 1 column on Trends. ' +
+                  'Both are right: a whole-class award is one press, but it can reach 30 students.'
+                : 'This is the whole school. Your own week is on your Dashboard gauge. Both counts are right: a whole-class award is ' +
+                  'one press, but it can reach 30 students.';
+            return cashChipsHtml('This week and last week', '', 'Nobody is named') +
+                '<div class="wc-week-grid">' +
+                    block(m.thisWeek.soFar ? 'This week so far' : 'This week', m.thisWeek) +
+                    block('Last week', m.lastWeek) +
+                '</div>' +
+                '<p class="wc-trend-note">' + caption + '</p>' +
+                '<button type="button" class="wc-insight-link" onclick="switchAnalyticsSubtab(\'trends\')">Week by week, on Trends</button>';
+        }
+
+        /** Draw the strip, on Overview's open only (it builds the click model, which updateDashboard must not). */
+        function renderCashWeekStrip() {
+            const host = document.getElementById('cashWeekStrip');
+            if (!host) return;
+            const todayIso = wcIsoDay(new Date());
+            const cutoffIso = _historyCutoffMs === null ? '' : wcIsoDay(new Date(_historyCutoffMs));
+            const rows = (typeof cashTransactions !== 'undefined' && Array.isArray(cashTransactions)) ? cashTransactions : [];
+            host.innerHTML = cashWeekStripHtml(cashWeekStripModel({
+                rows: rows,
+                reversedIds: reversedCashIds(),
+                nowMs: Date.now(),
+                todayIso: todayIso,
+                praise: cashPraiseWeeks({ model: cashClicksNow(), cutoffIso: cutoffIso, todayIso: todayIso })
+            }), cashStaffViewsAllowed());
         }
 
         function updateDashboard() {
@@ -32822,17 +33484,18 @@
                 return;
             }
             
-            tbody.innerHTML = sortedTeachers.map(stats => {
+            // In the order the heading clicked last asked for (wcSortRowsHtml);
+            // most interactions first until somebody clicks one.
+            tbody.innerHTML = wcSortRowsHtml('teacherActivity', sortedTeachers.map(stats => {
                 // THE 5 TO 1 GOAL, NOT 70% (2026-10-01). Green from 70% positive
                 // was about 2.3 to 1, so a teacher at 3 to 1 was shown as meeting
                 // a goal they were well short of. See cashRatioVerdict: below the
                 // goal is amber, and under five deductions there is no ratio.
                 const verdict = cashRatioVerdict(stats.positiveCount, stats.negativeCount);
-                
+
                 // The NAME IS ESCAPED: it comes off the staff record, and this
                 // was the one cell in the table that reached innerHTML raw.
-                return `
-                    <tr>
+                return `<tr>
                         <td style="font-weight: 600;">${escapeHtml(String(stats.name || 'Unknown'))}</td>
                         <td style="text-align: center; font-weight: 600;">${stats.totalInteractions}</td>
                         <td style="text-align: center; color: #10b981; font-weight: 600;">${stats.positiveCount}</td>
@@ -32845,7 +33508,7 @@
                         <td style="text-align: center;">${stats.studentsImpacted.size}</td>
                     </tr>
                 `;
-            }).join('');
+            }));
         }
 
         /**
@@ -32932,12 +33595,22 @@
                 return aScore - bScore;
             });
             
+            // The count on the fold (Students, 2026-10-06): the list is folded
+            // closed, so how many is the first thing read.
+            const count = document.getElementById('interventionFlaggedCount');
+            if (count) {
+                count.textContent = flaggedStudents.length
+                    ? flaggedStudents.length + ' student' + (flaggedStudents.length === 1 ? '' : 's') + ': show list'
+                    : 'No students flagged';
+            }
+
             if (flaggedStudents.length === 0) {
                 tbody.innerHTML = '<tr><td colspan="7" style="text-align: center; padding: 40px; color: #10b981; font-weight: 600;">✅ No students currently flagged for intervention</td></tr>';
                 return;
             }
-            
-            tbody.innerHTML = flaggedStudents.map(student => {
+
+            // Most concerning first until a heading is clicked (wcSortRowsHtml).
+            tbody.innerHTML = wcSortRowsHtml('interventionStudents', flaggedStudents.map(student => {
                 // The same two figures as the predicate, from the same rows.
                 // See the comment on the filter above: `type` is the sign of
                 // the amount; `kind` is what actually happened, and a reversed
@@ -32966,7 +33639,7 @@
                 
                 return `
                     <tr style="background: ${balance < 500 ? 'rgba(239, 68, 68, 0.05)' : 'white'};">
-                        <td style="font-weight: 600;">${escapeHtml(String((student.firstName || '') + ' ' + (student.lastName || '')))}</td>
+                        <td style="font-weight: 600;" data-sort="${escapeHtml([student.lastName, student.firstName].filter(Boolean).join(', '))}">${escapeHtml(String((student.firstName || '') + ' ' + (student.lastName || '')))}</td>
                         <td style="text-align: center;">${escapeHtml(String(student.grade == null ? '' : student.grade))}</td>
                         <td style="text-align: center; color: ${balanceColor}; font-weight: 700; font-size: 16px;">
                             $${balance.toLocaleString()}
@@ -32983,7 +33656,7 @@
                         </td>
                     </tr>
                 `;
-            }).join('');
+            }));
         }
 
         function updateTeacherInteractionDetails() {
@@ -33013,6 +33686,9 @@
                         ...txn,
                         studentName: txn.studentName
                             || (st ? `${st.firstName} ${st.lastName}` : 'Unknown'),
+                        // Sorted by surname when the roster knows the child
+                        // (review, 2026-10-06); the cell still reads the name.
+                        studentSortName: st ? [st.lastName, st.firstName].filter(Boolean).join(', ') : '',
                         grade: st ? st.grade : (txn.studentGrade || '—')
                     };
                 });
@@ -33061,7 +33737,9 @@
                 return;
             }
             
-            tbody.innerHTML = filteredTransactions.map(txn => {
+            // Newest first until a heading is clicked (wcSortRowsHtml); the
+            // date cell sorts by its timestamp, never by the words on screen.
+            tbody.innerHTML = wcSortRowsHtml('teacherInteractionDetails', filteredTransactions.map(txn => {
                 // Get teacher name - prefer stored teacherName, fallback to looking up by ID or username
                 let teacherName = txn.teacherName;
                 if (!teacherName) {
@@ -33124,9 +33802,9 @@
                 // pressure; all three reach innerHTML.
                 return `
                     <tr${wasReversed ? ' style="opacity:.62;"' : ''}>
-                        <td style="font-size: 13px; color: #666;">${escapeHtml(formattedDate)}</td>
+                        <td style="font-size: 13px; color: #666;" data-sort="${dateOk ? escapeHtml(date.toISOString()) : ''}">${escapeHtml(formattedDate)}</td>
                         <td>${escapeHtml(String(teacherName))}</td>
-                        <td style="font-weight: 600;">${escapeHtml(String(txn.studentName))}</td>
+                        <td style="font-weight: 600;" data-sort="${escapeHtml(txn.studentSortName || String(txn.studentName))}">${escapeHtml(String(txn.studentName))}</td>
                         <td style="text-align: center;">${escapeHtml(String(txn.grade))}</td>
                         <td>${escapeHtml(String(txn.behaviorName || '-'))}</td>
                         <td style="text-align: center;">
@@ -33140,7 +33818,7 @@
                         <td style="font-size: 13px;">${escapeHtml(String(txn.notes || '-'))}</td>
                     </tr>
                 `;
-            }).join('');
+            }));
         }
 
         function populateTeacherFilterDropdown() {
@@ -33352,13 +34030,34 @@
         function cashTrendsHtml(model, x) {
             const v = x || {};
             const weeks = (model && model.weeks) || [];
-            const intro = '<p class="wc-trend-note">The whole school, week by week since cash history starts. ' +
-                'Behaviour only: store purchases, refunds, reversals and resets are left out. Nobody is named.</p>';
+            // TWO TABS, ONE DRAWING (2026-10-06). Each panel is a bare
+            // <section data-csec>: "trends" shows on Trends, "students" on
+            // Students (the pane's data-cview, styles.css). The owner's order:
+            // #1 praise first on Trends, #4 behaviour change after it; #2 reach
+            // on Students.
+            const sec = (which, html) => '<section data-csec="' + which + '">' + html + '</section>';
+            const since = cashHistorySinceLabel() || 'cash history began';
+            const trendsHead = sec('trends',
+                '<p class="wc-view-q">Week by week, is praise going up, and are we getting closer to 5 to 1?</p>' +
+                '<p class="wc-trend-note">The whole school, week by week since ' + escapeHtml(since) + '. Counted per press of Award ' +
+                    'unless you switch the first table to per student. Behaviour only: store purchases, refunds, reversals and ' +
+                    'resets are left out. Nobody is named.</p>');
+            // A TEACHER'S STUDENTS TAB IS CAMPUS FIGURES (names are admins' and
+            // PBIS's), so it says where their own students are -- the Home
+            // page's list of their classes -- and offers the way there.
+            const studentsHead = sec('students', v.staffView
+                ? '<p class="wc-view-q">Which students are adults noticing, who has been missed, and who is getting the most corrections?</p>' +
+                  '<p class="wc-trend-note">Noticed means an award for one of the four expectations. Spirit Week and other events don&rsquo;t count.</p>'
+                : '<p class="wc-view-q">How many students are adults noticing, by campus?</p>' +
+                  '<p class="wc-trend-note">Noticed means an award for one of the four expectations. Spirit Week and other events don&rsquo;t count.</p>' +
+                  '<div class="wc-card panel-card wc-own-students"><p>Your own students who haven&rsquo;t been noticed lately are on your Dashboard.</p>' +
+                  '<button type="button" class="btn btn-secondary" onclick="switchTab(\'dashboard\')">Open my Dashboard</button></div>');
+            const studentsBody = v.reach ? sec('students', cashReachHtml(v)) : '';
             if (!weeks.length) {
-                return '<div class="wc-card panel-card"><h3 class="chart-title">Week by week</h3>' + intro +
-                    '<p class="wc-trend-note">No weeks to show yet.</p></div>';
+                return trendsHead + sec('trends', '<div class="wc-card panel-card"><h3 class="chart-title">Week by week</h3>' +
+                    '<p class="wc-trend-note">No weeks to show yet.</p></div>') + studentsHead + studentsBody;
             }
-            const weekCell = (w) => '<th scope="row">' + escapeHtml(w.label) +
+            const weekCell = (w) => '<th scope="row" class="wc-pin" data-sort="' + escapeHtml(w.monday) + '">' + escapeHtml(w.label) +
                 (w.launch ? '<span class="wc-trend-tag">launch week</span>' : '') +
                 (w.soFar ? '<span class="wc-trend-tag">so far</span>' : '') + '</th>';
             const n = (x) => Number(x || 0).toLocaleString();
@@ -33367,27 +34066,64 @@
             // grade-level numbers are theirs). Middle School and High School
             // stay open to every role.
             const grades = v.staffView ? model.grades : [];
-            const gradeHead = grades.map(g => '<th scope="col">Grade ' + escapeHtml(g) + '</th>').join('');
+            const T = 'cashStudentsAwarded';
+            const gradeHead = grades.map((g, i) => wcSortTh(T, 3 + i, 'Grade ' + escapeHtml(g))).join('');
             const studentRows = weeks.map(w => '<tr>' + weekCell(w) +
                 '<td class="wc-trend-campus">' + cashTrendShare(w.studentsAwarded.middle, e.middle) + '</td>' +
                 '<td class="wc-trend-campus">' + cashTrendShare(w.studentsAwarded.high, e.high) + '</td>' +
                 grades.map(g => '<td>' + cashTrendShare(w.studentsAwarded.byGrade[g], e.byGrade[g]) + '</td>').join('') +
-            '</tr>').join('');
+            '</tr>');
 
-            return (v.reach ? cashReachHtml(v) : '') +
-                cashPraiseHtml(model, v) +
-                (v.outcome ? cashOutcomeHtml(v.outcome) : '') +
-                '<div class="wc-card panel-card">' +
+            return trendsHead +
+                sec('trends', cashPraiseHtml(model, v)) +
+                sec('trends', '<div class="wc-card panel-card">' +
                     '<h3 class="chart-title">Students who got at least one award</h3>' +
+                    cashChipsHtml('Week by week since ' + escapeHtml(since), 'per student') +
                     '<p class="wc-trend-note">Out of the students enrolled now: ' + n(e.middle) +
                         ' in Middle School (grades 6&ndash;8) and ' + n(e.high) + ' in High School (grades 9&ndash;12). ' +
-                        'Any award, events included, counted per student.</p>' +
-                    '<div class="wu-scroll-x"><table class="student-table wc-trend-table">' +
-                        '<thead><tr><th scope="col">Week</th><th scope="col">Middle School</th>' +
-                        '<th scope="col">High School</th>' + gradeHead + '</tr></thead>' +
-                        '<tbody>' + studentRows + '</tbody>' +
+                        'Any award, events included, counted per student. It reads higher than Reach on Students, which ' +
+                        'counts expectation awards only.</p>' +
+                    '<div class="wu-scroll-x"><table class="student-table wc-trend-table" data-sort-id="' + T + '">' +
+                        '<thead><tr>' + wcSortTh(T, 0, 'Week', { cls: 'wc-pin' }) + wcSortTh(T, 1, 'Middle School') +
+                        wcSortTh(T, 2, 'High School') + gradeHead + '</tr></thead>' +
+                        '<tbody>' + wcSortRowsHtml(T, studentRows) + '</tbody>' +
                     '</table></div>' +
-                '</div>';
+                '</div>') +
+                (v.outcome ? sec('trends', cashOutcomeHtml(v.outcome)) : '') +
+                studentsHead + studentsBody;
+        }
+
+        /**
+         * WHERE THE READER WAS SURVIVES A REDRAW (review, 2026-10-06). Trends
+         * is redrawn whole when the server's first answer lands, about a
+         * second after it opens, and on every unit switch and date pick: a
+         * keyboard user on a sort heading was dropped to the top of the page,
+         * and a table scrolled sideways jumped back to its left edge. Call
+         * before the redraw; the function it returns puts back the focused
+         * heading (by its table and column) and each sortable table's
+         * sideways scroll (by its data-sort-id). Anything it cannot match is
+         * left alone.
+         */
+        function cashKeepPlace(host) {
+            if (!host || typeof host.querySelectorAll !== 'function' || typeof host.querySelector !== 'function') return () => {};
+            const a = typeof document !== 'undefined' ? document.activeElement : null;
+            const focus = (a && a.classList && a.classList.contains('wc-sort-btn') && typeof host.contains === 'function' && host.contains(a))
+                ? '.wc-sort-btn[data-sort-table="' + a.getAttribute('data-sort-table') + '"][data-sort-col="' + a.getAttribute('data-sort-col') + '"]'
+                : null;
+            const scrolls = [];
+            host.querySelectorAll('.wu-scroll-x').forEach(box => {
+                const t = typeof box.querySelector === 'function' ? box.querySelector('table[data-sort-id]') : null;
+                if (t && box.scrollLeft) scrolls.push([t.getAttribute('data-sort-id'), box.scrollLeft]);
+            });
+            return () => {
+                scrolls.forEach(([id, left]) => {
+                    const t = host.querySelector('table[data-sort-id="' + id + '"]');
+                    const box = t && typeof t.closest === 'function' ? t.closest('.wu-scroll-x') : null;
+                    if (box) box.scrollLeft = left;
+                });
+                const b = focus ? host.querySelector(focus) : null;
+                if (b && typeof b.focus === 'function') b.focus({ preventScroll: true });
+            };
         }
 
         /** Draw Trends from what this tab already holds, plus the calendar trendsContext brought, if it has. */
@@ -33408,6 +34144,7 @@
             const reachWindow = cashReachWindow({ ctx: ctx, model: model, todayIso: todayIso });
             const through = reachWindow.dates.length ? reachWindow.dates[reachWindow.dates.length - 1] : '';
             const since = cashNoticeSinceFor(todayIso, cutoffIso, through);
+            const putBack = cashKeepPlace(host);
             host.innerHTML = cashTrendsHtml(cashTrendWeeks({
                 rows: (typeof cashTransactions !== 'undefined' && Array.isArray(cashTransactions)) ? cashTransactions : [],
                 reversedIds: reversedCashIds(),
@@ -33430,6 +34167,7 @@
                 outcome: cashOutcomeWeeks({ ctx: ctx, model: model, students: students, campusOf: campusOf,
                                             cutoffIso: cutoffIso, todayIso: todayIso, R: R })
             });
+            putBack();
             // Remembered, so the gate can take a staff view off the screen
             // without redrawing a teacher's (wipeStaffCashViews).
             _cashTrendsDrawnForStaff = staffView;
@@ -34257,7 +34995,7 @@
             const n = (x) => Number(x || 0).toLocaleString();
             const accounts = model.teacherAccounts;
             const dash = '<span class="wc-trend-of">&mdash;</span>';
-            const weekCell = (w) => '<th scope="row">' + escapeHtml(w.label) +
+            const weekCell = (w) => '<th scope="row" class="wc-pin" data-sort="' + escapeHtml(w.monday) + '">' + escapeHtml(w.label) +
                 (w.launch ? '<span class="wc-trend-tag">launch week</span>' : '') +
                 (w.soFar ? '<span class="wc-trend-tag">so far</span>' : '') + '</th>';
             const rows = model.weeks.map(w => {
@@ -34278,35 +35016,43 @@
                         '<td>' + n(c.leftOut) + '</td>')
                       : ('<td>' + dash + '</td>').repeat(9)) +
                 '</tr>';
-            }).join('');
-            const word = unit === 'clicks' ? 'clicks' : 'students';
-            const toggle = '<div class="wc-unit-toggle" role="group" aria-label="Count awards and deductions in">' +
-                '<span class="wc-unit-label">Count in</span>' +
+            });
+            // THE SWITCH SAYS WHAT IT COUNTS IN (critique, 2026-10-06): "Clicks |
+            // Students" sat beside a Students TAB and under chips that say "per
+            // press of Award" and "per student". The stored values are still
+            // 'clicks' and 'students', so each browser's choice (wcCashCountUnit)
+            // carries over. It sits directly above the one table it changes.
+            const word = unit === 'clicks' ? 'per press of Award' : 'per student';
+            const toggle = '<div class="wc-unit-toggle" role="group" aria-label="Count this table in">' +
+                '<span class="wc-unit-label">Count this table in</span>' +
                 ['clicks', 'students'].map(u => '<button type="button" onclick="setCashCountUnit(\'' + u + '\')" aria-pressed="' +
-                    (u === unit ? 'true' : 'false') + '">' + (u === 'clicks' ? 'Clicks' : 'Students') + '</button>').join('') +
+                    (u === unit ? 'true' : 'false') + '">' + (u === 'clicks' ? 'Per press of Award' : 'Per student') + '</button>').join('') +
                 '</div>';
+            const since = cashHistorySinceLabel() || 'cash history began';
+            const T = 'cashPraise';
+            const head = [
+                ['Week', { cls: 'wc-pin' }], ['Teachers who gave an award'], ['Other staff who gave an award'],
+                ['Whole-class awards (5+)'], ['Small-group awards (2&ndash;4)'], ['One-student awards'], ['One-to-one praise'],
+                ['Individual deductions (1)'], ['Group deductions (2+)'],
+                ['All awards to all deductions (goal: ' + CASH_RATIO_GOAL + ' to 1)'], ['One-to-one to individual deductions'],
+                ['Event and custom (in the ' + CASH_RATIO_GOAL + ' to 1 ratio only)']
+            ].map((h, i) => wcSortTh(T, i, h[0], h[1])).join('');
             return '<div class="wc-card panel-card">' +
                     '<h3 class="chart-title">How awards were given, week by week</h3>' +
-                    '<p class="wc-trend-note">The whole school since cash history starts, counted in <b>' + word + '</b>. ' +
-                        'Store purchases, refunds, reversals and resets are left out. The ' + CASH_RATIO_GOAL + ' to 1 ratio counts ' +
-                        'every award and deduction, events and custom behaviours (such as Spirit Week) included; every other ' +
-                        'column counts the four expectations only, and the last column shows the event and custom ones. ' +
-                        'Nobody is named.</p>' +
+                    cashChipsHtml('Week by week since ' + escapeHtml(since) + ' &middot; this week so far', word) +
+                    '<p class="wc-trend-note">The whole school, counted <b>' + word + '</b>. The ' + CASH_RATIO_GOAL + ' to 1 ' +
+                        'column counts every award and deduction, events and custom behaviours (such as Spirit Week) included; ' +
+                        'every other column counts the four expectations only, and the last column shows the event and custom ' +
+                        'ones. Nobody is named.</p>' +
                     toggle +
-                    '<div class="wu-scroll-x"><table class="student-table wc-trend-table">' +
-                        '<thead><tr><th scope="col">Week</th><th scope="col">Teachers who gave an award</th>' +
-                        '<th scope="col">Other staff who gave an award</th>' +
-                        '<th scope="col">Whole-class awards (5+)</th><th scope="col">Small-group awards (2&ndash;4)</th>' +
-                        '<th scope="col">One-student awards</th><th scope="col">One-to-one praise</th>' +
-                        '<th scope="col">Individual deductions (1)</th><th scope="col">Group deductions (2+)</th>' +
-                        '<th scope="col">All awards to all deductions (goal: ' + CASH_RATIO_GOAL + ' to 1)</th>' +
-                        '<th scope="col">One-to-one to individual deductions</th>' +
-                        '<th scope="col">Event and custom (in the ' + CASH_RATIO_GOAL + ' to 1 ratio only)</th></tr></thead>' +
-                        '<tbody>' + rows + '</tbody>' +
+                    '<div class="wu-scroll-x"><table class="student-table wc-trend-table" data-sort-id="' + T + '">' +
+                        '<thead><tr>' + head + '</tr></thead>' +
+                        '<tbody>' + wcSortRowsHtml(T, rows) + '</tbody>' +
                     '</table></div>' +
-                    '<p class="wc-trend-note">A <b>click</b> is one press of Award: rows from the same adult, behaviour and note, ' +
-                        'each within ' + (CASH_CLICK_GAP_MS / 1000) + ' seconds of the one before. <b>Students</b> counts one per ' +
-                        'student per press, the way the totals, the Teacher table and a teacher&rsquo;s own gauge count. ' +
+                    cashFoldHtml('praise-how', 'How this is counted',
+                    '<p class="wc-trend-note">A <b>click</b> (a press of Award) is rows from the same adult, behaviour and note, ' +
+                        'each within ' + (CASH_CLICK_GAP_MS / 1000) + ' seconds of the one before. <b>Per student</b> counts one per ' +
+                        'student per press, the way the Overview tiles, the Staff table and the Dashboard gauge count. ' +
                         '<b>One-to-one praise</b> is an award to one student with a note that adult did not use for any other ' +
                         'student that day; &ldquo;any one-student award&rdquo; counts every press that reached one student. ' +
                         'Deductions given to two to four students at once are group deductions, never individual ones.</p>' +
@@ -34316,7 +35062,8 @@
                         'the one-to-one ratio is a reading, not a target. A ratio is shown once there are ' +
                         CASH_RATIO_MIN_DEDUCTIONS + ' deductions. Note text is never shown. ' +
                         '&ldquo;Teacher accounts&rdquo; counts every account with the teacher role, vacancies or staff without a ' +
-                        'classroom included, so it is not a participation rate.</p>' +
+                        'classroom included, so it is not a participation rate. Store purchases, refunds, reversals and resets ' +
+                        'are left out.</p>') +
                 '</div>';
         }
 
@@ -34326,12 +35073,18 @@
             return Math.round((k / of) * 100) + '% (' + Number(k).toLocaleString() + ' of ' + Number(of).toLocaleString() + ')';
         }
 
-        /** #2: who is being noticed, the no-award count, and (admins and PBIS) the grades and the names. */
+        /**
+         * #2: who is being noticed, the no-award count, and (admins and PBIS)
+         * the grades and the names. On the Students tab since 2026-10-06,
+         * RETITLED "Reach": "Who is being noticed" sat beside Home's "Not being
+         * noticed", which has a different rule (30 days, any award, below the
+         * school average), and the pointer line below says so.
+         */
         function cashReachHtml(v) {
             const r = v.reach;
             const w = r.window;
             const n = (x) => Number(x || 0).toLocaleString();
-            const head = '<h3 class="chart-title">Who is being noticed</h3>';
+            const head = '<h3 class="chart-title">Reach: expectation awards, last ' + CASH_REACH_SCHOOL_DAYS + ' school days</h3>';
             if (w.source === 'loading') {
                 return '<div class="wc-card panel-card">' + head +
                     '<p class="wc-trend-note">Loading the attendance calendar&hellip;</p></div>';
@@ -34347,8 +35100,11 @@
             const groups = [['middle', 'Middle School'], ['high', 'High School'], ['all', 'Whole school']]
                 .concat(v.staffView ? CASH_TREND_GRADES.map(g => [g, 'Grade ' + g]) : []);
             const nn = v.notice && v.notice.counts;
+            // NOT SORTABLE, deliberately: campuses, then the whole school as
+            // a total row, then (admins and PBIS) seven grades, in a fixed
+            // order a sort would scramble.
             const rows = groups.map(([k, label]) => '<tr' + (k === 'all' ? ' class="wc-insight-total"' : '') + '>' +
-                '<th scope="row">' + escapeHtml(label) + '</th>' +
+                '<th scope="row" class="wc-pin">' + escapeHtml(label) + '</th>' +
                 '<td class="wc-trend-campus">' + cashTrendShare(r.any[k], r.enrolled[k]) + '</td>' +
                 '<td>' + cashTrendShare(r.one[k], r.enrolled[k]) + '</td>' +
                 '<td>' + cashTrendShare(r.oneToOne[k], r.enrolled[k]) + '</td>' +
@@ -34378,23 +35134,30 @@
                 (through ? ' max="' + escapeHtml(through) + '"' : '') +
                 ' onchange="setCashNoticeSince(this.value)"></label>';
             return '<div class="wc-card panel-card">' + head +
-                '<p class="wc-trend-note">The last ' + w.dates.length + ' school days, ' + span + ' (' + src + '). ' +
-                    'Out of the students enrolled now; an expectation award only, events left out.</p>' +
+                cashChipsHtml('Last ' + w.dates.length + ' school days &middot; ' + span, 'expectation awards &middot; per student') +
+                '<p class="wc-trend-note">Out of the students enrolled now (' + src + '); an expectation award only, events ' +
+                    'left out, so it reads lower than &ldquo;Students who got at least one award&rdquo; on Trends.</p>' +
                 picker +
                 '<div class="wu-scroll-x"><table class="student-table wc-trend-table">' +
-                    '<thead><tr><th scope="col">Students</th>' +
+                    '<thead><tr><th scope="col" class="wc-pin">Students</th>' +
                     '<th scope="col">Any expectation award<span class="wc-trend-of">events left out</span></th>' +
-                    '<th scope="col">A one-student award<span class="wc-trend-of">our stricter measure, not a TFI score</span></th>' +
-                    '<th scope="col">One-to-one praise<span class="wc-trend-of">our stricter measure, not a TFI score</span></th>' +
+                    '<th scope="col">A one-student award</th>' +
+                    '<th scope="col">One-to-one praise</th>' +
                     '<th scope="col">No award since ' + escapeHtml(cashShortDate(since)) + '</th></tr></thead>' +
                     '<tbody>' + rows + '</tbody>' +
                 '</table></div>' +
-                '<p class="wc-trend-note">' + rosterLine + '</p>' +
+                '<h4 class="wc-insight-sub">Staff taking part</h4>' +
                 '<p class="wc-trend-note">' + partLine + '</p>' +
-                '<p class="wc-trend-note">&ldquo;No award since&rdquo; runs from the date chosen through ' +
-                    escapeHtml(cashShortDate(through)) + ', the last completed school day, and includes students who joined ' +
-                    'after that date. An event award (such as Spirit Week) does not count as being noticed; those students ' +
-                    'are counted apart.</p>' +
+                '<p class="wc-trend-note">' + rosterLine + '</p>' +
+                '<p class="wc-trend-note">The Dashboard&rsquo;s &ldquo;Not being noticed&rdquo; list uses a different rule: the last ' +
+                    QUIET_WINDOW_DAYS + ' days, any award, below the school average.</p>' +
+                cashFoldHtml('reach-how', 'How this is counted',
+                    '<p class="wc-trend-note">&ldquo;A one-student award&rdquo; and &ldquo;one-to-one praise&rdquo; are our ' +
+                        'stricter measures, not a TFI score.</p>' +
+                    '<p class="wc-trend-note">&ldquo;No award since&rdquo; runs from the date chosen through ' +
+                        escapeHtml(cashShortDate(through)) + ', the last completed school day, and includes students who joined ' +
+                        'after that date. An event award (such as Spirit Week) does not count as being noticed; those students ' +
+                        'are counted apart.</p>') +
                 (v.staffView ? '<div id="cashNeverNoticedList" class="wc-insight-list">' + cashNeverNoticedHtml(v) + '</div>' : '') +
             '</div>';
         }
@@ -34410,10 +35173,12 @@
             if (!v || !v.staffView || !cashStaffViewsAllowed()) return '';
             const nv = v.notice;
             if (!nv || !nv.counts) return '';
-            if (!nv.rows.length) return '<p class="wc-trend-note">Every student enrolled now has had an expectation award since ' +
+            const head = '<h4 class="wc-insight-sub">Students with no expectation award since ' + escapeHtml(cashShortDate(nv.from)) + '</h4>' +
+                cashChipsHtml('From the date you pick, through ' + escapeHtml(cashShortDate(nv.through)), '', 'admins and the PBIS team only');
+            if (!nv.rows.length) return head + '<p class="wc-trend-note">Every student enrolled now has had an expectation award since ' +
                 escapeHtml(cashShortDate(nv.from)) + '.</p>';
             if (nv.overCap) {
-                return '<p class="wc-trend-note"><b>' + nv.rows.length.toLocaleString() + '</b> students: too many to be a working ' +
+                return head + '<p class="wc-trend-note"><b>' + nv.rows.length.toLocaleString() + '</b> students: too many to be a working ' +
                     'list; pick an earlier date.</p>';
             }
             const marks = v.marks;
@@ -34425,14 +35190,22 @@
             const sorted = nv.rows.slice().sort((a, b) => (parseInt(a.grade, 10) - parseInt(b.grade, 10)) ||
                 String(a.student.lastName || '').localeCompare(String(b.student.lastName || '')) ||
                 String(a.student.firstName || '').localeCompare(String(b.student.firstName || '')));
+            // A SORTABLE TABLE, NOT A BULLET LIST (owner, 2026-10-06: sort by
+            // clicking the column heading), so the PBIS lead can put the most
+            // absent first. Same facts, same words, one column each; a cell
+            // with no figure ("loading", "not yet refreshed") sinks.
+            const T = 'cashNeverNoticed';
             const items = sorted.map(r => {
                 const s = r.student;
                 const name = escapeHtml(((s.firstName || '') + ' ' + (s.lastName || '')).trim() || 'Unnamed student');
-                let context;
+                // By surname, as the list is drawn and as PowerSchool lists
+                // students; the cell still reads "First Last".
+                const sortName = escapeHtml([s.lastName, s.firstName].filter(Boolean).join(', ') || 'Unnamed student');
+                let absent, late = '&mdash;', joined = '', absentShare = null;
                 const m = ok ? byNumber.get(String(s.studentNumber || '')) : null;
-                if (!marks || marks.status === 'loading') context = 'loading attendance&hellip;';
-                else if (!ok || !days) context = 'attendance context unavailable';
-                else if (!m) context = 'no attendance on file';
+                if (!marks || marks.status === 'loading') absent = 'loading attendance&hellip;';
+                else if (!ok || !days) absent = 'attendance context unavailable';
+                else if (!m) absent = 'no attendance on file';
                 else {
                     // THE SAME ENTRY RULE AS windowAbsenceList: an absence or
                     // late mark before the entry date moves it back.
@@ -34445,18 +35218,30 @@
                     const mine = days.filter(d => !entry || d >= entry);
                     const mineSet = new Set(mine);
                     const within = (list) => new Set((list || []).map(x => String(x || '').slice(0, 10)).filter(d => mineSet.has(d))).size;
-                    context = 'absent (any period) on ' + within(m.absentDates) + ' of ' + mine.length + ' school days; ' +
-                        (Array.isArray(m.unexcusedTardyDates)
-                            ? 'late without an excuse on ' + within(m.unexcusedTardyDates)
-                            : 'late days not yet refreshed') +
-                        (entry && entry > nv.from ? '; joined ' + escapeHtml(cashShortDate(entry)) : '');
+                    const absentDays = within(m.absentDates);
+                    absent = absentDays + ' of ' + mine.length + ' school days';
+                    // SORTED BY THE SHARE, not the count (review, 2026-10-06):
+                    // a late joiner absent 4 of 6 days was more absent than a
+                    // classmate absent 5 of 16. The words do not change.
+                    if (mine.length) absentShare = absentDays / mine.length;
+                    late = Array.isArray(m.unexcusedTardyDates) ? String(within(m.unexcusedTardyDates)) : 'late days not yet refreshed';
+                    if (entry && entry > nv.from) joined = 'joined ' + escapeHtml(cashShortDate(entry));
                 }
-                return '<li><b>' + name + '</b> <span class="wc-trend-of">Grade ' + escapeHtml(r.grade) +
-                    (r.eventOnly ? ' &middot; <span class="wc-trend-tag">event award only</span>' : '') +
-                    ' &middot; ' + context + '</span></li>';
-            }).join('');
-            return '<h4 class="wc-insight-sub">Students with no expectation award since ' + escapeHtml(cashShortDate(nv.from)) +
-                ' (admins and the PBIS team only)</h4><ul class="wc-insight-names">' + items + '</ul>';
+                const note = [r.eventOnly ? '<span class="wc-trend-tag">event award only</span>' : '', joined]
+                    .filter(Boolean).join(' ');
+                return '<tr><th scope="row" class="wc-pin" data-sort="' + sortName + '">' + name + '</th><td>' + escapeHtml(r.grade) + '</td>' +
+                    '<td' + (absentShare === null ? '' : ' data-sort="' + absentShare + '"') + '>' + absent + '</td><td>' + late + '</td><td>' + note + '</td></tr>';
+            });
+            const table = '<div class="wu-scroll-x"><table class="student-table wc-trend-table wc-names-table" data-sort-id="' + T + '">' +
+                '<thead><tr>' + wcSortTh(T, 0, 'Student', { type: 'text', cls: 'wc-pin' }) + wcSortTh(T, 1, 'Grade') +
+                wcSortTh(T, 2, 'Absent (any period)') + wcSortTh(T, 3, 'Late without an excuse') +
+                wcSortTh(T, 4, 'Note', { type: 'text' }) + '</tr></thead>' +
+                '<tbody>' + wcSortRowsHtml(T, items) + '</tbody></table></div>';
+            // FOLDED, WITH ITS COUNT (2026-10-06): open or shut, the page no
+            // longer grows by a screen when the list is long, and the fold
+            // stays open while the page redraws (cashFoldHtml).
+            return head + cashFoldHtml('never-noticed', '<b>' + nv.rows.length.toLocaleString() + '</b> student' +
+                (nv.rows.length === 1 ? '' : 's') + ': show list', table, 'is-list');
         }
 
         /** #4's table. Campus level only: never a grade, never a name. */
@@ -34488,7 +35273,7 @@
             const att = out.attendance !== false;
             const questionTag = '<span class="wc-trend-tag">recording question</span>';
             const rows = out.weeks.map(w => '<tr>' +
-                '<th scope="row">' + escapeHtml(w.label) +
+                '<th scope="row" class="wc-pin" data-sort="' + escapeHtml(w.monday) + '">' + escapeHtml(w.label) +
                     (w.provisional ? '<span class="wc-trend-tag">provisional</span>' : '') +
                     (w.days && w.days < 5 ? '<span class="wc-trend-tag">' + w.days + ' school day' + (w.days === 1 ? '' : 's') + '</span>' : '') +
                 '</th>' +
@@ -34498,7 +35283,7 @@
                     (att ? '<td>' + rateCell(w.campus[k].tardy) + '</td>' +
                         '<td>' + rateCell(w.campus[k].part) +
                             (w.partQuestion && w.campus[k].part.state === 'ok' ? questionTag : '') + '</td>' : '')).join('') +
-            '</tr>').join('');
+            '</tr>');
             const question = att && CASH_PART_DAY_QUESTION_FROM && out.weeks.some(w => w.partQuestion)
                 ? '<p class="wc-trend-note"><b>Part-day absences, from ' + escapeHtml(cashShortDate(CASH_PART_DAY_QUESTION_FROM)) +
                   ':</b> they jumped that day at both campuses and stayed higher, and nobody knows yet whether students changed or ' +
@@ -34510,40 +35295,54 @@
             const praised = out.lastPraised === null ? '' : 'One-to-one praise reached ' + Number(out.lastPraised).toLocaleString() +
                 (out.lastPraised === 1 ? ' student' : ' students') + ' in the latest finished week (' + escapeHtml(out.lastLabel) +
                 '), so even a real effect would be too small to see on a school line yet. ';
+            // SORTABLE BY ANY COLUMN, chronological until a heading is pressed.
+            // The headings that sort are the second row's; the column number
+            // is the cell's place in a body row (the week is 0).
+            const T = 'cashOutcome';
+            const perCampus = att ? 4 : 2;
+            const subHead = ['middle', 'high'].map((k, ci) => {
+                const base = 1 + ci * perCampus;
+                return wcSortTh(T, base, 'Given one-to-one praise') + wcSortTh(T, base + 1, 'Given an expectation award') +
+                    (att ? wcSortTh(T, base + 2, 'Unexcused tardies per 100 students a day') +
+                        wcSortTh(T, base + 3, 'Part-day absences per 100 students a day') : '');
+            }).join('');
+            const first = out.weeks.length ? out.weeks[0].monday : '';
             return '<div class="wc-card panel-card">' + head +
+                cashChipsHtml('Finished weeks' + (first ? ' since ' + escapeHtml(cashShortDate(first)) : '') +
+                    ' &middot; newest week provisional', att ? 'per student; per 100 students a day' : 'per student') +
                 '<p class="wc-trend-note"><b>' + Math.min(out.cashWeeks, out.needed) + ' of ' + out.needed + ' weeks so far.</b> ' +
                     'Wait for ' + out.needed + ' weeks of cash history before reading a change.</p>' +
-                '<div class="wu-scroll-x"><table class="student-table wc-trend-table">' +
-                    '<thead><tr><th scope="col" rowspan="2">Week</th>' +
+                question +
+                '<div class="wu-scroll-x"><table class="student-table wc-trend-table" data-sort-id="' + T + '">' +
+                    '<thead><tr>' + wcSortTh(T, 0, 'Week', { cls: 'wc-pin', attrs: ' rowspan="2"' }) +
                     '<th scope="colgroup" colspan="' + span + '">Middle School (grades 6&ndash;8)</th>' +
                     '<th scope="colgroup" colspan="' + span + '">High School (grades 9&ndash;12)</th></tr><tr>' +
-                    ['middle', 'high'].map(() => '<th scope="col">Given one-to-one praise</th>' +
-                        '<th scope="col">Given an expectation award</th>' +
-                        (att ? '<th scope="col">Unexcused tardies per 100 students a day</th>' +
-                            '<th scope="col">Part-day absences per 100 students a day</th>' : '')).join('') +
-                    '</tr></thead><tbody>' + rows + '</tbody>' +
+                    subHead +
+                    '</tr></thead><tbody>' + wcSortRowsHtml(T, rows) + '</tbody>' +
                 '</table></div>' +
                 (att ? '' : '<p class="wc-trend-note">The attendance lines that sit beside these (unexcused tardies and part-day ' +
                     'absences) are for administrators, the PBIS team and staff given Attendance Watch access, as on the ' +
                     'attendance-rate chart.</p>') +
-                question +
+                '<p class="wc-trend-note">&ldquo;Given an expectation award&rdquo; is the share of students who got one of the ' +
+                    'four expectations that week; events are left out, so it can be lower than &ldquo;Students who got at least ' +
+                    'one award&rdquo; above.</p>' +
+                cashFoldHtml('outcome-how', 'How this is counted',
                 '<p class="wc-trend-note">These lines share weeks; this table cannot show that praise caused a change. ' + praised +
                     'The evidence we want is a change that lines up with a planned push, in the group that got it and not in the others.</p>' +
-                '<p class="wc-trend-note">Praise: out of the students enrolled now, the four expectations only, events left out ' +
-                    '(so &ldquo;given an expectation award&rdquo; can be lower than the any-award table below). ' +
+                '<p class="wc-trend-note">Praise: out of the students enrolled now, the four expectations only, events left out. ' +
                     (att ? 'Part-day absences: ' +
                     'the same nightly table as the attendance-rate chart, students enrolled that day (including some who have ' +
                     'since left), after the app&rsquo;s whole-day rule. Unexcused tardies: the twice-daily attendance marks, ' +
                     'students enrolled now, from the day each joined. ' : '') + 'Weeks before cash history began read &ldquo;no cash ' +
                     'record&rdquo;. A short week is not merged into the next, as the attendance-rate chart merges it, because ' +
                     'every figure here is per school day; it shows its day count instead. The newest week is provisional: ' +
-                    'PowerSchool corrections arrive late.</p>' +
+                    'PowerSchool corrections arrive late.</p>') +
             '</div>';
         }
 
         /**
-         * #3's panel, under every Cash Analytics subtab. Nameless for every
-         * role; how many adults are behind a cell, and the largest one's share,
+         * #3's panel, on its own Expectations tab (2026-10-06; it used to sit
+         * under every Cash Analytics subtab). Nameless for every role; how many adults are behind a cell, and the largest one's share,
          * for admins and PBIS only -- a teacher can often tell who "top adult
          * 56%" is (review, 2026-10-06).
          */
@@ -34559,16 +35358,21 @@
                 const detail = staffView ? '<span class="wc-insight-n">from ' + n(cell.adults) + ' adult' + (cell.adults === 1 ? '' : 's') +
                     '; top adult ' + Math.round(cell.topShare * 100) + '%</span>' : '';
                 if (cell.check === 'spread') return 'spread across adults' + detail;
+                // The link says what it opens (critique, 2026-10-06): the Staff
+                // table is every behaviour since cash began, per student -- it
+                // cannot show which adult is behind this one cell.
                 return '<b>' + (cell.why === 'campus' ? 'Concentrated within a campus' : 'Concentrated') + ':</b> talk with staff, ' +
                     'not a school reteach' + detail +
                     (staffView ? '<button type="button" class="wc-insight-link" onclick="switchAnalyticsSubtab(\'teacherInteractions\')">' +
-                        'Staff tab</button>' : '');
+                        'Staff tab: each adult&rsquo;s activity, all behaviours</button>' : '');
             };
             const where = [['all', 'Whole school'], ['middle', 'Middle School'], ['high', 'High School']];
+            // NOT SORTABLE, deliberately: each expectation's three rows sit
+            // under one spanning name cell, and a sort would tear them apart.
             const body = bal.rows.map(r => where.map(([k, label], i) => {
                 const c = r.cells[k];
                 return '<tr' + (c.check === 'concentrated' ? ' class="wc-insight-grey"' : '') + '>' +
-                    (i === 0 ? '<th scope="rowgroup" rowspan="3">' + escapeHtml(r.name) + '</th>' : '') +
+                    (i === 0 ? '<th scope="rowgroup" rowspan="3" class="wc-pin">' + escapeHtml(r.name) + '</th>' : '') +
                     '<th scope="row">' + label + '</th>' +
                     '<td class="wc-trend-campus"><b>' + n(c.oneToOne) + '</b>' +
                         (c.oneReused ? '<span class="wc-insight-n">plus ' + n(c.oneReused) + ' to one student, note reused</span>' : '') + '</td>' +
@@ -34584,12 +35388,21 @@
                   bal.other.map(x => '<li>' + escapeHtml(String(x.name)) + ': ' + n(x.awards) + ' award' + (x.awards === 1 ? '' : 's') +
                       ', ' + n(x.deductions) + ' deduction' + (x.deductions === 1 ? '' : 's') + '</li>').join('') + '</ul></div>'
                 : '';
-            return '<div class="wc-card panel-card">' + head +
+            // WHO ACTS ON A GREYED ROW depends on who is reading (2026-10-06).
+            const lead = staffView
+                ? 'The four expectations side by side, by campus. A greyed row means one or two adults gave most of the ' +
+                  'corrections: talk with those adults; it is not a school-wide reteach.'
+                : 'The four expectations side by side, by campus. A greyed row means one or two adults gave most of the ' +
+                  'corrections; the PBIS team follows these up.';
+            return '<p class="wc-trend-note">' + lead + '</p>' +
+                '<div class="wc-card panel-card">' + head +
+                cashChipsHtml('Last ' + CASH_BALANCE_WEEKS + ' finished school weeks &middot; ' + bal.mondays.length + ' so far, ' + span +
+                    ' &middot; weeks with no awards skipped', 'per student') +
                 '<p class="wc-trend-note">The last ' + bal.mondays.length + ' finished school week' + (bal.mondays.length === 1 ? '' : 's') +
                     ', ' + span + ' (a week with no awards or deductions at all, such as a break, is skipped). ' +
                     'Awards and deductions, one per student, among students enrolled now. Nobody is named.</p>' +
                 '<div class="wu-scroll-x"><table class="student-table wc-trend-table">' +
-                    '<thead><tr><th scope="col">Expectation</th><th scope="col">Where</th>' +
+                    '<thead><tr><th scope="col" class="wc-pin">Expectation</th><th scope="col">Where</th>' +
                     '<th scope="col">One-to-one praise</th><th scope="col">Individual deductions</th>' +
                     '<th scope="col">One-to-one to individual</th>' +
                     '<th scope="col">Small-group awards (2&ndash;4)</th><th scope="col">Small-group deductions (2&ndash;4)</th>' +
@@ -34597,18 +35410,19 @@
                     '<th scope="col">Many-adults check</th></tr></thead>' +
                     '<tbody>' + body + '</tbody>' +
                 '</table></div>' +
+                '<p class="wc-trend-note">Staff mostly used Not Being Present for engagement (phones, off task), not for lateness ' +
+                    'or absence (read from the notes, Sep 14 &ndash; Oct 2).</p>' +
+                other +
+                cashFoldHtml('balance-how', 'How this is counted',
                 '<p class="wc-trend-note">Like for like: the ratio compares praise given to one student at a time with deductions ' +
                     'given to one student at a time. Small-group and whole-class awards and deductions sit in their own columns, ' +
                     'outside it. It is a reading, not a target. One-to-one praise is an award to one student with a note that adult ' +
                     'did not use for any other student that day.</p>' +
-                '<p class="wc-trend-note">A pattern is the school&rsquo;s only when at least ' + CASH_MANY_ADULTS_MIN + ' adults ' +
+                '<p class="wc-trend-note">Many-adults check: a pattern is the school&rsquo;s only when at least ' + CASH_MANY_ADULTS_MIN + ' adults ' +
                     'gave its individual deductions and none gave more than ' + Math.round(CASH_MANY_ADULTS_TOP_SHARE * 100) + '% of ' +
                     'them; otherwise the row is greyed. The whole school is greyed too when a campus is, because two campuses each ' +
                     'led by one adult add up to a pattern that is neither&rsquo;s. Checked from ' + CASH_RATIO_MIN_DEDUCTIONS +
-                    ' individual deductions.</p>' +
-                '<p class="wc-trend-note">Staff mostly used Not Being Present for engagement (phones, off task), not for lateness ' +
-                    'or absence (read from the notes, Sep 14 &ndash; Oct 2).</p>' +
-                other +
+                    ' individual deductions.</p>') +
             '</div>';
         }
 
@@ -43703,9 +44517,13 @@
             const totalFlagged = res.neverCount + res.quietCount;
             if (chip) chip.textContent = totalFlagged + ' of ' + res.considered;
             if (sub) {
-                sub.textContent = seesAll
+                // ITS RULE, IN ITS SUBTITLE (2026-10-06): Cash Analytics' Reach
+                // on Students reads expectation awards over 10 school days, so
+                // the two lists differ, and each now says how it counts.
+                sub.textContent = (seesAll
                     ? 'Students awarded less than the school average, who are doing nothing wrong.'
-                    : 'Students in your classes awarded less than the school average, who are doing nothing wrong.';
+                    : 'Students in your classes awarded less than the school average, who are doing nothing wrong.') +
+                    ' Last ' + QUIET_WINDOW_DAYS + ' days, any award.';
             }
 
             list.innerHTML = rows.map(r => {
@@ -44800,25 +45618,15 @@
             //
             // A CALENDAR week, not a Raffle cycle: this screen must not depend
             // on a cycle being set, and the cycle notice is gone from the UI.
-            const weekStart = (function () {
-                const d = new Date();
-                d.setHours(0, 0, 0, 0);
-                // Monday. getDay() is 0 on Sunday, which unadjusted would start
-                // the week the day before it ends.
-                d.setDate(d.getDate() - ((d.getDay() + 6) % 7));
-                return d.getTime();
-            })();
-
-            const cashThisWeek = (Array.isArray(cashTransactions) ? cashTransactions : [])
-                .filter(t => {
-                    if (!t || !t.timestamp) return false;
-                    if (new Date(t.timestamp).getTime() < weekStart) return false;
-                    if (seesAll) return true;
-                    const actor = t.teacherId || t.addedBy || t.removedBy;
-                    // An unattributed movement belongs to nobody, not everybody
-                    // -- the same rule My Activity needed.
-                    return actor && currentUser && actor === currentUser.id;
-                });
+            //
+            // ONE FUNCTION FOR THE WEEK AND ITS ROWS (2026-10-06), shared with
+            // Cash Analytics' "This week so far" strip, which says it is this
+            // gauge's number: the same Monday, the same rows, the same count.
+            const weekStart = cashGaugeWeekStartMs(Date.now());
+            // null means the whole school, so a person without an id is
+            // '' (nobody's rows), never null -- as the inline filter was.
+            const cashThisWeek = cashGaugeWeekRows(cashTransactions, weekStart, null,
+                seesAll ? null : ((currentUser && currentUser.id) || ''));
 
             // Which of those are behaviours, and of which kind -- one rule for
             // the tile and the gauge below, the same as Cash Analytics.
@@ -44945,8 +45753,9 @@
             // bought was a "corrective", a refund or a withdrawn deduction was
             // a "positive", and a school-wide gauge in the week of a store sale
             // read as a week of discipline.
-            const positives = cashThisWeek.filter(t => cashBehaviourKind(t, _weekReversedIds) === 'award').length;
-            const negatives = cashThisWeek.filter(t => cashBehaviourKind(t, _weekReversedIds) === 'deduct').length;
+            const gaugeTally = cashRowKindCounts(cashThisWeek, _weekReversedIds);
+            const positives = gaugeTally.awards;
+            const negatives = gaugeTally.deductions;
 
             // PER STUDENT FOR EVERYONE (owner, 2026-10-06): the existing
             // screens keep per-student counting until staff have been told;

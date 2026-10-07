@@ -11,26 +11,26 @@
     <!-- PWA: installable to the home screen, and the shell push relies on. The
          manifest is versioned like the other assets so an updated icon or name
          is actually picked up. -->
-    <link rel="manifest" href="manifest.json?v=20261006d">
-    <link rel="icon" href="favicon.ico?v=20261006d" sizes="any">
-    <link rel="icon" type="image/png" href="assets/favicon-32.png?v=20261006d" sizes="32x32">
-    <link rel="icon" type="image/png" href="assets/favicon-16.png?v=20261006d" sizes="16x16">
+    <link rel="manifest" href="manifest.json?v=20261006e">
+    <link rel="icon" href="favicon.ico?v=20261006e" sizes="any">
+    <link rel="icon" type="image/png" href="assets/favicon-32.png?v=20261006e" sizes="32x32">
+    <link rel="icon" type="image/png" href="assets/favicon-16.png?v=20261006e" sizes="16x16">
     <meta name="theme-color" content="#2F67A7">
-    <link rel="apple-touch-icon" href="assets/icon-180.png?v=20261006d">
+    <link rel="apple-touch-icon" href="assets/icon-180.png?v=20261006e">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="apple-mobile-web-app-title" content="Wildcat Hub">
-    <link rel="stylesheet" href="styles.css?v=20261006d">
+    <link rel="stylesheet" href="styles.css?v=20261006e">
     <!-- Motion + design foundation. Loads after styles.css so its tokens can
          read the app palette, and it only ever styles opt-in classes. -->
-    <link rel="stylesheet" href="wildcat-motion.css?v=20261006d">
+    <link rel="stylesheet" href="wildcat-motion.css?v=20261006e">
     <!-- The shared language between the teacher app and the student portal.
          LAST, and it has to be last: its tokens read the app palette from
          styles.css and its motion tokens from wildcat-motion.css, and its
          primitives are the ones that must win where both files style the
          same element. Everything here is opt-in `.wu-*`. -->
-    <link rel="stylesheet" href="wildcat-ui.css?v=20261006d">
+    <link rel="stylesheet" href="wildcat-ui.css?v=20261006e">
 </head>
 <body>
     <!-- Standard full-screen loader. One overlay for every page-level wait
@@ -49,7 +49,7 @@
     <div id="loginScreen" class="login-container">
         <!-- School Logo -->
         <div style="text-align: center; margin-bottom: 20px;">
-            <img src="assets/westbrook-logo.png?v=20261006d" alt="Westbrook Academy Logo" style="max-width: 190px; width: 100%; height: auto;">
+            <img src="assets/westbrook-logo.png?v=20261006e" alt="Westbrook Academy Logo" style="max-width: 190px; width: 100%; height: auto;">
         </div>
         
         <h1 style="font-size: 22px; font-weight: 700; color: #1a1a2e; margin-bottom: 4px;">🎟️ Wildcat Hub</h1>
@@ -184,7 +184,7 @@
                      asset, so there is one logo to replace when the school
                      changes it. -->
                 <div class="wp-brand">
-                    <img src="assets/westbrook-logo.png?v=20261006d"
+                    <img src="assets/westbrook-logo.png?v=20261006e"
                          alt="Westbrook Academy" class="wp-brandlogo" id="wpBrandLogo">
                     <!-- The product's name, which appeared nowhere on the
                          student's screen while the teacher's topbar has said
@@ -412,7 +412,7 @@
         <header class="app-topbar">
             <button class="sidebar-toggle" id="sidebarToggle" onclick="toggleSidebar()" aria-label="Toggle navigation"><svg class="wc-icon" aria-hidden="true" focusable="false"><use href="#wci-menu"></use></svg></button>
             <div class="topbar-brand">
-                <img src="assets/westbrook-logo.png?v=20261006d" alt="School logo" class="topbar-logo">
+                <img src="assets/westbrook-logo.png?v=20261006e" alt="School logo" class="topbar-logo">
                 <span class="topbar-school">Wildcat Hub</span>
             </div>
             <div class="topbar-right">
@@ -648,6 +648,10 @@
                                 <div>
                                     <p class="wu-eyebrow">This week</p>
                                     <h3 class="wu-panel-title">Positive to corrective</h3>
+                                    <!-- Said on the gauge itself (2026-10-06): the
+                                         same week reads lower on Trends, which
+                                         counts each press of Award once. -->
+                                    <p class="wu-panel-sub">Counted per student</p>
                                 </div>
                             </div>
                             <!-- Went to Wildcat Jackpot when this panel measured
@@ -657,10 +661,14 @@
                                  ADMINS AND PBIS (2026-10-01), not .admin-only:
                                  the PBIS lead is who the ratio is for.
                                  renderTeacherDashboard shows it through
-                                 cashStaffViewsAllowed; hidden until then. -->
+                                 cashStaffViewsAllowed; hidden until then.
+                                 LANDS ON OVERVIEW (2026-10-06), whose "This
+                                 week so far" strip shows this gauge's own
+                                 number beside the per-press one, whatever
+                                 Analytics tab was open last. -->
                             <button type="button" class="wu-action" id="dashGaugeAnalyticsBtn" aria-label="Open cash analytics"
                                     style="display: none;"
-                                    onclick="switchTab('cashAnalytics')">&#8599;</button>
+                                    onclick="openCashAnalytics('dashboard')">&#8599;</button>
                             <div class="wu-panel-body wc-gauge-body">
                                 <!-- The three caps are what give the arc its
                                      rounded ends. Two are fixed at the ends of
@@ -4638,41 +4646,83 @@
                 <div class="page-header">
                     <div>
                         <h2 class="page-title"><svg class="wc-icon" aria-hidden="true" focusable="false"><use href="#wci-analytics"></use></svg> Cash Analytics</h2>
-                        <p class="page-subtitle">Participation, equity, and behavior patterns</p>
+                        <p class="page-subtitle">How praise and corrections are going, for students, staff and each expectation.</p>
                     </div>
                     <span class="mode-pill"></span>
                 </div>
-                
-                <!-- Analytics Subtabs. QUICK TIDY (owner, 2026-10-06): Overview
-                     (was Data Dashboard), Trends second, Staff (was Teacher
-                     Interactions) last, the empty Transactions tab hidden. Only
-                     the labels and order changed: the ids and the subtab keys
-                     ('dashboard', 'trends', 'teacherInteractions') are the same. -->
-                <div style="display: flex; gap: 10px; margin-bottom: 30px; border-bottom: 2px solid #e0e0e0; padding-bottom: 10px; overflow-x: auto;">
-                    <button class="analytics-subtab active" onclick="switchAnalyticsSubtab('dashboard')" id="dashboardSubtab" style="padding: 10px 20px; background: #C08A2E; border: none; border-radius: 6px 6px 0 0; cursor: pointer; font-weight: 600; white-space: nowrap;">
-                        <svg class="wc-icon" aria-hidden="true" focusable="false"><use href="#wci-analytics"></use></svg> Overview
-                    </button>
-                    <button class="analytics-subtab" onclick="switchAnalyticsSubtab('trends')" id="trendsSubtab" style="padding: 10px 20px; background: #f5f5f5; color: #333; border: none; border-radius: 6px 6px 0 0; cursor: pointer; font-weight: 600; white-space: nowrap;">
-                        <svg class="wc-icon" aria-hidden="true" focusable="false"><use href="#wci-trending-up"></use></svg> Trends
-                    </button>
+
+                <!-- ONE TAB PER QUESTION (owner, 2026-10-06, "the full
+                     version"). Overview | Trends | Students | Expectations |
+                     Staff. Staff is last, so the first four buttons sit in the
+                     same place for every role.
+
+                     THE KEYS DID NOT CHANGE: 'dashboard' is Overview and
+                     'teacherInteractions' is Staff, as they were, so every
+                     caller and test that names them still lands; 'transactions',
+                     'overview' and 'staff' are aliases (cashViewKey).
+
+                     SCOPED BY ID, NOT BY .analytics-tabs. Discipline's
+                     switchAnalyticsTab clears .active on every
+                     '.analytics-tabs .analytics-tab' on the page, so this bar
+                     borrows the pill look (.analytics-tab) and never that
+                     container class. The buttons carry data-cview, never
+                     data-atab, and no pane here is an .analytics-pane. -->
+                <div class="subtab-bar wc-cash-views" id="cashAnalyticsViews" role="group" aria-label="Cash Analytics views">
+                    <button type="button" class="analytics-tab active" id="dashboardSubtab" data-cview="dashboard" aria-pressed="true"
+                            onclick="switchAnalyticsSubtab('dashboard')"><svg class="wc-icon" aria-hidden="true" focusable="false"><use href="#wci-analytics"></use></svg> Overview</button>
+                    <button type="button" class="analytics-tab" id="trendsSubtab" data-cview="trends" aria-pressed="false"
+                            onclick="switchAnalyticsSubtab('trends')"><svg class="wc-icon" aria-hidden="true" focusable="false"><use href="#wci-trending-up"></use></svg> Trends</button>
+                    <button type="button" class="analytics-tab" id="studentsSubtab" data-cview="students" aria-pressed="false"
+                            onclick="switchAnalyticsSubtab('students')"><svg class="wc-icon" aria-hidden="true" focusable="false"><use href="#wci-students"></use></svg> Students</button>
+                    <button type="button" class="analytics-tab" id="expectationsSubtab" data-cview="expectations" aria-pressed="false"
+                            onclick="switchAnalyticsSubtab('expectations')"><svg class="wc-icon" aria-hidden="true" focusable="false"><use href="#wci-target"></use></svg> Expectations</button>
                     <!-- Names colleagues: admins and the PBIS team only
                          (2026-10-01). Hidden here and shown by
                          applyCashAnalyticsGate, so nobody else sees it flash. -->
-                    <button class="analytics-subtab" onclick="switchAnalyticsSubtab('teacherInteractions')" id="teacherInteractionsSubtab" style="display: none; padding: 10px 20px; background: #f5f5f5; color: #333; border: none; border-radius: 6px 6px 0 0; cursor: pointer; font-weight: 600; white-space: nowrap;">
-                        <svg class="wc-icon" aria-hidden="true" focusable="false"><use href="#wci-teachers"></use></svg> Staff
-                    </button>
-                    <!-- Transactions: REMOVED FROM THE BAR (2026-10-06, owner's quick
-                         tidy). It was an empty placeholder ("Transaction history
-                         will be displayed here."); every movement is in the Cash
-                         Audit Log and Student Accounts. The button stays in the
-                         page, hidden, so its id and the pane keep working. -->
-                    <button class="analytics-subtab" onclick="switchAnalyticsSubtab('transactions')" id="transactionsSubtab" style="display: none; padding: 10px 20px; background: #f5f5f5; color: #333; border: none; border-radius: 6px 6px 0 0; cursor: pointer; font-weight: 600; white-space: nowrap;">
-                        <svg class="wc-icon" aria-hidden="true" focusable="false"><use href="#wci-cash"></use></svg> Transactions
-                    </button>
+                    <button type="button" id="teacherInteractionsSubtab" style="display: none;" class="analytics-tab" data-cview="teacherInteractions" aria-pressed="false"
+                            onclick="switchAnalyticsSubtab('teacherInteractions')"><svg class="wc-icon" aria-hidden="true" focusable="false"><use href="#wci-teachers"></use></svg> Staff</button>
                 </div>
-                
-                <!-- Dashboard Subtab -->
+                <p class="wc-cash-words"><button type="button" class="wc-insight-link" onclick="openCashGlossary(this)">What do these words mean?</button></p>
+
+                <!-- WHAT MOVED WHERE: once per person on this browser, closed
+                     with the x. A BARE DIV with no class of its own, so the
+                     hidden attribute cannot be beaten by a display rule;
+                     renderCashMovedNote fills it with the wording for this
+                     person's role (teachers never had Teacher Interactions). -->
+                <div id="cashMovedNote" hidden></div>
+
+                <!-- OVERVIEW (was Data Dashboard). The headline is this week,
+                     whole school, counted both ways; the tiles under it are
+                     the all-time per-student figures they always were. -->
                 <div id="analyticsDashboard" class="analytics-subtab-content">
+                    <p class="wc-view-q">How are we doing against 5 to 1, this week and since cash began?</p>
+                    <p class="wc-trend-note">The big picture first. The week strip is the headline; the tiles further down count the whole time since cash history began.</p>
+
+                    <div class="wc-card panel-card wc-week-strip">
+                        <h3 class="chart-title"><svg class="wc-icon" aria-hidden="true" focusable="false"><use href="#wci-calendar"></use></svg> Whole school: awards to deductions</h3>
+                        <!-- Filled by renderCashWeekStrip: per student by the
+                             Dashboard gauge's own count, per press by Trends' own
+                             weeks. Nameless for every role. -->
+                        <div id="cashWeekStrip"><p class="wc-trend-note">Loading&hellip;</p></div>
+                    </div>
+
+                    <div class="wc-card panel-card">
+                        <h3 class="chart-title"><svg class="wc-icon" aria-hidden="true" focusable="false"><use href="#wci-compass"></use></svg> What&rsquo;s on each tab</h3>
+                        <ul class="wc-guide">
+                            <li><span><b>Trends</b> &middot; Week by week, is praise going up, and are we getting closer to 5 to 1?</span>
+                                <button type="button" class="btn btn-secondary wc-guide-go" onclick="switchAnalyticsSubtab('trends')">Open Trends</button></li>
+                            <li><span><b>Students</b> &middot; Which students are adults noticing, and who has been missed? (By name for admins and the PBIS team; your own students are on your Dashboard.)</span>
+                                <button type="button" class="btn btn-secondary wc-guide-go" onclick="switchAnalyticsSubtab('students')">Open Students</button></li>
+                            <li><span><b>Expectations</b> &middot; For each of the four expectations, is one-to-one praise keeping up with corrections?</span>
+                                <button type="button" class="btn btn-secondary wc-guide-go" onclick="switchAnalyticsSubtab('expectations')">Open Expectations</button></li>
+                            <!-- Admins and the PBIS team only, like the Staff button: applyCashAnalyticsGate. -->
+                            <li id="cashGuideStaff" style="display: none;"><span><b>Staff</b> &middot; Which adults are using Cash, and how?</span>
+                                <button type="button" class="btn btn-secondary wc-guide-go" onclick="switchAnalyticsSubtab('teacherInteractions')">Open Staff</button></li>
+                        </ul>
+                    </div>
+
+                    <p class="wc-trend-note">These tiles count <b>per student</b>: a whole-class award counts once for every child in it, the same way the Dashboard gauge counts.</p>
+
                     <!-- Grade Filter Checkboxes. GRADES FOR ADMINS AND PBIS ONLY
                          (2026-10-06): everyone else picks a campus, and
                          applyCashAnalyticsGate shows the one that applies.
@@ -4680,7 +4730,7 @@
                          who keep them; dashSelectedGrades reads by role, so
                          a teacher never reads a grade either way. -->
                     <div class="wc-card banner-card">
-                        <h3 class="chart-title"><svg class="wc-icon" aria-hidden="true" focusable="false"><use href="#wci-grade"></use></svg> <span id="dashFilterTitle">Filter by Grade Level</span></h3>
+                        <h3 class="chart-title"><svg class="wc-icon" aria-hidden="true" focusable="false"><use href="#wci-grade"></use></svg> <span id="dashFilterTitle">These tiles count (by grade):</span></h3>
                         <div id="dashCampusFilter" style="display: none; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px;">
                             <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; font-weight: 500;">
                                 <input type="checkbox" class="campus-filter-checkbox" value="middle" onchange="updateDashboard()" checked style="width: 18px; height: 18px; cursor: pointer;">
@@ -4721,17 +4771,19 @@
                                 12th Grade
                             </label>
                         </div>
+                        <p class="wc-trend-note wc-filter-scope">Covers the three tiles and the breakdown below, nothing else.</p>
                     </div>
-                    
-                    <!-- Key Metrics Cards -->
+
+                    <div class="wc-chips"><span class="wc-chip" id="dashTilesSince">All time since cash history began</span><span class="wc-chip wc-chip-unit">per student</span></div>
+                    <!-- Key Metrics Cards. One card style for all three (2026-10-06). -->
                     <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 20px; margin-bottom: 30px;">
                         <!-- Average Behaviors per Student -->
-                        <div class="wc-card banner-card">
-                            <div style="font-size: 14px; opacity: 0.9; margin-bottom: 10px; font-weight: 500;"><svg class="wc-icon" aria-hidden="true" focusable="false"><use href="#wci-analytics"></use></svg> Avg Behaviors per Student</div>
-                            <div id="avgBehaviorsPerStudent" style="font-size: 36px; font-weight: 700; margin-bottom: 5px;">0.0</div>
-                            <div style="font-size: 12px; opacity: 0.8;">Total behaviors received</div>
+                        <div class="wc-card wc-stat stat-compact">
+                            <div class="stat-label"><svg class="wc-icon" aria-hidden="true" focusable="false"><use href="#wci-analytics"></use></svg> Avg Behaviors per Student</div>
+                            <div class="stat-num" id="avgBehaviorsPerStudent">0.0</div>
+                            <div style="font-size: 12px; opacity: 0.8;">Awards and deductions received</div>
                         </div>
-                        
+
                         <!-- Awards to deductions, against the 5 to 1 goal
                              (2026-10-01; was a positivity percentage).
                              Filled by setCashRatioTile. -->
@@ -4740,66 +4792,82 @@
                             <div class="stat-num" id="avgPositivityRatio">&mdash;</div>
                             <div id="avgPositivityRatioNote" style="font-size: 12px; opacity: 0.8;">Goal: 5 to 1</div>
                         </div>
-                        
+
                         <!-- Average Dollars per Student -->
                         <div class="wc-card wc-stat stat-compact">
                             <div class="stat-label"><svg class="wc-icon" aria-hidden="true" focusable="false"><use href="#wci-cash"></use></svg> Avg Balance per Student</div>
                             <div class="stat-num" id="avgDollarsPerStudent">$0</div>
-                            <div style="font-size: 12px; opacity: 0.8;">Current account balance</div>
+                            <div style="font-size: 12px; opacity: 0.8;">Current account balance <span class="wc-chip wc-chip-money">dollars: balances, not behaviour</span></div>
                         </div>
                     </div>
-                    
+
                     <!-- Detailed Breakdown -->
                     <div class="wc-card panel-card">
                         <h3 class="chart-title"><svg class="wc-icon" aria-hidden="true" focusable="false"><use href="#wci-list"></use></svg> Detailed Breakdown</h3>
-                        
+                        <div class="wc-chips"><span class="wc-chip" id="dashBreakdownSince">All time since cash history began</span><span class="wc-chip wc-chip-unit">per student</span></div>
+
                         <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 20px;">
                             <div>
                                 <div style="font-size: 13px; color: #666; margin-bottom: 5px;">Total Students</div>
                                 <div id="dashTotalStudents" style="font-size: 24px; font-weight: 600; color: #333;">0</div>
                             </div>
                             <div>
-                                <div style="font-size: 13px; color: #666; margin-bottom: 5px;">Total Positive Behaviors</div>
+                                <div style="font-size: 13px; color: #666; margin-bottom: 5px;">Awards (per student)</div>
                                 <div id="dashTotalPositive" style="font-size: 24px; font-weight: 600; color: #10b981;">0</div>
                             </div>
                             <div>
-                                <div style="font-size: 13px; color: #666; margin-bottom: 5px;">Total Negative Behaviors</div>
+                                <div style="font-size: 13px; color: #666; margin-bottom: 5px;">Deductions (per student)</div>
                                 <div id="dashTotalNegative" style="font-size: 24px; font-weight: 600; color: #ef4444;">0</div>
                             </div>
+                        </div>
+                        <h4 class="wc-insight-sub">Cash (dollars)</h4>
+                        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 20px;">
                             <div>
-                                <div style="font-size: 13px; color: #666; margin-bottom: 5px;">Total Cash Awarded</div>
+                                <div style="font-size: 13px; color: #666; margin-bottom: 5px;">Cash Awarded</div>
                                 <div id="dashTotalAwarded" style="font-size: 24px; font-weight: 600; color: #2F67A7;">$0</div>
                             </div>
                             <div>
-                                <div style="font-size: 13px; color: #666; margin-bottom: 5px;">Total Cash Deducted</div>
+                                <div style="font-size: 13px; color: #666; margin-bottom: 5px;">Cash Deducted</div>
                                 <div id="dashTotalDeducted" style="font-size: 24px; font-weight: 600; color: #f59e0b;">$0</div>
                             </div>
                             <div>
-                                <div style="font-size: 13px; color: #666; margin-bottom: 5px;">Total in Circulation</div>
+                                <div style="font-size: 13px; color: #666; margin-bottom: 5px;">In Circulation (balances)</div>
                                 <div id="dashTotalCirculation" style="font-size: 24px; font-weight: 600; color: #8b5cf6;">$0</div>
                             </div>
                         </div>
                     </div>
+
+                    <div class="wc-card panel-card">
+                        <h3 class="chart-title"><svg class="wc-icon" aria-hidden="true" focusable="false"><use href="#wci-book"></use></svg> How we count</h3>
+                        <p class="wc-trend-note">The words used across these tabs, in one list. The same list opens from &ldquo;What do these words mean?&rdquo; under the tab bar.</p>
+                        <button type="button" class="btn btn-secondary" onclick="openCashGlossary(this)">Show the word list</button>
+                    </div>
                 </div>
-                
-                <!-- Teacher Interactions Subtab -->
+
+                <!-- STAFF (was Teacher Interactions; admins and the PBIS team
+                     only). The Flagged list moved to Students; the latest
+                     movements are folded. -->
                 <div id="analyticsTeacherInteractions" class="analytics-subtab-content" style="display: none;">
-                    <h3 class="chart-title"><svg class="wc-icon" aria-hidden="true" focusable="false"><use href="#wci-teachers"></use></svg> Teacher Engagement & Student Intervention Analytics</h3>
-                    <p style="color: #666; margin-bottom: 30px;">Monitor teacher activity, identify intervention opportunities, and track behavior patterns</p>
-                    
+                    <p class="wc-view-q">Which adults are using Cash, and how?</p>
+                    <p class="wc-trend-note">Each adult&rsquo;s use of Cash since cash history began, counted per student. For every single award or deduction, open the Cash Audit Log.</p>
+
                     <!-- Summary Cards -->
+                    <div class="wc-chips"><span class="wc-chip" id="staffCardsSince">All time since cash history began</span><span class="wc-chip wc-chip-unit">per student</span></div>
                     <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 20px; margin-bottom: 30px;">
                         <div class="wc-card banner-card">
                             <div style="font-size: 14px; opacity: 0.9; margin-bottom: 10px;">Active Teachers</div>
                             <div id="teacherInteractionsActiveCount" style="font-size: 36px; font-weight: 700;">0</div>
+                            <div style="font-size: 12px; opacity: 0.85;">anyone who has used Cash since cash history began</div>
                         </div>
                         <div class="wc-card wc-stat stat-compact">
-                            <div class="stat-label">Total Positive Actions</div>
+                            <div class="stat-label">Awards</div>
                             <div class="stat-num" id="teacherInteractionsTotalPositive">0</div>
+                            <div style="font-size: 12px; opacity: 0.8;">per student</div>
                         </div>
                         <div class="wc-card wc-stat stat-compact">
-                            <div class="stat-label">Total Negative Actions</div>
+                            <div class="stat-label">Deductions</div>
                             <div class="stat-num" id="teacherInteractionsTotalNegative">0</div>
+                            <div style="font-size: 12px; opacity: 0.8;">per student</div>
                         </div>
                         <div class="wc-card wc-stat stat-compact">
                             <div class="stat-label">Awards to Deductions</div>
@@ -4808,22 +4876,27 @@
                         </div>
                     </div>
 
-                    <!-- Teacher Activity Table -->
+                    <!-- Teacher Activity Table. SORTABLE (owner, 2026-10-06):
+                         click a heading to sort, click again to reverse. -->
                     <div class="wc-card panel-card">
                         <h3 class="chart-title"><svg class="wc-icon" aria-hidden="true" focusable="false"><use href="#wci-analytics"></use></svg> Teacher Activity Overview</h3>
-                        <p class="wc-trend-note">Counted per student: a whole-class award counts once for each student it reached. The summary card above and Trends count each press of Award once.</p>
+                        <div class="wc-chips"><span class="wc-chip" id="staffTableSince">All time since cash history began</span><span class="wc-chip wc-chip-unit">per student</span></div>
+                        <!-- THE CAPTION WAS WRONG until 2026-10-06: it said the
+                             summary cards count each press of Award once. They
+                             count per student, like this table. -->
+                        <p class="wc-trend-note">Counted per student, like the cards above: a whole-class award counts once for each student it reached. Trends counts each press of Award once, so it reads lower. Click a column heading to sort.</p>
                         <div style="overflow-x: auto;">
-                            <table class="student-table">
+                            <table class="student-table" id="teacherActivityTable">
                                 <thead style="background: #2F67A7;">
                                     <tr>
-                                        <th>Teacher</th>
-                                        <th>Total Interactions</th>
-                                        <th>Positive</th>
-                                        <th>Negative</th>
-                                        <th>Awards to Deductions (goal: 5 to 1)</th>
-                                        <th>$ Awarded</th>
-                                        <th>$ Deducted</th>
-                                        <th>Students Impacted</th>
+                                        <th scope="col"><button type="button" class="wc-sort-btn" data-sort-table="teacherActivity" data-sort-col="0" data-sort-type="text" onclick="wcSortClick(this)">Teacher<span class="wc-sort-arrow" aria-hidden="true">&#8645;</span></button></th>
+                                        <th scope="col"><button type="button" class="wc-sort-btn" data-sort-table="teacherActivity" data-sort-col="1" onclick="wcSortClick(this)">Total Interactions<span class="wc-sort-arrow" aria-hidden="true">&#8645;</span></button></th>
+                                        <th scope="col"><button type="button" class="wc-sort-btn" data-sort-table="teacherActivity" data-sort-col="2" onclick="wcSortClick(this)">Awards<span class="wc-sort-arrow" aria-hidden="true">&#8645;</span></button></th>
+                                        <th scope="col"><button type="button" class="wc-sort-btn" data-sort-table="teacherActivity" data-sort-col="3" onclick="wcSortClick(this)">Deductions<span class="wc-sort-arrow" aria-hidden="true">&#8645;</span></button></th>
+                                        <th scope="col"><button type="button" class="wc-sort-btn" data-sort-table="teacherActivity" data-sort-col="4" onclick="wcSortClick(this)">Awards to Deductions (goal: 5 to 1)<span class="wc-sort-arrow" aria-hidden="true">&#8645;</span></button></th>
+                                        <th scope="col"><button type="button" class="wc-sort-btn" data-sort-table="teacherActivity" data-sort-col="5" onclick="wcSortClick(this)">$ Awarded<span class="wc-sort-arrow" aria-hidden="true">&#8645;</span></button></th>
+                                        <th scope="col"><button type="button" class="wc-sort-btn" data-sort-table="teacherActivity" data-sort-col="6" onclick="wcSortClick(this)">$ Deducted<span class="wc-sort-arrow" aria-hidden="true">&#8645;</span></button></th>
+                                        <th scope="col"><button type="button" class="wc-sort-btn" data-sort-table="teacherActivity" data-sort-col="7" onclick="wcSortClick(this)">Students Reached<span class="wc-sort-arrow" aria-hidden="true">&#8645;</span></button></th>
                                     </tr>
                                 </thead>
                                 <tbody id="teacherActivityTableBody">
@@ -4833,94 +4906,118 @@
                                 </tbody>
                             </table>
                         </div>
+                        <p class="wc-trend-note">Three ways we count staff taking part. <b>Active Teachers</b> here is anyone who has used Cash since cash history began. <b>Trends</b> shows teachers who gave an award each week. <b>Students</b> shows staff with a PowerSchool class who gave an award last finished week.</p>
                     </div>
 
-                    <!-- Students Needing Intervention -->
+                    <!-- THE LATEST 100 MOVEMENTS, FOLDED (2026-10-06). It is a
+                         transaction log -- the Cash Audit Log's job -- and it
+                         made this tab thirteen screens long. Kept, closed, with
+                         its filters inside. A static <details>, never redrawn,
+                         so it stays open while its rows update. -->
                     <div class="wc-card panel-card">
-                        <h3 class="chart-title"><svg class="wc-icon" aria-hidden="true" focusable="false"><use href="#wci-warning"></use></svg> Students Flagged for Intervention</h3>
-                        <p style="color: #666; margin-bottom: 20px; font-size: 14px;">Students with high negative interactions or significantly negative balances</p>
-                        <div style="overflow-x: auto;">
-                            <table class="student-table">
-                                <thead style="background: #b3392f;">
-                                    <tr>
-                                        <th>Student</th>
-                                        <th>Grade</th>
-                                        <th>Current Balance</th>
-                                        <th>Total Deducted</th>
-                                        <th>Negative Behaviors</th>
-                                        <th>Primary Teachers</th>
-                                        <th>Action</th>
-                                    </tr>
-                                </thead>
-                                <tbody id="interventionStudentsTableBody">
-                                    <tr>
-                                        <td colspan="7" style="text-align: center; padding: 40px; color: #999;">No students flagged</td>
-                                    </tr>
-                                </tbody>
-                            </table>
-                        </div>
-                    </div>
+                        <h3 class="chart-title"><svg class="wc-icon" aria-hidden="true" focusable="false"><use href="#wci-search"></use></svg> Latest 100 cash movements</h3>
+                        <div class="wc-chips"><span class="wc-chip" data-sort-chip="teacherInteractionDetails" data-sort-default="Newest first">Newest first</span><span class="wc-chip wc-chip-unit">one row per student</span></div>
+                        <p class="wc-trend-note">Was &ldquo;Detailed Teacher-Student Interactions&rdquo;. The Cash Audit Log has the same columns for every movement.</p>
+                        <details class="wc-fold is-list" id="teacherInteractionDetailsFold">
+                            <summary>Show the latest 100</summary>
+                            <div class="wc-fold-body">
+                                <!-- Filter Controls -->
+                                <div style="display: flex; gap: 15px; margin-bottom: 20px; flex-wrap: wrap;">
+                                    <select id="teacherInteractionFilterTeacher" onchange="updateTeacherInteractionDetails()" class="wc-select">
+                                        <option value="">All Teachers</option>
+                                    </select>
+                                    <select id="teacherInteractionFilterType" onchange="updateTeacherInteractionDetails()" class="wc-select">
+                                        <option value="all">All Types</option>
+                                        <option value="positive">Awards only</option>
+                                        <option value="negative">Deductions only</option>
+                                    </select>
+                                    <input type="text" id="teacherInteractionFilterStudent" placeholder="Search student..." onkeyup="updateTeacherInteractionDetails()" class="wc-input">
+                                </div>
 
-                    <!-- Teacher-Student Interactions Detail -->
-                    <div class="wc-card panel-card">
-                        <h3 class="chart-title"><svg class="wc-icon" aria-hidden="true" focusable="false"><use href="#wci-search"></use></svg> Detailed Teacher-Student Interactions</h3>
-                        
-                        <!-- Filter Controls -->
-                        <div style="display: flex; gap: 15px; margin-bottom: 20px; flex-wrap: wrap;">
-                            <select id="teacherInteractionFilterTeacher" onchange="updateTeacherInteractionDetails()" class="wc-select">
-                                <option value="">All Teachers</option>
-                            </select>
-                            <select id="teacherInteractionFilterType" onchange="updateTeacherInteractionDetails()" class="wc-select">
-                                <option value="all">All Types</option>
-                                <option value="positive">Positive Only</option>
-                                <option value="negative">Negative Only</option>
-                            </select>
-                            <input type="text" id="teacherInteractionFilterStudent" placeholder="Search student..." onkeyup="updateTeacherInteractionDetails()" class="wc-input">
-                        </div>
-
-                        <div style="overflow-x: auto;">
-                            <table class="student-table">
-                                <thead style="background: #2F67A7;">
-                                    <tr>
-                                        <th>Date/Time</th>
-                                        <th>Teacher</th>
-                                        <th>Student</th>
-                                        <th>Grade</th>
-                                        <th>Behavior</th>
-                                        <th>Type</th>
-                                        <th>Amount</th>
-                                        <th>Notes</th>
-                                    </tr>
-                                </thead>
-                                <tbody id="teacherInteractionDetailsTableBody">
-                                    <tr>
-                                        <td colspan="8" style="text-align: center; padding: 40px; color: #999;">Loading interactions...</td>
-                                    </tr>
-                                </tbody>
-                            </table>
-                        </div>
+                                <div style="overflow-x: auto;">
+                                    <table class="student-table" id="teacherInteractionDetailsTable">
+                                        <thead style="background: #2F67A7;">
+                                            <tr>
+                                                <th scope="col"><button type="button" class="wc-sort-btn" data-sort-table="teacherInteractionDetails" data-sort-col="0" onclick="wcSortClick(this)">Date/Time<span class="wc-sort-arrow" aria-hidden="true">&#8645;</span></button></th>
+                                                <th scope="col"><button type="button" class="wc-sort-btn" data-sort-table="teacherInteractionDetails" data-sort-col="1" data-sort-type="text" onclick="wcSortClick(this)">Teacher<span class="wc-sort-arrow" aria-hidden="true">&#8645;</span></button></th>
+                                                <th scope="col"><button type="button" class="wc-sort-btn" data-sort-table="teacherInteractionDetails" data-sort-col="2" data-sort-type="text" onclick="wcSortClick(this)">Student<span class="wc-sort-arrow" aria-hidden="true">&#8645;</span></button></th>
+                                                <th scope="col"><button type="button" class="wc-sort-btn" data-sort-table="teacherInteractionDetails" data-sort-col="3" onclick="wcSortClick(this)">Grade<span class="wc-sort-arrow" aria-hidden="true">&#8645;</span></button></th>
+                                                <th scope="col"><button type="button" class="wc-sort-btn" data-sort-table="teacherInteractionDetails" data-sort-col="4" data-sort-type="text" onclick="wcSortClick(this)">Behavior<span class="wc-sort-arrow" aria-hidden="true">&#8645;</span></button></th>
+                                                <th scope="col"><button type="button" class="wc-sort-btn" data-sort-table="teacherInteractionDetails" data-sort-col="5" data-sort-type="text" onclick="wcSortClick(this)">Type<span class="wc-sort-arrow" aria-hidden="true">&#8645;</span></button></th>
+                                                <th scope="col"><button type="button" class="wc-sort-btn" data-sort-table="teacherInteractionDetails" data-sort-col="6" onclick="wcSortClick(this)">Amount<span class="wc-sort-arrow" aria-hidden="true">&#8645;</span></button></th>
+                                                <th scope="col"><button type="button" class="wc-sort-btn" data-sort-table="teacherInteractionDetails" data-sort-col="7" data-sort-type="text" onclick="wcSortClick(this)">Notes<span class="wc-sort-arrow" aria-hidden="true">&#8645;</span></button></th>
+                                            </tr>
+                                        </thead>
+                                        <tbody id="teacherInteractionDetailsTableBody">
+                                            <tr>
+                                                <td colspan="8" style="text-align: center; padding: 40px; color: #999;">Loading interactions...</td>
+                                            </tr>
+                                        </tbody>
+                                    </table>
+                                </div>
+                                <p class="wc-trend-note"><button type="button" class="wc-insight-link" onclick="switchTab('cashAudit')">Open the Cash Audit Log</button></p>
+                            </div>
+                        </details>
                     </div>
                 </div>
-                
-                <!-- Transactions Subtab -->
-                <div id="analyticsTransactions" class="analytics-subtab-content" style="display: none;">
-                    <div class="wc-card panel-card">
-                        <h3>Recent Transactions</h3>
-                        <p style="color: #666;">Transaction history will be displayed here.</p>
-                    </div>
-                </div>
-                
-                <!-- Trends Subtab. THE SCHOOL, WEEK BY WEEK (2026-10-01): staff
-                     who gave an award, awards and deductions against 5 to 1,
-                     and students awarded by grade with Middle School beside
-                     High School. School-wide and nameless, so open to everyone
-                     who can open this tab. Drawn by renderCashTrends from the
-                     ledger already loaded. -->
-                <div id="analyticsTrends" class="analytics-subtab-content" style="display: none;">
+
+                <!-- TRENDS AND STUDENTS, ONE PANE. renderCashTrends draws both
+                     into #cashTrendsBody in one go (one drawing, one place the
+                     privacy wipe empties), each panel in a bare
+                     <section data-csec="trends|students">; data-cview on this
+                     pane says which tab is open and styles.css hides the other
+                     tab's sections. School-wide and nameless for every role,
+                     except the named no-award list and Flagged (admins and
+                     PBIS, by role). -->
+                <div id="analyticsTrends" class="analytics-subtab-content" data-cview="trends" style="display: none;">
                     <div id="cashTrendsBody"></div>
+
+                    <!-- FLAGGED, moved from Teacher Interactions (2026-10-06).
+                         Names students and their primary teachers: admins and
+                         the PBIS team only. Starts hidden; applyCashAnalyticsGate
+                         shows it, wipeStaffCashViews empties its table, and
+                         switchAnalyticsSubtab('students') fills it -- the first
+                         open of Students must never read a false all-clear. -->
+                    <div class="wc-card panel-card" id="interventionCard" data-csec="students" style="display: none;">
+                        <h3 class="chart-title"><svg class="wc-icon" aria-hidden="true" focusable="false"><use href="#wci-warning"></use></svg> 5 or more deductions (or over $2,000 deducted)</h3>
+                        <div class="wc-chips"><span class="wc-chip" id="interventionSince">All time since cash history began</span><span class="wc-chip wc-chip-unit">per student</span><span class="wc-chip">admins and the PBIS team only</span></div>
+                        <p class="wc-trend-note">Was &ldquo;Students Flagged for Intervention&rdquo;. Same rule as before: five or more behaviour deductions, or more than $2,000 deducted for behaviour. A threshold list, not a ranking; click a column heading to sort it.</p>
+                        <details class="wc-fold is-list" id="interventionFold">
+                            <summary id="interventionFlaggedCount">Loading&hellip;</summary>
+                            <div class="wc-fold-body">
+                                <div style="overflow-x: auto;">
+                                    <table class="student-table" id="interventionStudentsTable">
+                                        <thead style="background: #b3392f;">
+                                            <tr>
+                                                <th scope="col"><button type="button" class="wc-sort-btn" data-sort-table="interventionStudents" data-sort-col="0" data-sort-type="text" onclick="wcSortClick(this)">Student<span class="wc-sort-arrow" aria-hidden="true">&#8645;</span></button></th>
+                                                <th scope="col"><button type="button" class="wc-sort-btn" data-sort-table="interventionStudents" data-sort-col="1" onclick="wcSortClick(this)">Grade<span class="wc-sort-arrow" aria-hidden="true">&#8645;</span></button></th>
+                                                <th scope="col"><button type="button" class="wc-sort-btn" data-sort-table="interventionStudents" data-sort-col="2" onclick="wcSortClick(this)">Current Balance<span class="wc-sort-arrow" aria-hidden="true">&#8645;</span></button></th>
+                                                <th scope="col"><button type="button" class="wc-sort-btn" data-sort-table="interventionStudents" data-sort-col="3" onclick="wcSortClick(this)">Total Deducted<span class="wc-sort-arrow" aria-hidden="true">&#8645;</span></button></th>
+                                                <th scope="col"><button type="button" class="wc-sort-btn" data-sort-table="interventionStudents" data-sort-col="4" onclick="wcSortClick(this)">Deductions<span class="wc-sort-arrow" aria-hidden="true">&#8645;</span></button></th>
+                                                <th scope="col"><button type="button" class="wc-sort-btn" data-sort-table="interventionStudents" data-sort-col="5" data-sort-type="text" onclick="wcSortClick(this)">Primary Teachers<span class="wc-sort-arrow" aria-hidden="true">&#8645;</span></button></th>
+                                                <th scope="col">Action</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody id="interventionStudentsTableBody">
+                                            <tr>
+                                                <td colspan="7" style="text-align: center; padding: 40px; color: #999;">Loading&hellip;</td>
+                                            </tr>
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                        </details>
+                    </div>
                 </div>
-                
-                <div id="cashAnalyticsDetails"></div>
+
+                <!-- EXPECTATIONS (2026-10-06): Expectation balance on its own
+                     tab. It sat BELOW every tab, under a filter it ignored and
+                     an empty placeholder. Drawn each time this tab opens
+                     (updateCashAnalytics), never on a gate run. -->
+                <div id="analyticsExpectations" class="analytics-subtab-content" style="display: none;">
+                    <p class="wc-view-q">For each expectation, is one-to-one praise keeping up with corrections, and is a pattern school-wide or one adult&rsquo;s habit?</p>
+                    <div id="cashAnalyticsDetails"></div>
+                </div>
             </div>
 
             <!-- Cash Audit Log Tab -->
@@ -5556,6 +5653,55 @@
          wcDrawPassDetail. -->
     <div id="passDetailModal" class="modal hidden" onclick="if (event.target === this) closePassDetail()">
         <div class="modal-content wc-pass-detail" style="max-width: 640px;" id="passDetailContent"></div>
+    </div>
+
+    <!-- CASH ANALYTICS: WHAT THE WORDS MEAN (2026-10-06). One list, opened
+         from "What do these words mean?" under the Cash Analytics tab bar on
+         every tab, and from "How we count" on Overview. The figures quoted
+         here (5 seconds, 5 or more, 3 adults, 40%, 10 school days) are the
+         constants in script.js; cash-nav.test.mjs checks they still agree. -->
+    <div id="cashGlossaryModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="cashGlossaryTitle"
+         onclick="if (event.target === this) closeCashGlossary()">
+        <div class="modal-content wc-glossary" style="max-width: 680px;">
+            <div class="wc-glossary-head">
+                <h2 id="cashGlossaryTitle">What the words mean</h2>
+                <button type="button" class="wc-moved-x" id="cashGlossaryClose" aria-label="Close the word list" onclick="closeCashGlossary()"><svg class="wc-icon" aria-hidden="true" focusable="false"><use href="#wci-x"></use></svg></button>
+            </div>
+            <dl class="wc-glossary-list">
+                <dt>Award, deduction</dt>
+                <dd>What an adult gives or takes away for behaviour. Store purchases, refunds, reversals and balance resets are never counted as either.</dd>
+                <dt>Per press of Award (a &ldquo;click&rdquo;)</dt>
+                <dd>One press of the Award button, however many students it reached: rows from the same adult, behaviour and note, each within 5 seconds of the one before. Trends counts this way unless you switch its first table.</dd>
+                <dt>Per student</dt>
+                <dd>One for each student a press reached, so a whole-class award to 30 students counts 30. The Dashboard gauge, the Overview tiles and the Staff tables count this way, which is why they read higher than Trends.</dd>
+                <dt>5 to 1</dt>
+                <dd>The school&rsquo;s goal: five awards for every deduction. No ratio is shown until there are 5 deductions, and no deductions at all is never a perfect score.</dd>
+                <dt>Expectation award, event award</dt>
+                <dd>An expectation award is for one of the four expectations: Be Respectful, Be Responsible, Be Safe, Be Present. An event or custom behaviour, such as Spirit Week, is not one; it counts only in the 5 to 1 ratio.</dd>
+                <dt>Whole-class, small-group, one-student</dt>
+                <dd>A press that reached 5 or more students, 2 to 4, or 1. A deduction given to 2 to 4 students at once is a group deduction, never an individual one.</dd>
+                <dt>One-to-one praise</dt>
+                <dd>An expectation award to one student, with a note that adult did not use for any other student that day.</dd>
+                <dt>Reach</dt>
+                <dd>Out of the students enrolled now, the share who got an expectation award in the last 10 school days.</dd>
+                <dt>Finished week, &ldquo;so far&rdquo;</dt>
+                <dd>A finished week is one whose Friday has passed. &ldquo;So far&rdquo; marks the week still running.</dd>
+                <dt>Provisional</dt>
+                <dd>The newest finished week on &ldquo;Did behaviour change?&rdquo;. PowerSchool corrections can still arrive for it.</dd>
+                <dt>Part-day absence</dt>
+                <dd>Absent for part of a school day but not the whole day, by the same whole-day rule as the attendance screens.</dd>
+                <dt>Per 100 students a day</dt>
+                <dd>How many for every 100 students on an ordinary school day, so a short week can sit beside a full one.</dd>
+                <dt>Recording question</dt>
+                <dd>Part-day absences jumped from Sep 25 at both campuses. The attendance office has been asked whether students changed or the recording did; until it answers, those cells are a question about the records.</dd>
+                <dt>Many-adults check</dt>
+                <dd>A pattern counts as the school&rsquo;s only when at least 3 adults gave its individual deductions and none gave more than 40% of them. Otherwise the row is greyed: a conversation with those adults, not a school-wide reteach.</dd>
+                <dt>Teacher accounts</dt>
+                <dd>Every account with the teacher role, vacancies and staff without a classroom included, so it is not a participation rate.</dd>
+                <dt>Sorting a table</dt>
+                <dd>Click a column heading to sort by it, and click again to reverse. Words such as &ldquo;too few deductions to judge&rdquo; always sit at the bottom. Sorting never changes a number.</dd>
+            </dl>
+        </div>
     </div>
 
     <div id="editTeacherModal" class="modal hidden">
@@ -6285,24 +6431,24 @@
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 
     <script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.6/dist/JsBarcode.all.min.js"></script>
-    <script src="wildcat-auth.js?v=20261006d"></script>
+    <script src="wildcat-auth.js?v=20261006e"></script>
     <!-- Before script.js, so window.wcMotion exists by the time any render
          function runs. Nothing here executes on its own. -->
     <!-- The icon sprite. Injected at load, before anything renders, so an
          icon is never a blank square for a frame. -->
-    <script src="wildcat-icons.js?v=20261006d"></script>
-    <script src="wildcat-motion.js?v=20261006d"></script>
-    <script src="wildcat-discipline.js?v=20261006d"></script>
-    <script src="wildcat-audit.js?v=20261006d"></script>
-    <script src="wildcat-cashaudit.js?v=20261006d"></script>
-    <script src="wildcat-dirty.js?v=20261006d"></script>
-    <script src="wildcat-update.js?v=20261006d"></script>
-    <script src="wildcat-modes.js?v=20261006d"></script>
-    <script src="wildcat-merge.js?v=20261006d"></script>
-    <script src="wildcat-savequeue.js?v=20261006d"></script>
-    <script src="wildcat-roster.js?v=20261006d"></script>
-    <script src="wildcat-store.js?v=20261006d"></script>
-    <script src="script.js?v=20261006d"></script>
+    <script src="wildcat-icons.js?v=20261006e"></script>
+    <script src="wildcat-motion.js?v=20261006e"></script>
+    <script src="wildcat-discipline.js?v=20261006e"></script>
+    <script src="wildcat-audit.js?v=20261006e"></script>
+    <script src="wildcat-cashaudit.js?v=20261006e"></script>
+    <script src="wildcat-dirty.js?v=20261006e"></script>
+    <script src="wildcat-update.js?v=20261006e"></script>
+    <script src="wildcat-modes.js?v=20261006e"></script>
+    <script src="wildcat-merge.js?v=20261006e"></script>
+    <script src="wildcat-savequeue.js?v=20261006e"></script>
+    <script src="wildcat-roster.js?v=20261006e"></script>
+    <script src="wildcat-store.js?v=20261006e"></script>
+    <script src="script.js?v=20261006e"></script>
 
     <!-- Register the service worker: it makes the app installable and is the
          shell that receives push notifications. Registered last so it never
@@ -6312,7 +6458,7 @@
     <script>
       if ('serviceWorker' in navigator) {
         window.addEventListener('load', function () {
-          navigator.serviceWorker.register('sw.js?v=20261006d').then(function (reg) {
+          navigator.serviceWorker.register('sw.js?v=20261006e').then(function (reg) {
             window.__wildcatSW = reg;
             console.log('[pwa] service worker registered', reg.scope);
           }).catch(function (err) {

@@ -64,7 +64,8 @@ function liftFn(src, name) {
 
 /** One single-line top-level const. */
 function liftConst(src, name) {
-  const m = new RegExp("^        const " + name + " = [^\\n]*;$", "m").exec(src);
+  // A single-line const -- or the one top-level var the view memory uses (WC_CASH_VIEW_KEY).
+  const m = new RegExp("^        (?:const|var) " + name + " = [^\\n]*;$", "m").exec(src);
   if (!m) throw new Error("missing const " + name);
   return m[0];
 }
@@ -102,8 +103,12 @@ function loadModules() {
 /** A fake element: what the renderers touch, and nothing more. */
 function makeEl(id) {
   const cls = new Set();
+  const attrs = new Map();
   return {
     id, innerHTML: "", textContent: "", value: "", hidden: false, style: {},
+    setAttribute: (k, v) => attrs.set(k, String(v)),
+    getAttribute: (k) => (attrs.has(k) ? attrs.get(k) : null),
+    removeAttribute: (k) => attrs.delete(k),
     classList: {
       add: (...c) => c.forEach((x) => cls.add(x)),
       remove: (...c) => c.forEach((x) => cls.delete(x)),
@@ -124,14 +129,12 @@ function makeDom(opts = {}) {
     if (!new RegExp(`\\bid="${id}"`).test(html)) return null;
     return els[id] || (els[id] = makeEl(id));
   };
-  const subtabs = ["dashboardSubtab", "teacherInteractionsSubtab", "transactionsSubtab", "trendsSubtab"];
-  const panes = ["analyticsDashboard", "analyticsTeacherInteractions", "analyticsTransactions", "analyticsTrends"];
+  // The tab bar and panes are reached BY ID since 2026-10-06 (switchAnalyticsSubtab
+  // walks CASH_VIEW_BUTTONS / CASH_VIEW_PANES), so no class selector is faked here.
   return {
     els,
     getElementById: byId,
     querySelectorAll: (sel) => {
-      if (sel === ".analytics-subtab") return subtabs.map(byId);
-      if (sel === ".analytics-subtab-content") return panes.map(byId);
       if (sel === ".grade-filter-checkbox:checked") return (opts.grades || ["6", "7", "8", "9", "10", "11", "12"]).map((v) => ({ value: v }));
       // Below admin and PBIS the Data Dashboard filters by campus (2026-10-06).
       if (sel === ".campus-filter-checkbox:checked") return (opts.campuses || ["middle", "high"]).map((v) => ({ value: v }));
@@ -160,6 +163,13 @@ const FNS = [
   "setCashNoticeSince", "cashNeverNoticed", "cashExpectationBalance", "cashOutcomeWeeks", "cashShortDate", "cashPraiseHtml",
   "cashShareWords", "cashReachHtml", "cashNeverNoticedHtml", "cashOutcomeHtml", "cashBalanceHtml", "cashPaneOpen",
   "cashTrendsContextNow", "cashNoticeMarksNow", "loadCashTrendsContext", "loadCashNeverNoticedMarks", "dashSelectedGrades",
+  // One tab per question, sorting, folds and the week strip (2026-10-06).
+  "cashViewKey", "cashRememberView", "cashRememberedView", "openCashAnalytics", "cashHistorySinceLabel", "cashSinceChips",
+  "cashChipsHtml", "cashMovedNoteKey", "cashMovedNoteHtml", "renderCashMovedNote", "dismissCashMovedNote", "openCashGlossary",
+  "closeCashGlossary", "cashFoldKey", "cashFoldHtml", "setCashFoldOpen", "cashFoldToggled", "wcSortCellText", "wcSortValue", "wcSortColumnType",
+  "wcSortOrder", "wcSortSet", "wcSortTh", "wcSortRowCellText", "wcSortRowsHtml", "wcSortMarkHead", "wcSortApplyDom", "wcSortClick", "cashViewerChanged", "cashBarIntoView",
+  "cashKeepPlace", "cashGlossaryKeydown",
+  "cashGaugeWeekStartMs", "cashGaugeWeekRows", "cashRowKindCounts", "cashWeekStripModel", "cashWeekStripHtml", "renderCashWeekStrip",
 ];
 const CONSTS = [
   "CASH_STAFF_VIEW_ROLES", "CASH_RATIO_GOAL", "CASH_RATIO_MIN_DEDUCTIONS", "CASH_LAUNCH_WEEK",
@@ -168,6 +178,8 @@ const CONSTS = [
   "CASH_REACH_SCHOOL_DAYS", "CASH_BALANCE_WEEKS", "CASH_MANY_ADULTS_MIN", "CASH_MANY_ADULTS_TOP_SHARE",
   "CASH_NAMED_LIST_MAX_SHARE", "CASH_OUTCOME_WEEKS_NEEDED", "CASH_MARKS_MIN_COVERAGE", "CASH_TRENDS_CONTEXT_MS",
   "CASH_COUNT_UNIT_KEY", "CASH_PART_DAY_QUESTION_FROM",
+  "CASH_VIEW_KEYS", "CASH_VIEW_ALIASES", "CASH_VIEW_BUTTONS", "CASH_VIEW_PANES", "WC_CASH_VIEW_KEY",
+  "_cashMovedNoteGone", "_cashOpenFolds", "_wcSortState", "WC_SORT_ARROWS", "_cashViewOwner",
 ];
 
 /**
@@ -188,6 +200,8 @@ function loadApp(src, G) {
     let _cashLedgerVersion = 0, _cashClickMemo = null, _cashTrendsCtx = null, _cashNoticeMarks = null, _cashNoticeGen = 0;
     let _cashNoticeSince = null, _cashCountUnitHere = null, _cashTrendsDrawnForStaff = false, _cashBalanceDrawnForStaff = false;
     let _paCache = null;
+    let _cashGlossaryOpener = null;
+    function switchTab(name) { (G.switched = G.switched || []).push(name); }
     const localStorage = G.localStorage || { getItem() { return null; }, setItem() {} };
     const document = G.document;
     const window = G.window;
@@ -392,18 +406,21 @@ console.log("\n   The home gauge and the cash tile (the shipped statements, run)
   const g = code;
   const a = g.indexOf("const _weekReversedIds = reversedCashIds();");
   const b = g.indexOf("const openReferrals", a);
-  const c = g.indexOf("const positives = cashThisWeek");
+  // Since 2026-10-06 the gauge counts through cashRowKindCounts, the function
+  // Cash Analytics' week strip shares with it (cash-nav.test.mjs runs the two side by side).
+  const c = g.indexOf("const gaugeTally = cashRowKindCounts(cashThisWeek");
   const d = g.indexOf("const RATIO_TARGET = CASH_RATIO_GOAL;", c);
   check("the gauge's statements were found", a > 0 && b > a && c > b && d > c);
   const run = (src, seesAll = false, rows = ledger()) => {
     const s = strip(src);
     const A = s.slice(s.indexOf("const _weekReversedIds = reversedCashIds();"), s.indexOf("const openReferrals", s.indexOf("const _weekReversedIds")));
-    const C = s.slice(s.indexOf("const positives = cashThisWeek"), s.indexOf("const RATIO_TARGET = CASH_RATIO_GOAL;", s.indexOf("const positives = cashThisWeek")));
+    const C = s.slice(s.indexOf("const gaugeTally = cashRowKindCounts(cashThisWeek"), s.indexOf("const RATIO_TARGET = CASH_RATIO_GOAL;", s.indexOf("const gaugeTally = cashRowKindCounts(cashThisWeek")));
     const { app } = world(src);
     const monday = new Date(); monday.setHours(0, 0, 0, 0); monday.setDate(monday.getDate() - ((monday.getDay() + 6) % 7));
     return new Function("cashThisWeek", "reversedCashIds", "cashBehaviourKind", "seesAll", "cashSchoolWeekClicks", "wcIsoDay", "weekStart",
+      "cashRowKindCounts",
       A + C + "return { cashAwarded, positives, negatives, gaugeCounts };")(rows, () => new Set(rows.filter((t) => t.reversesTxnId).map((t) => t.reversesTxnId)),
-      app.cashBehaviourKind, seesAll, app.cashSchoolWeekClicks, app.wcIsoDay, monday.getTime());
+      app.cashBehaviourKind, seesAll, app.cashSchoolWeekClicks, app.wcIsoDay, monday.getTime(), app.cashRowKindCounts);
   };
   const r = run(scriptSrc);
   check("a purchase is not 'Corrective' and a withdrawn deduction is not 'Positive'",
@@ -510,9 +527,9 @@ function directCallLeaks(w) {
 for (const who of [PARK, AIDE]) {
   const w = world(scriptSrc, { currentUser: who });
   w.app.switchAnalyticsSubtab("dashboard");
-  check(`${who.role}: the Teacher Interactions button is hidden`, el(w, "teacherInteractionsSubtab").style.display === "none");
+  check(`${who.role}: the Staff (was Teacher Interactions) button is hidden`, el(w, "teacherInteractionsSubtab").style.display === "none");
   w.app.switchAnalyticsSubtab("teacherInteractions");
-  check(`${who.role}: asking for it lands on the Data Dashboard`,
+  check(`${who.role}: asking for it lands on Overview (the Data Dashboard's pane)`,
     el(w, "analyticsDashboard").style.display === "block" && el(w, "analyticsTeacherInteractions").style.display === "none");
   const leaks = directCallLeaks(w);
   check(`${who.role}: a direct call to each renderer, checked after each, shows no colleague`, !leaks.length, leaks.join("; "));
@@ -643,8 +660,8 @@ function inactivityWorld(src, answer) {
     function wcForgetTab() {}
     function clearSession() {}
     function showStudentLogin() {}
-    ${liftConst(src, "CASH_STAFF_VIEW_ROLES")}
-    ${["cashStaffViewsAllowed", "wipeStaffCashViews", "applyCashAnalyticsGate", "resetInactivityTimer", "logout"]
+    ${["CASH_STAFF_VIEW_ROLES", "_wcSortState", "WC_SORT_ARROWS", "_cashViewOwner"].map((n) => liftConst(src, n)).join("\n")}
+    ${["cashStaffViewsAllowed", "wipeStaffCashViews", "wcSortMarkHead", "cashViewerChanged", "applyCashAnalyticsGate", "resetInactivityTimer", "logout"]
       .map((n) => liftFn(src, n)).join("\n")}
     return { resetInactivityTimer, logout, who: () => currentUser };`)(G);
   dom.getElementById("teacherActivityTableBody").innerHTML = "<tr><td>Mr. Park</td></tr>";
@@ -970,14 +987,15 @@ console.log("\n5. Trends: the school, week by week");
   check("the table shows 'launch week' and 'so far'", /launch week/.test(out) && /so far/.test(out));
   check("'of N teacher accounts' comes with the vacancy caveat on screen",
     /of 4 teacher accounts/.test(out) && /vacancies or staff without a classroom/.test(out));
-  check("Middle School and High School sit side by side",
-    /<th scope="col">Middle School<\/th><th scope="col">High School<\/th>/.test(out));
+  // Sortable headings since 2026-10-06: each label sits in a button inside its <th>.
+  const sideBySide = /data-sort-col="1"[^>]*>Middle School<span class="wc-sort-arrow"[^<]*<\/span><\/button><\/th><th scope="col"><button[^>]*data-sort-col="2"[^>]*>High School</;
+  check("Middle School and High School sit side by side", sideBySide.test(out));
   check("by grade, with the shares, for admins and PBIS", /Grade 6/.test(out) && /Grade 12/.test(out) && /<b>33%<\/b><span class="wc-trend-of">1 of 3<\/span>/.test(out));
   check("...and no grade column for anyone else (owner, 2026-10-06), Middle and High School still there",
-    !/Grade \d/.test(outTeacher) && /<th scope="col">Middle School<\/th><th scope="col">High School<\/th>/.test(outTeacher));
+    !/Grade \d/.test(outTeacher) && sideBySide.test(outTeacher));
   check("nobody is named: no adult, no student", !/Ms\. Lee|Mr\. Park|Quinn|Vacancy|Pat PBIS|Dr\. Admin|Student\d|Kid/.test(out));
   check("both tables scroll inside their card, never the page",
-    (out.match(/<div class="wu-scroll-x"><table class="student-table wc-trend-table">/g) || []).length === 2 &&
+    (out.match(/<div class="wu-scroll-x"><table class="student-table wc-trend-table"[^>]*>/g) || []).length === 2 &&
     (out.match(/<table/g) || []).length === 2 &&
     /\.wu-scroll-x \{ overflow-x: auto;/.test(uiCss) && /\.wc-trend-table th,\n\.wc-trend-table td \{ white-space: nowrap;/.test(css));
 
@@ -987,8 +1005,11 @@ console.log("\n5. Trends: the school, week by week");
   w.app.switchAnalyticsSubtab("trends");
   const body = el(w, "cashTrendsBody").innerHTML;
   check("opening Trends draws it, for a teacher too", el(w, "analyticsTrends").style.display === "block" && /Sep 14–18/.test(body));
-  check("the placeholder is gone and Transactions is left alone",
-    !/Trend analysis will be displayed here/.test(html) && /Transaction history will be displayed here\./.test(html));
+  // The Transactions placeholder went with the full reorganisation (2026-10-06): every
+  // movement is in the Cash Audit Log, and 'transactions' is an alias for Overview.
+  check("the Trends placeholder is gone, and so is the empty Transactions tab",
+    !/Trend analysis will be displayed here/.test(html) && !/Transaction history will be displayed here/.test(html) &&
+    !/id="analyticsTransactions"/.test(html) && !/id="transactionsSubtab"/.test(html));
   check("it reads what is loaded: no query in the renderer",
     !/convexQuery|fetch\(/.test(liftFn(code, "renderCashTrends") + liftFn(code, "cashTrendWeeks")));
 }
@@ -1030,10 +1051,10 @@ console.log("\nDO THE ASSERTIONS HAVE TEETH?\n");
   check("TEETH: ...and stops calling the child who bought a pass 'never awarded'", !/never awarded/.test(buyer));
 }
 {
-  // 1b. The gauge back on the sign.
+  // 1b. The gauge back on the sign (in the count it shares with the week strip).
   const src = breakOnce(scriptSrc,
-    "const negatives = cashThisWeek.filter(t => cashBehaviourKind(t, _weekReversedIds) === 'deduct').length;",
-    "const negatives = cashThisWeek.filter(t => (Number(t.amount) || 0) < 0).length;", "gauge");
+    "                const kind = cashBehaviourKind(t, reversedIds);\n                if (kind === 'award') awards++;\n                else if (kind === 'deduct') deductions++;",
+    "                if ((Number(t.amount) || 0) > 0) awards++;\n                else if ((Number(t.amount) || 0) < 0) deductions++;", "gauge");
   const r = globalThis.__gaugeRun(src);
   check("TEETH: a gauge counting by sign calls purchases and a reset 'Corrective'", r.negatives > 1, JSON.stringify(r));
 }
@@ -1074,7 +1095,7 @@ console.log("\nDO THE ASSERTIONS HAVE TEETH?\n");
   wr.app.switchAnalyticsSubtab("teacherInteractions");
   // The guards inside still empty and hide the pane, so what a teacher would
   // see without the redirect is NOTHING: no Data Dashboard either.
-  check("TEETH: without the redirect a teacher lands on a blank tab instead of the Data Dashboard",
+  check("TEETH: without the redirect a teacher lands on a blank tab instead of Overview",
     el(wr, "analyticsDashboard").style.display === "none" && el(wr, "analyticsTeacherInteractions").style.display === "none");
 
   const noWipe = breakOnce(scriptSrc, "            if (!allowed) wipeStaffCashViews();\n            return allowed;",

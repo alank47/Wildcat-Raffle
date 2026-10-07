@@ -10283,3 +10283,125 @@ body:has(.wc-preview-bar) .app-content { padding-bottom: 64px; }
 .wc-insight-names .wc-trend-of { display: inline; }
 .wc-insight-names .wc-trend-tag { display: inline-block; margin-top: 0; }
 .wc-insight-other ul { margin: 0; padding-left: 18px; font-size: 13px; color: var(--wc-gray-text, #5F5E5A); }
+
+/* ---- Cash Analytics: one tab per question (owner, 2026-10-06) ------------
+   Overview | Trends | Students | Expectations | Staff. The bar borrows the
+   house pill (.analytics-tab) and is scoped by its own class and id, never
+   .analytics-tabs, which Discipline's tab switcher clears page-wide. It wraps
+   on a phone, so no button is pushed off the right edge. */
+.wc-cash-views { flex-wrap: wrap; margin: 0 0 8px; }
+/* An in-page link brings the bar back into sight (cashBarIntoView): just under
+   the sticky top bar, not behind it. */
+.wc-cash-views { scroll-margin-top: calc(var(--wc-topbar-h) + 8px); }
+.wc-cash-views .analytics-tab {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 9px 16px; font-size: 13.5px; font-weight: 600;
+}
+.wc-cash-views .analytics-tab .wc-icon { width: 15px; height: 15px; vertical-align: 0; }
+.wc-cash-words { margin: 0 0 16px; }
+.wc-cash-words .wc-insight-link { display: inline; margin: 0; }
+.wc-view-q { margin: 0 0 6px; font-size: 16px; font-weight: 700; color: var(--wu-fg, #14161B); }
+.wc-filter-scope { margin: 12px 0 0; }
+
+/* TRENDS AND STUDENTS ARE ONE DRAWING in one pane (renderCashTrends): each
+   panel is a <section data-csec>, and the pane's data-cview says which tab is
+   open. Hidden here, not removed, so the privacy wipe still empties one place. */
+#analyticsTrends[data-cview="trends"] [data-csec="students"],
+#analyticsTrends[data-cview="students"] [data-csec="trends"] { display: none; }
+
+/* The two small labels under every panel title: time window, then unit. */
+.wc-chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 12px; }
+.wc-chip {
+    display: inline-flex; align-items: center; gap: 4px; padding: 3px 10px; border-radius: 999px;
+    font-size: 11.5px; font-weight: 650; white-space: nowrap;
+    background: var(--wu-surface-sunk, #EFF2F6); color: var(--wu-fg-dim, #5F6570);
+}
+.wc-chip-unit { background: var(--wc-blue-mist, #EAF1FA); color: var(--wc-blue-deep, #0C447C); }
+/* A long window ("Finished weeks since Aug 10 · newest week provisional")
+   wraps inside the card on a phone instead of running past its edge. */
+@media (max-width: 600px) { .wc-chip { white-space: normal; max-width: 100%; } }
+.wc-chip-money { background: #F4EEDF; color: #6B5310; margin-left: 4px; }
+
+/* Folds: "How this is counted", the named lists, the latest 100 movements.
+   Definitions and method notes fold; the warnings that change the reading
+   (the 10-week banner, the recording question, provisional) stay visible. */
+details.wc-fold { margin: 12px 0 0; border-top: 1px solid var(--wu-hair, rgba(20, 22, 27, 0.10)); padding-top: 10px; }
+details.wc-fold > summary {
+    cursor: pointer; list-style: none; display: inline-flex; align-items: center; gap: 6px;
+    font-size: 13px; font-weight: 650; color: var(--wc-blue, #2F67A7);
+}
+details.wc-fold > summary::-webkit-details-marker { display: none; }
+details.wc-fold > summary::before { content: "\25B8"; display: inline-block; transition: transform .15s; }
+details.wc-fold[open] > summary::before { transform: rotate(90deg); }
+details.wc-fold > summary:focus-visible { outline: 2px solid var(--wc-blue, #2F67A7); outline-offset: 2px; }
+details.wc-fold .wc-fold-body { margin-top: 10px; }
+details.wc-fold.is-list > summary { font-size: 14px; }
+
+/* Overview: the headline week strip and the tab guide. */
+.wc-week-strip { border-left: 3px solid var(--wc-blue, #2F67A7); }
+.wc-week-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 14px; margin: 4px 0 12px; }
+.wc-week-block { border: 1px solid var(--wu-hair, rgba(20, 22, 27, 0.10)); border-radius: 16px; padding: 12px 14px; }
+.wc-week-block h4 { margin: 0 0 8px; font-size: 13px; font-weight: 700; color: var(--wu-fg, #14161B); }
+.wc-week-figs { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.wc-week-fig .wc-chip { margin-bottom: 4px; }
+.wc-week-fig .wc-ratio { font-size: 22px; display: block; line-height: 1.15; }
+.wc-week-fig .wc-ratio.is-neutral { font-size: 15px; }
+.wc-week-fig .wc-ratio-note { white-space: normal; }
+.wc-guide { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.wc-guide li {
+    display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px 14px;
+    padding: 10px 12px; border: 1px solid var(--wu-hair, rgba(20, 22, 27, 0.10)); border-radius: 14px;
+}
+.wc-guide li span { font-size: 13.5px; color: var(--wu-fg, #14161B); flex: 1 1 260px; }
+.wc-guide li b { color: var(--wc-blue-deep, #0C447C); }
+.wc-own-students { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; }
+.wc-own-students p { margin: 0; font-size: 14px; }
+
+/* The one-time "what moved where" note, and its close button (also the word list's). */
+.wc-moved {
+    position: relative; display: flex; gap: 10px; align-items: flex-start;
+    margin: 0 0 16px; padding: 12px 44px 12px 14px; border-radius: 14px;
+    background: var(--wc-blue-mist, #EAF1FA); border: 1px solid var(--wc-blue-pale, #C9DBF0);
+    color: var(--wc-blue-deep, #0C447C); font-size: 13.5px;
+}
+.wc-moved p { margin: 0; }
+.wc-moved .wc-icon { margin-top: 2px; }
+.wc-moved-x {
+    position: absolute; top: 8px; right: 8px; width: 30px; height: 30px; display: grid; place-items: center;
+    border: 0; border-radius: 999px; background: transparent; color: var(--wc-blue-deep, #0C447C); cursor: pointer;
+}
+.wc-moved-x:hover { background: rgba(12, 68, 124, .08); }
+.wc-moved-x:focus-visible { outline: 2px solid var(--wc-blue, #2F67A7); outline-offset: 2px; }
+.wc-glossary-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.wc-glossary-head h2 { margin: 0; font-size: 18px; }
+.wc-glossary-head .wc-moved-x { position: static; flex: none; }
+.wc-glossary-list { margin: 8px 0 0; }
+.wc-glossary-list dt { margin-top: 12px; font-weight: 700; font-size: 14px; color: var(--wu-fg, #14161B); }
+.wc-glossary-list dd { margin: 2px 0 0; font-size: 13.5px; line-height: 1.45; color: var(--wc-gray-text, #5F5E5A); }
+
+/* CLICK A HEADING TO SORT (owner, 2026-10-06). The heading is a real button
+   inside the <th>, styled as the heading it replaces; the arrow follows
+   aria-sort (wcSortTh, wcSortMarkHead). */
+.wc-sort-btn {
+    display: inline-flex; align-items: center; gap: 5px; padding: 0; margin: 0; border: 0; background: none;
+    font: inherit; color: inherit; letter-spacing: inherit; text-transform: inherit; text-align: left;
+    white-space: inherit; cursor: pointer;
+}
+.wc-sort-btn:hover { color: var(--wc-blue, #2F67A7); }
+.wc-sort-btn:focus-visible { outline: 2px solid var(--wc-blue, #2F67A7); outline-offset: 2px; border-radius: 4px; }
+.wc-sort-arrow { flex: none; font-size: 10px; line-height: 1; opacity: .5; }
+th[aria-sort] .wc-sort-arrow { opacity: 1; color: var(--wc-blue, #2F67A7); }
+
+/* WIDE TABLES (2026-10-06): headings and the small lines under a figure may
+   wrap, and the first column (the week, the group, the student) stays put
+   while the rest scrolls sideways inside the card. */
+.wc-trend-table thead th { white-space: normal; min-width: 6.5em; vertical-align: bottom; }
+.wc-trend-table .wc-trend-of,
+.wc-trend-table .wc-insight-n { white-space: normal; max-width: 15em; }
+.wc-trend-table .wc-pin {
+    position: sticky; left: 0; z-index: 1;
+    background: var(--wu-surface, #FFFFFF); box-shadow: 1px 0 0 var(--wu-hair, rgba(20, 22, 27, 0.10));
+}
+.wc-trend-table thead .wc-pin { background: var(--wu-surface-sunk, #EFF2F6); z-index: 2; }
+.wc-trend-table tr.wc-insight-grey .wc-pin { background: var(--wu-surface-sunk, #EFF2F6); }
+.wc-names-table tbody th { white-space: normal; min-width: 9em; }

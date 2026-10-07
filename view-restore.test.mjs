@@ -63,13 +63,15 @@ function tabButton(name, { disabled = false, visible = true } = {}) {
 }
 
 /** Builds a world: a fake sessionStorage, a fake DOM, and a switchTab spy. */
-function world({ saved = null, buttons = [], throwOnRead = false } = {}) {
+function world({ saved = null, buttons = [], throwOnRead = false, source = src } = {}) {
   const store = new Map();
   if (saved !== null) store.set("wc_view_tab", saved);
   const switched = [];
 
   const scope = {
     WC_VIEW_KEY: "wc_view_tab",
+    // The Cash Analytics tab inside the page (2026-10-06), read off the shipped line.
+    WC_CASH_VIEW_KEY: (/var WC_CASH_VIEW_KEY = '([^']+)';/.exec(src) || [])[1],
     switchTab: (name) => switched.push(name),
     window: {
       sessionStorage: {
@@ -87,7 +89,7 @@ function world({ saved = null, buttons = [], throwOnRead = false } = {}) {
   const make = (name) =>
     new Function(
       "scope",
-      `with (scope) { ${fnBody(src, "function " + name)} return ${name}; }`,
+      `with (scope) { ${fnBody(source, "function " + name)} return ${name}; }`,
     )(scope);
 
   return {
@@ -95,6 +97,7 @@ function world({ saved = null, buttons = [], throwOnRead = false } = {}) {
     forget: make("wcForgetTab"),
     restore: make("wcRestoreTab"),
     stored: () => (store.has("wc_view_tab") ? store.get("wc_view_tab") : null),
+    store,
     switched,
   };
 }
@@ -110,6 +113,21 @@ console.log("\nRemembering the tab");
 
   w.forget();
   check("signing out clears it", w.stored() === null, "a shared Chromebook must not leak the last screen");
+
+  // AND THE CASH ANALYTICS TAB INSIDE IT (2026-10-06): Overview, Trends,
+  // Students, Expectations or Staff, remembered per browser tab.
+  const c = world();
+  c.store.set("wcCashAnalyticsView", "students");
+  c.remember("cashAnalytics");
+  c.forget();
+  check("signing out clears the Cash Analytics tab too (the key is wcCashAnalyticsView)",
+    !c.store.has("wcCashAnalyticsView") && c.stored() === null);
+  const keeps = world({ source: src.replace(
+    "            try { window.sessionStorage.removeItem(WC_CASH_VIEW_KEY); } catch (e) { /* as above */ }\n", "") });
+  keeps.store.set("wcCashAnalyticsView", "students");
+  keeps.forget();
+  check("TEETH: without that line the next person opens Analytics on the last one's tab",
+    keeps.store.get("wcCashAnalyticsView") === "students");
 }
 
 console.log("\nRestoring it, but only where allowed");
