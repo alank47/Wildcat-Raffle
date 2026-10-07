@@ -123,7 +123,11 @@ console.log("\nthe course axis, and the zero-percent artefact it steps around");
   check("three failing courses scores 2", c({ failingCourses: 3 }).points === 2);
   check("one failing course scores 1", c({ failingCourses: 1 }).points === 1);
   check("none scores 0", c({ failingCourses: 0 }).points === 0);
-  check("five recent owed assignments scores 2", c({ missingRecent: 5 }).points === 2);
+  // "A lot" of recent owed work is 10, not 5 (owner, 2026-10-06): an entered
+  // 0% counts as missing work since 10/5, so five is no longer a lot.
+  check("ten recent owed assignments scores 2", c({ missingRecent: 10 }).points === 2);
+  check("five recent owed assignments now scores 1, not 2", c({ missingRecent: 5 }).points === 1);
+  check("the shipped default for 'a lot' is 10", D.DEFAULT_RISK_SETTINGS.missManyAt === 10);
   check("two recent owed scores 1", c({ missingRecent: 2 }).points === 1);
   check("one recent owed scores 0", c({ missingRecent: 1 }).points === 0);
   check("course tops out at 4", c({ failingCourses: 9, missingRecent: 20 }).points === 4);

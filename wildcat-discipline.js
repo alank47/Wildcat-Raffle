@@ -934,7 +934,12 @@
     absSevereAt: 0.20, absChronicAt: 0.10, absAtRiskAt: 0.05,
     tardyManyAt: 10,
     failManyAt: 3, failSomeAt: 1,
-    missManyAt: 5, missSomeAt: 2,
+    // missManyAt 10, not 5 (owner, 2026-10-06). Since the 10/5 rule that an
+    // entered 0% is missing work, five owed assignments in a fortnight is
+    // easy to reach: at 5 the "Act now" list measured 58-61 against the
+    // owner's 30-40 target; at 10 it measured 31 (Watch 59), still two
+    // points on this axis and still combined with attendance.
+    missManyAt: 10, missSomeAt: 2,
     actAt: 7, watchAt: 6,
     /** Hold back students whose SIS row has not refreshed since this date. */
     staleBefore: ''

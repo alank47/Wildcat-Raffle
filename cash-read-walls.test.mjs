@@ -629,7 +629,10 @@ console.log("\n12. The list never offers a Reverse button the server will refuse
   const s2 = baseSeed();
   const mine = cashRow(midweek(NOW - 2 * DAY), "10001");
   const theirs = JSON.parse(JSON.stringify(mine));
-  theirs.payload.studentId = "10002"; theirs.payload.timestamp = iso(midweek(NOW - 9 * DAY));
+  // A week before mine, always: midweek(NOW - 9 days) landed in mine's own
+  // week whenever NOW was a Wednesday before noon UTC (Tue 17:00 to Wed 05:00
+  // in Los Angeles), and the "another week" here was the same week.
+  theirs.payload.studentId = "10002"; theirs.payload.timestamp = iso(Date.parse(mine.payload.timestamp) - 7 * DAY);
   theirs.doc = "cash_tx_" + W(theirs.payload.timestamp);
   s2.legacyMirror.push(mine, theirs);
   out = await M.reversal.reversibleFor.handler({ db: makeDb(s2).db }, { studentId: "10001" });
@@ -676,7 +679,10 @@ console.log("\n13. A second copy in any planned week is seen before anything mov
   // copy filed under another child.
   const mine = cashRow(midweek(NOW - 2 * DAY), "10001");
   const theirs = JSON.parse(JSON.stringify(mine));
-  theirs.payload.studentId = "10002"; theirs.payload.timestamp = iso(midweek(NOW - 9 * DAY));
+  // A week before mine, always: midweek(NOW - 9 days) landed in mine's own
+  // week whenever NOW was a Wednesday before noon UTC (Tue 17:00 to Wed 05:00
+  // in Los Angeles), and the "another week" here was the same week.
+  theirs.payload.studentId = "10002"; theirs.payload.timestamp = iso(Date.parse(mine.payload.timestamp) - 7 * DAY);
   theirs.doc = "cash_tx_" + W(theirs.payload.timestamp);
   const s = baseSeed(); s.legacyMirror.push(mine, theirs);
   const d = makeDb(s);
