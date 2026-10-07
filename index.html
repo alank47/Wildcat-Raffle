@@ -4010,24 +4010,33 @@
                             </select>
                         </div>
 
-                        <!-- Student Referral Summary -->
+                        <!-- Student Referral Summary.
+                             Total, Open, Closed, Loop closed. These were labelled
+                             Minor / Major / Severe in severity colours long after
+                             severity was retired; the numbers were always status
+                             counts. The ids are the old ones on purpose, so a tab
+                             still running the previous script.js finds them. -->
                         <div id="studentReferralSummary" class="hidden" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; margin-bottom: 25px;">
-                            <div class="wc-card wc-stat stat-compact wc-stat-minor">
-                                <div class="stat-label">Minor Referrals</div>
-                                <div class="stat-num" id="summaryMinor">0</div>
-                            </div>
-                            <div class="wc-card wc-stat stat-compact wc-stat-major">
-                                <div class="stat-label">Major Referrals</div>
-                                <div class="stat-num" id="summaryMajor">0</div>
-                            </div>
-                            <div class="wc-card wc-stat stat-compact wc-stat-severe">
-                                <div class="stat-label">Severe Referrals</div>
-                                <div class="stat-num" id="summarySevere">0</div>
-                            </div>
                             <div class="wc-card wc-stat stat-compact">
-                                <div class="stat-label">Total Referrals</div>
+                                <div class="stat-label">Total</div>
                                 <div class="stat-num" id="summaryTotal">0</div>
                             </div>
+                            <div class="wc-card wc-stat stat-compact">
+                                <div class="stat-label">Open</div>
+                                <div class="stat-num" id="summaryMinor">0</div>
+                            </div>
+                            <div class="wc-card wc-stat stat-compact">
+                                <div class="stat-label">Closed</div>
+                                <div class="stat-num" id="summaryMajor">0</div>
+                            </div>
+                            <div class="wc-card wc-stat stat-compact">
+                                <div class="stat-label">Loop closed</div>
+                                <div class="stat-num" id="summarySevere">0</div>
+                            </div>
+                            <p class="panel-hint" style="grid-column: 1 / -1; margin: 0;">
+                                Open and Closed add up to Total. Loop closed is counted inside Closed:
+                                it is the closed referrals whose loop has also been closed.
+                            </p>
                         </div>
 
                         <!-- History Table -->
@@ -4037,7 +4046,7 @@
                                     <tr>
                                         <th>Date</th>
                                         <th>Behavior</th>
-                                        <th class="th-center">Severity</th>
+                                        <th class="th-center">Status</th>
                                         <th>Location</th>
                                         <th>Referred By</th>
                                         <th>Consequence</th>
@@ -4088,8 +4097,12 @@
                             <div class="stat-label">Total Referrals</div>
                             <div class="stat-num" id="analyticsTotalReferrals">0</div>
                         </div>
+                        <!-- Says what it counts: referrals FILED in the last seven
+                             days (submittedAt), a rolling window. "This Week" read
+                             as the incident week, which the Trends tab now counts,
+                             and the two disagreed on the same screen. -->
                         <div class="wc-card wc-stat stat-compact">
-                            <div class="stat-label">This Week</div>
+                            <div class="stat-label">Filed in the last 7 days</div>
                             <div class="stat-num" id="analyticsThisWeek">0</div>
                         </div>
                         <div class="wc-card wc-stat stat-compact">

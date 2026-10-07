@@ -441,10 +441,169 @@
   }
 
   // ---------------------------------------------------------------------
+  // The school's calendar
+  // ---------------------------------------------------------------------
+
+  /**
+   * THE SCHOOL'S DAY: NOT UTC, AND NOT A DATE-ONLY STRING READ AS AN INSTANT.
+   *
+   * Three different "todays" were in use on the referral screens, and only one
+   * of them is right:
+   *
+   *   toISOString().split('T')[0]  UTC. From 5pm in Los Angeles (4pm once
+   *                                winter time starts) that is already
+   *                                TOMORROW, so a referral written after
+   *                                school defaulted to a day that had not
+   *                                happened yet.
+   *   new Date('2026-10-05')       a date-only string is read as UTC MIDNIGHT,
+   *                                which in Los Angeles is 5pm on the day
+   *                                BEFORE. weekKey below did exactly this, so
+   *                                every Monday incident was counted in the
+   *                                previous week's bar.
+   *   the device's own day         right on a school computer, wrong on a
+   *                                phone set to another zone.
+   *
+   * So "today" is asked of Intl in America/Los_Angeles by name, and a calendar
+   * day ('YYYY-MM-DD') is only ever stepped with Date.UTC and read back with
+   * getUTC*. It is a square on a calendar, not a moment, and no time zone is
+   * allowed to move it.
+   */
+  var SCHOOL_TZ = 'America/Los_Angeles';
+  var MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June', 'July',
+                     'August', 'September', 'October', 'November', 'December'];
+  var MONTH_SHORT = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+  function pad2(n) { return (n < 10 ? '0' : '') + n; }
+  function pad4(n) { var s = String(n); while (s.length < 4) s = '0' + s; return s; }
+
+  /** A Date at UTC midnight of a calendar day. Never local time. */
+  function utcDate(y, monthIndex, d) {
+    var t = new Date(Date.UTC(y, monthIndex, d));
+    // Date.UTC reads years 0-99 as 1900-1999. A typed year of 0099 is a typo,
+    // but it must stay the typo rather than quietly become 1999.
+    if (y >= 0 && y < 100) t.setUTCFullYear(y, monthIndex, d);
+    return t;
+  }
+
+  function isoOfUtc(t) {
+    return pad4(t.getUTCFullYear()) + '-' + pad2(t.getUTCMonth() + 1) + '-' + pad2(t.getUTCDate());
+  }
+
+  /** {y, m, d} for a real 'YYYY-MM-DD', else null. '2026-02-30' is not a day. */
+  function calendarDay(iso) {
+    var m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(trimmed(iso));
+    if (!m) return null;
+    var y = Number(m[1]), mo = Number(m[2]), d = Number(m[3]);
+    var t = utcDate(y, mo - 1, d);
+    if (t.getUTCFullYear() !== y || t.getUTCMonth() !== mo - 1 || t.getUTCDate() !== d) return null;
+    return { y: y, m: mo, d: d };
+  }
+
+  /** A calendar day moved by whole days. Null for a day that is not one. */
+  function addDays(iso, n) {
+    var c = calendarDay(iso);
+    if (!c) return null;
+    return isoOfUtc(utcDate(c.y, c.m - 1, c.d + n));
+  }
+
+  /** The Monday on or before a calendar day: the key of the week it is in. */
+  function mondayOf(iso) {
+    var c = calendarDay(iso);
+    if (!c) return null;
+    var back = (utcDate(c.y, c.m - 1, c.d).getUTCDay() + 6) % 7;   // Monday = 0
+    return addDays(iso, -back);
+  }
+
+  /** Milliseconds from a Date, a number or an ISO instant; NaN when it is none. */
+  function instantMs(when) {
+    if (when instanceof Date) return when.getTime();
+    if (typeof when === 'number') return when;
+    var s = trimmed(when);
+    return s ? Date.parse(s) : NaN;
+  }
+
+  /**
+   * The Los Angeles calendar day an INSTANT falls on: '2026-10-07' for
+   * 2026-10-08T06:30:00Z. For timestamps like submittedAt and closedAt, never
+   * for a date the teacher typed, which already IS a calendar day.
+   *
+   * Falls back to the device's own day only where Intl has no zone data,
+   * which no browser this school uses lacks; refusing to answer would be
+   * worse than the device's answer.
+   */
+  function schoolDayOf(when) {
+    var ms = instantMs(when);
+    if (!isFinite(ms)) return null;
+    var at = new Date(ms);
+    try {
+      var p = {};
+      new Intl.DateTimeFormat('en-US', {
+        timeZone: SCHOOL_TZ, year: 'numeric', month: '2-digit', day: '2-digit'
+      }).formatToParts(at).forEach(function (x) { p[x.type] = x.value; });
+      if (p.year && p.month && p.day) return pad4(p.year) + '-' + p.month + '-' + p.day;
+    } catch (e) { /* no zone data: the device's day below */ }
+    return pad4(at.getFullYear()) + '-' + pad2(at.getMonth() + 1) + '-' + pad2(at.getDate());
+  }
+
+  /** Today in Los Angeles, 'YYYY-MM-DD'. `now` is for tests; omitted, the clock. */
+  function schoolToday(now) {
+    return schoolDayOf(now == null ? Date.now() : now);
+  }
+
+  /** The Los Angeles wall clock, 'HH:MM' on 24 hours, as an <input type="time"> holds it. */
+  function schoolClock(now) {
+    var ms = instantMs(now == null ? Date.now() : now);
+    if (!isFinite(ms)) return '';
+    var at = new Date(ms);
+    try {
+      var p = {};
+      new Intl.DateTimeFormat('en-US', {
+        timeZone: SCHOOL_TZ, hour: '2-digit', minute: '2-digit', hourCycle: 'h23'
+      }).formatToParts(at).forEach(function (x) { p[x.type] = x.value; });
+      // Some engines still print midnight as 24 under h23.
+      if (p.hour && p.minute) return (p.hour === '24' ? '00' : p.hour) + ':' + p.minute;
+    } catch (e) { /* no zone data: the device's clock below */ }
+    return pad2(at.getHours()) + ':' + pad2(at.getMinutes());
+  }
+
+  /**
+   * The day the INCIDENT happened, which is what a trend counts.
+   *
+   * `date` is the calendar day the teacher entered on the form. submittedAt is
+   * when the form was sent, which can be days later: a Friday incident filed
+   * on Monday belongs to Friday's week. In production 2 of the first 18
+   * referrals were filed in a later week than the incident, and counting by
+   * filing moved them. submittedAt (as a Los Angeles day) is the fallback
+   * only for a referral with no usable date, of which there are none today.
+   *
+   * The server-side race breakdown (convex/disciplineAggregates.ts) is built
+   * to the same rule, so a window there and a bar here agree about which day
+   * a referral is on. Change one, change both.
+   */
+  function incidentDay(referral) {
+    var r = referral || {};
+    if (calendarDay(r.date)) return trimmed(r.date);
+    return r.submittedAt ? schoolDayOf(r.submittedAt) : null;
+  }
+
+  /** 'Oct 5, 2026', for a calendar day. Empty for anything that is not one. */
+  function dayLabel(iso) {
+    var c = calendarDay(iso);
+    return c ? MONTH_SHORT[c.m - 1] + ' ' + c.d + ', ' + c.y : '';
+  }
+
+  // ---------------------------------------------------------------------
   // Trends
   // ---------------------------------------------------------------------
 
-  /** Monday-based ISO week key, e.g. "2026-W34". Local, like the school day. */
+  /**
+   * NO LONGER USED BY trend(), and kept only because they are exported.
+   *
+   * Both read their argument with new Date(), which is right for an instant
+   * and wrong for a calendar day ('2026-10-05' becomes 5pm on Sunday the 4th
+   * in Los Angeles). weekKey also numbers weeks from 1 January rather than by
+   * ISO 8601, so its "W40" was the ISO W41. Do not build on them.
+   */
   function weekKey(date) {
     var d = new Date(date);
     if (isNaN(d.getTime())) return null;
@@ -463,48 +622,185 @@
   }
 
   /**
+   * The most periods one trend draws. A mistyped year on a single referral
+   * (0202 for 2026) would otherwise stretch the chart across eighteen
+   * centuries of empty weeks, or spin here building them. The recent end is
+   * kept, because that is what the reader came for, and what fell off the
+   * front is counted and said rather than dropped silently.
+   */
+  var MAX_TREND_PERIODS = 600;
+
+  /** A period key moved by n periods: a Monday by n weeks, a 'YYYY-MM' by n months. */
+  function stepPeriod(key, grain, n) {
+    if (grain === 'week') return addDays(key, 7 * n);
+    var y = Number(key.slice(0, 4)), m = Number(key.slice(5, 7));
+    var total = y * 12 + (m - 1) + n;
+    return pad4(Math.floor(total / 12)) + '-' + pad2((total % 12) + 1);
+  }
+
+  /** Whole periods from a to b (negative when b is first). */
+  function periodsBetween(a, b, grain) {
+    if (grain === 'week') {
+      var ca = calendarDay(a), cb = calendarDay(b);
+      var ms = utcDate(cb.y, cb.m - 1, cb.d) - utcDate(ca.y, ca.m - 1, ca.d);
+      return Math.round(ms / 6048e5);
+    }
+    return (Number(b.slice(0, 4)) * 12 + Number(b.slice(5, 7))) -
+           (Number(a.slice(0, 4)) * 12 + Number(a.slice(5, 7)));
+  }
+
+  /** 'Week of Oct 5', with the year only when it is not the chart's own year. */
+  function weekLabel(monday, chartYear) {
+    var c = calendarDay(monday);
+    if (!c) return String(monday);
+    return 'Week of ' + MONTH_SHORT[c.m - 1] + ' ' + c.d + (c.y !== chartYear ? ', ' + c.y : '');
+  }
+
+  /** 'October 2026'. */
+  function monthLabel(key) {
+    var m = Number(key.slice(5, 7));
+    return (MONTH_NAMES[m - 1] || key) + ' ' + Number(key.slice(0, 4));
+  }
+
+  /**
    * Referrals per period, oldest first, with EMPTY PERIODS INCLUDED.
    *
    * A trend that silently omits a quiet week draws a straight line between
    * two busy ones and hides the quiet week entirely, which is the opposite of
    * what a trend is for.
+   *
+   * COUNTED BY THE DAY OF THE INCIDENT (incidentDay), not the moment the form
+   * was sent. This was keyed on submittedAt, read in whatever zone the browser
+   * was in, and it printed keys like '2026-W40' that were neither ISO weeks
+   * nor anything a reader could place. Now a week is keyed by its Monday
+   * ('2026-10-05') and labelled 'Week of Oct 5'; a month is 'YYYY-MM' and
+   * labelled 'October 2026'. Months step by whole (year, month) numbers: the
+   * old cursor.setMonth(+1) from 31 August overflowed to 1 October and the
+   * whole of September vanished from the chart.
+   *
+   * THE RANGE runs from the first incident's period to the CURRENT period when
+   * todayIso (the school's today, 'YYYY-MM-DD') is given, so quiet weeks since
+   * the last referral show as the zeros they are. Without todayIso it stops at
+   * the last incident. An incident dated after today (the date box has no
+   * maximum) is not drawn as a future bar; it is counted in `later`, and
+   * anything cut off by MAX_TREND_PERIODS in `earlier`, so the screen can say
+   * so. The point holding today carries current: true, because a week still
+   * in progress is not a quiet week.
    */
-  function trend(referrals, grain) {
-    var keyOf = grain === 'month' ? monthKey : weekKey;
-    var rows = (referrals || []).filter(function (r) { return r && r.submittedAt; });
-    if (!rows.length) return { grain: grain === 'month' ? 'month' : 'week', points: [] };
+  function trend(referrals, grain, todayIso) {
+    var g = grain === 'month' ? 'month' : 'week';
+    var keyOfDay = g === 'month'
+      ? function (day) { return day.slice(0, 7); }
+      : mondayOf;
 
     var counts = {};
-    var times = [];
-    rows.forEach(function (r) {
-      var t = new Date(r.submittedAt);
-      if (isNaN(t.getTime())) return;
-      times.push(t);
-      var k = keyOf(t);
-      if (k) counts[k] = (counts[k] || 0) + 1;
+    var keys = [];
+    (referrals || []).forEach(function (r) {
+      var day = r ? incidentDay(r) : null;
+      var k = day ? keyOfDay(day) : null;
+      if (!k) return;
+      if (!counts[k]) { counts[k] = 0; keys.push(k); }
+      counts[k] += 1;
     });
-    if (!times.length) return { grain: grain === 'month' ? 'month' : 'week', points: [] };
+    if (!keys.length) return { grain: g, points: [], earlier: 0, later: 0 };
+    keys.sort();
 
-    times.sort(function (a, b) { return a - b; });
-    var cursor = new Date(times[0]);
-    var end = times[times.length - 1];
+    var first = keys[0];
+    var end = keys[keys.length - 1];
+    var todayKey = calendarDay(todayIso) ? keyOfDay(trimmed(todayIso)) : null;
+    if (todayKey) end = todayKey;
+
+    var span = periodsBetween(first, end, g) + 1;
+    var start = span > MAX_TREND_PERIODS ? stepPeriod(end, g, -(MAX_TREND_PERIODS - 1)) : first;
+    var chartYear = Number(end.slice(0, 4));
+
     var points = [];
-    var guard = 0;
+    for (var k = start, n = 0; span > 0 && k <= end && n < MAX_TREND_PERIODS; k = stepPeriod(k, g, 1), n++) {
+      points.push({
+        key: k,
+        label: g === 'month' ? monthLabel(k) : weekLabel(k, chartYear),
+        count: counts[k] || 0,
+        current: k === todayKey
+      });
+    }
 
-    while (cursor <= end && guard++ < 600) {
-      var k = keyOf(cursor);
-      if (k && !points.some(function (p) { return p.key === k; })) {
-        points.push({ key: k, count: counts[k] || 0 });
-      }
-      if (grain === 'month') cursor.setMonth(cursor.getMonth() + 1);
-      else cursor.setDate(cursor.getDate() + 7);
-    }
-    // The final period can be missed when the step overshoots it.
-    var lastKey = keyOf(end);
-    if (lastKey && !points.some(function (p) { return p.key === lastKey; })) {
-      points.push({ key: lastKey, count: counts[lastKey] || 0 });
-    }
-    return { grain: grain === 'month' ? 'month' : 'week', points: points };
+    var earlier = 0, later = 0;
+    keys.forEach(function (key) {
+      if (key < start) earlier += counts[key];
+      else if (key > end) later += counts[key];
+    });
+    return { grain: g, points: points, earlier: earlier, later: later };
+  }
+
+  // ---------------------------------------------------------------------
+  // How a referral was closed, in words
+  // ---------------------------------------------------------------------
+
+  /**
+   * The close modal stores a CODE (its radio values) and five screens wrote
+   * their own `=== 'no_action' ? ... : ...` to turn it back into words. The
+   * Analytics Closed pane did not, and printed "action_taken 8 89%". One map,
+   * so the next screen does not have to remember.
+   *
+   * A blank or unrecognised code reads 'Not recorded' rather than guessing
+   * 'Action taken': a closed referral with no recorded resolution is a fact
+   * about the record, and a guess would hide it.
+   */
+  var RESOLUTION_LABELS = { action_taken: 'Action taken', no_action: 'No action required' };
+
+  function resolutionLabel(code) {
+    var k = trimmed(code);
+    return Object.prototype.hasOwnProperty.call(RESOLUTION_LABELS, k) ? RESOLUTION_LABELS[k] : 'Not recorded';
+  }
+
+  /**
+   * PARENT NOTIFIED, DERIVED FROM WHAT THE CLOSER TICKED.
+   *
+   * The export read r.parentNotified, a field only the retired review flow
+   * ever wrote. No referral has it, so every row said "No", including the 8 of
+   * the first 9 closed referrals whose closer ticked "Notified parents/
+   * guardians promptly". The owner's rule (2026-10-07): Yes when either the
+   * notification or the mandatory parent conference was ticked, No when a
+   * closed referral has neither, and BLANK while a referral is open, because
+   * "No" there would claim a fact nobody has recorded yet.
+   *
+   * These strings are the stored values, character for character: closing
+   * actions are saved as their labels (REFERRAL_CLOSING_ACTIONS in script.js),
+   * and wildcat-discipline.test.mjs fails if the two lists drift apart.
+   */
+  var PARENT_NOTIFIED_ACTION = 'Notified parents/guardians promptly';
+  var PARENT_CONFERENCE_ACTION = 'Scheduled a mandatory Parent-Conference';
+
+  function parentNotified(referral) {
+    var r = referral || {};
+    if (r.status !== 'closed') return '';
+    var actions = Array.isArray(r.closingActions) ? r.closingActions.map(trimmed) : [];
+    if (actions.indexOf(PARENT_NOTIFIED_ACTION) !== -1) return 'Yes';
+    if (actions.indexOf(PARENT_CONFERENCE_ACTION) !== -1) return 'Yes';
+    // A row from the retired review flow that recorded it the old way is not
+    // contradicted. None exist today; this costs nothing if one turns up.
+    if (r.parentNotified === true) return 'Yes';
+    return 'No';
+  }
+
+  /**
+   * How often each closing action was ticked, most first. Counted once per
+   * referral, so "8" reads as "8 of the closed referrals", and ties are put in
+   * alphabetical order so the table does not reshuffle between visits.
+   */
+  function closingActionCounts(closedReferrals) {
+    var counts = {};
+    (closedReferrals || []).forEach(function (r) {
+      var seen = {};
+      (r && Array.isArray(r.closingActions) ? r.closingActions : []).forEach(function (a) {
+        var k = trimmed(a);
+        if (!k || seen[k]) return;
+        seen[k] = true;
+        counts[k] = (counts[k] || 0) + 1;
+      });
+    });
+    return Object.keys(counts).map(function (k) { return { action: k, count: counts[k] }; })
+      .sort(function (a, b) { return b.count - a.count || (a.action < b.action ? -1 : a.action > b.action ? 1 : 0); });
   }
 
   // ---------------------------------------------------------------------
@@ -1233,6 +1529,22 @@
     trend: trend,
     weekKey: weekKey,
     monthKey: monthKey,
-    summary: summary
+    summary: summary,
+    SCHOOL_TZ: SCHOOL_TZ,
+    schoolToday: schoolToday,
+    schoolDayOf: schoolDayOf,
+    schoolClock: schoolClock,
+    calendarDay: calendarDay,
+    addDays: addDays,
+    mondayOf: mondayOf,
+    incidentDay: incidentDay,
+    dayLabel: dayLabel,
+    MAX_TREND_PERIODS: MAX_TREND_PERIODS,
+    RESOLUTION_LABELS: RESOLUTION_LABELS,
+    resolutionLabel: resolutionLabel,
+    PARENT_NOTIFIED_ACTION: PARENT_NOTIFIED_ACTION,
+    PARENT_CONFERENCE_ACTION: PARENT_CONFERENCE_ACTION,
+    parentNotified: parentNotified,
+    closingActionCounts: closingActionCounts
   };
 })(typeof globalThis !== 'undefined' ? globalThis : this);

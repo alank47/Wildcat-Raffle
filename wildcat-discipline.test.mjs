@@ -8,6 +8,11 @@
 //
 // Run: npm test
 
+// The school's calendar is Los Angeles. Set before anything reads a clock; the
+// calendar checks below also switch zones on purpose to prove that nothing in
+// the trend or the "today" helpers depends on the zone the browser is in.
+process.env.TZ = "America/Los_Angeles";
+
 import { readFileSync } from "node:fs";
 
 const src = readFileSync(new URL("./wildcat-discipline.js", import.meta.url), "utf8");
@@ -275,11 +280,14 @@ console.log("\nBehaviours");
 
 console.log("\nTrends include quiet periods");
 {
+  // Fixtures carry `date`, the incident day the teacher entered, because that
+  // is what a trend now counts. submittedAt stays on them, deliberately on
+  // other days, so a trend that slid back to filing time would miscount.
   const rows = [
-    ref({ submittedAt: "2026-08-03T09:00:00Z" }),
+    ref({ date: "2026-08-03", submittedAt: "2026-08-04T16:00:00Z" }),
     // nothing in the week of the 10th
-    ref({ submittedAt: "2026-08-17T09:00:00Z" }),
-    ref({ submittedAt: "2026-08-19T09:00:00Z" }),
+    ref({ date: "2026-08-17", submittedAt: "2026-08-18T16:00:00Z" }),
+    ref({ date: "2026-08-19", submittedAt: "2026-08-20T16:00:00Z" }),
   ];
   const weekly = D.trend(rows, "week");
   check("three weeks are spanned, including the empty one", weekly.points.length === 3);
@@ -290,12 +298,212 @@ console.log("\nTrends include quiet periods");
     weekly.points[0].key < weekly.points[weekly.points.length - 1].key);
 
   const monthly = D.trend(
-    [ref({ submittedAt: "2026-06-01T09:00:00Z" }), ref({ submittedAt: "2026-08-01T09:00:00Z" })],
+    [ref({ date: "2026-06-01", submittedAt: "2026-06-01T16:00:00Z" }),
+     ref({ date: "2026-08-01", submittedAt: "2026-08-03T16:00:00Z" })],
     "month");
   check("monthly spans the gap month too", monthly.points.length === 3);
   check("empty trend does not throw", D.trend([], "week").points.length === 0);
   check("an unparseable date is skipped rather than crashing",
-    D.trend([ref({ submittedAt: "nonsense" })], "week").points.length === 0);
+    D.trend([ref({ date: "nonsense", submittedAt: "nonsense" })], "week").points.length === 0);
+}
+
+// A synthetic school term shaped like production on 2026-10-07: 18 referrals,
+// two of them filed the Monday after a Friday incident. No real names, ids or
+// descriptions; only the days matter.
+const TERM = (() => {
+  const out = [];
+  const add = (date, filed, n) => { for (let i = 0; i < n; i++) out.push(ref({ id: `T${out.length}`, date, submittedAt: filed })); };
+  add("2026-09-15", "2026-09-15T17:00:00Z", 4);   // week of Sep 14
+  add("2026-09-23", "2026-09-23T17:00:00Z", 3);   // week of Sep 21
+  add("2026-09-30", "2026-09-30T17:00:00Z", 3);   // week of Sep 28
+  add("2026-10-02", "2026-10-05T16:30:00Z", 2);   // Friday incidents, filed Monday
+  add("2026-10-05", "2026-10-05T15:10:00Z", 2);   // Monday, the case weekKey got wrong
+  add("2026-10-06", "2026-10-07T01:30:00Z", 4);   // after 5pm: UTC is already the 7th
+  return out;
+})();
+const counts = (t) => t.points.map((p) => p.count).join(",");
+const labels = (t) => t.points.map((p) => p.label).join(" | ");
+
+console.log("\nTrends count the day of the incident, in the school's calendar");
+{
+  const t = D.trend(TERM, "week", "2026-10-07");
+  check("weeks are labelled 'Week of <Monday>', never '2026-W40'",
+    labels(t) === "Week of Sep 14 | Week of Sep 21 | Week of Sep 28 | Week of Oct 5", labels(t));
+  check("the key is the Monday as a calendar day", t.points[3].key === "2026-10-05");
+  check("counted by incident: Sep 14:4, Sep 21:3, Sep 28:5, Oct 5:6", counts(t) === "4,3,5,6", counts(t));
+
+  // The same rows with no usable incident date fall back to the Los Angeles
+  // day they were filed: the old split. Different numbers on purpose.
+  const byFiling = D.trend(TERM.map((r) => Object.assign({}, r, { date: "" })), "week", "2026-10-07");
+  check("filing time gives a different split (4,3,3,8): the two Friday incidents move",
+    counts(byFiling) === "4,3,3,8", counts(byFiling));
+
+  const monday = D.trend([ref({ date: "2026-10-05", submittedAt: "2026-10-05T15:00:00Z" })], "week");
+  check("a Monday incident is in its own week, not the one before",
+    monday.points.length === 1 && monday.points[0].label === "Week of Oct 5");
+  const sunday = D.trend([ref({ date: "2026-10-11", submittedAt: "2026-10-11T18:00:00Z" })], "week");
+  check("a Sunday belongs to the week that began on the Monday before it",
+    sunday.points[0].key === "2026-10-05");
+
+  const m = D.trend([
+    ref({ date: "2026-08-31", submittedAt: "2026-08-31T17:00:00Z" }),
+    ref({ date: "2026-09-15", submittedAt: "2026-09-15T17:00:00Z" }),
+    ref({ date: "2026-10-02", submittedAt: "2026-10-02T17:00:00Z" }),
+  ], "month");
+  check("a trend starting on the 31st still has September (the setMonth overflow)",
+    m.points.map((p) => p.key).join(",") === "2026-08,2026-09,2026-10" && counts(m) === "1,1,1",
+    m.points.map((p) => p.key).join(","));
+  check("months are labelled in words", labels(m) === "August 2026 | September 2026 | October 2026", labels(m));
+
+  const tz = process.env.TZ;
+  const inZone = (zone) => { process.env.TZ = zone; try { return JSON.stringify(D.trend(TERM, "week", "2026-10-07")); } finally { process.env.TZ = tz; } };
+  const la = JSON.stringify(t);
+  check("the same answer in Tokyo, London and UTC: the browser's zone moves nothing",
+    inZone("Asia/Tokyo") === la && inZone("Europe/London") === la && inZone("UTC") === la);
+}
+
+console.log("\nThe range runs to this week only when today is given");
+{
+  const early = [ref({ date: "2026-09-15", submittedAt: "2026-09-15T17:00:00Z" })];
+  const without = D.trend(early, "week");
+  check("without today it stops at the last incident (the old tests rely on this)",
+    without.points.length === 1 && without.points[0].key === "2026-09-14");
+  const withToday = D.trend(early, "week", "2026-10-07");
+  check("with today it runs to the current week, quiet weeks as zeros",
+    withToday.points.length === 4 && counts(withToday) === "1,0,0,0", counts(withToday));
+  check("and the current week is marked as in progress, not quiet",
+    withToday.points[3]?.current === true && withToday.points[3]?.key === "2026-10-05" &&
+    withToday.points.slice(0, 3).every((p) => p.current === false));
+  const monthToday = D.trend(early, "month", "2026-10-07");
+  check("monthly runs to the current month too", monthToday.points.map((p) => p.key).join(",") === "2026-09,2026-10");
+
+  const future = D.trend([ref({ date: "2026-09-15" }), ref({ date: "2026-12-01" })], "week", "2026-10-07");
+  check("an incident dated after today is not drawn as a future bar",
+    future.points[future.points.length - 1].key === "2026-10-05");
+  check("but it is counted, so the screen can say so", future.later === 1 && future.earlier === 0);
+
+  const typo = D.trend([ref({ date: "0202-09-15" }), ref({ date: "2026-10-06" })], "week", "2026-10-07");
+  check("a mistyped year cannot stretch the chart past its cap",
+    typo.points.length === D.MAX_TREND_PERIODS);
+  check("the recent end is the part kept", typo.points[typo.points.length - 1].key === "2026-10-05" &&
+    typo.points[typo.points.length - 1].count === 1);
+  check("and what fell off the front is counted, not dropped silently", typo.earlier === 1);
+
+  const span = D.trend([ref({ date: "2025-12-30" }), ref({ date: "2026-01-06" })], "week");
+  check("a week in another year than the chart's says its year",
+    labels(span) === "Week of Dec 29, 2025 | Week of Jan 5", labels(span));
+}
+
+console.log("\nToday is the school's day, not UTC's");
+{
+  check("11:30pm in Los Angeles is still the 7th, though UTC is on the 8th",
+    D.schoolToday(new Date("2026-10-07T23:30:00-07:00")) === "2026-10-07");
+  check("6:30pm likewise (the after-school referral)",
+    D.schoolToday(new Date("2026-10-07T18:30:00-07:00")) === "2026-10-07");
+  check("in winter time too (4:30pm PST is 00:30 UTC the next day)",
+    D.schoolToday(new Date("2026-12-01T16:30:00-08:00")) === "2026-12-01");
+  check("just after midnight is the new day",
+    D.schoolToday(new Date("2026-10-08T00:05:00-07:00")) === "2026-10-08");
+  check("the clock reads Los Angeles wall time, 24-hour",
+    D.schoolClock(new Date("2026-10-07T18:30:00-07:00")) === "18:30" &&
+    D.schoolClock(new Date("2026-10-08T00:05:00-07:00")) === "00:05");
+  check("a timestamp that is not one gives no day", D.schoolDayOf("nonsense") === null && D.schoolDayOf("") === null);
+
+  const tz = process.env.TZ;
+  process.env.TZ = "Asia/Tokyo";
+  const tokyo = D.schoolToday(new Date("2026-10-07T23:30:00-07:00"));
+  const tokyoClock = D.schoolClock(new Date("2026-10-07T18:30:00-07:00"));
+  process.env.TZ = tz;
+  check("a device set to Tokyo still gets the Los Angeles day and clock",
+    tokyo === "2026-10-07" && tokyoClock === "18:30", `${tokyo} ${tokyoClock}`);
+
+  check("a real calendar day parses", JSON.stringify(D.calendarDay("2026-10-05")) === '{"y":2026,"m":10,"d":5}');
+  check("30 February is not a day", D.calendarDay("2026-02-30") === null);
+  check("nor is a US-style date", D.calendarDay("10/05/2026") === null);
+  check("days step across a month end without a zone", D.addDays("2026-09-30", 1) === "2026-10-01");
+  check("and across the autumn clock change", D.addDays("2026-10-31", 2) === "2026-11-02");
+  check("'Oct 5, 2026' for a calendar day", D.dayLabel("2026-10-05") === "Oct 5, 2026" && D.dayLabel("x") === "");
+}
+
+console.log("\nThe incident day");
+{
+  check("the date the teacher entered wins over when it was filed",
+    D.incidentDay(ref({ date: "2026-10-02", submittedAt: "2026-10-05T16:30:00Z" })) === "2026-10-02");
+  check("with no usable date, the Los Angeles day it was filed (02:00 UTC is the evening before)",
+    D.incidentDay(ref({ date: "", submittedAt: "2026-10-06T02:00:00Z" })) === "2026-10-05");
+  check("and nothing at all is null, not a guess",
+    D.incidentDay({ date: "", submittedAt: "" }) === null && D.incidentDay(null) === null);
+}
+
+console.log("\nHow a referral was closed, in words");
+{
+  check("action_taken reads 'Action taken'", D.resolutionLabel("action_taken") === "Action taken");
+  check("no_action reads 'No action required'", D.resolutionLabel("no_action") === "No action required");
+  check("blank reads 'Not recorded', never a guess", D.resolutionLabel("") === "Not recorded" &&
+    D.resolutionLabel(undefined) === "Not recorded");
+  check("an unknown code is not printed raw", D.resolutionLabel("escalated_x") === "Not recorded");
+  check("nor does an inherited name leak through", D.resolutionLabel("toString") === "Not recorded");
+  check("stray whitespace is forgiven", D.resolutionLabel(" no_action ") === "No action required");
+}
+
+console.log("\nParent notified comes from the closing actions");
+{
+  const N = D.PARENT_NOTIFIED_ACTION, C = D.PARENT_CONFERENCE_ACTION;
+  check("open is blank, even with the action ticked",
+    D.parentNotified(ref({ status: "open", closingActions: [N] })) === "");
+  check("closed with the notification ticked is Yes",
+    D.parentNotified(ref({ status: "closed", closingActions: ["Other", N] })) === "Yes");
+  check("closed with the parent conference ticked is Yes",
+    D.parentNotified(ref({ status: "closed", closingActions: [C] })) === "Yes");
+  check("closed with neither is No",
+    D.parentNotified(ref({ status: "closed", closingActions: ["Isolated and de-escalated the situation"] })) === "No");
+  check("closed with no actions at all is No",
+    D.parentNotified(ref({ status: "closed" })) === "No");
+  check("a legacy row that recorded it the old way stays Yes",
+    D.parentNotified(ref({ status: "closed", parentNotified: true })) === "Yes");
+
+  const tally = D.closingActionCounts([
+    ref({ status: "closed", closingActions: [N, C] }),
+    ref({ status: "closed", closingActions: [N, N] }),
+    ref({ status: "closed", closingActions: ["B action", "A action"] }),
+    ref({ status: "closed" }),
+  ]);
+  check("closing actions are counted once per referral, most first",
+    tally[0].action === N && tally[0].count === 2);
+  check("ties are alphabetical, so the table does not reshuffle",
+    tally.slice(1).map((x) => x.action).join("|") === `A action|B action|${C}`);
+
+  // DRIFT GUARD. Closing actions are stored as their labels, so the two
+  // strings above must be EXACTLY what the close modal saves.
+  const script = readFileSync(new URL("./script.js", import.meta.url), "utf8");
+  const m = /const REFERRAL_CLOSING_ACTIONS = \[([\s\S]*?)\];/.exec(script);
+  const stored = m ? [...m[1].matchAll(/"([^"]*)"/g)].map((x) => x[1]) : [];
+  check("script.js still offers the parent notification, character for character", stored.includes(N));
+  check("and the parent conference", stored.includes(C));
+}
+
+console.log("\nTEETH: the checks above catch the bugs they describe");
+{
+  const load = (from, to) => {
+    if (src.split(from).length !== 2) throw new Error("teeth anchor not found exactly once: " + from);
+    const sb = {};
+    new Function("globalThis", src.replace(from, to)).call(sb, sb);
+    return sb.WildcatDiscipline;
+  };
+  const byFiling = load("if (calendarDay(r.date)) return trimmed(r.date);", "");
+  check("TEETH: a trend that counts filing time fails the incident split",
+    counts(byFiling.trend(TERM, "week", "2026-10-07")) !== "4,3,5,6");
+
+  const utcToday = load("timeZone: SCHOOL_TZ, year: 'numeric'", "year: 'numeric'");
+  const tz = process.env.TZ;
+  process.env.TZ = "UTC";
+  const wrong = utcToday.schoolToday(new Date("2026-10-07T23:30:00-07:00"));
+  process.env.TZ = tz;
+  check("TEETH: a 'today' that is not pinned to Los Angeles fails on a UTC device", wrong !== "2026-10-07");
+
+  const oldExport = load("if (r.status !== 'closed') return '';", "return r.parentNotified ? 'Yes' : 'No';");
+  check("TEETH: the old r.parentNotified read fails the closed-with-notification case",
+    oldExport.parentNotified(ref({ status: "closed", closingActions: [D.PARENT_NOTIFIED_ACTION] })) !== "Yes");
 }
 
 console.log("\nHeadline summary");

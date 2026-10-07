@@ -35675,11 +35675,9 @@
                 resetReferralRosterFetch();
                 populateReferralStudentDropdown();
                 if (typeof populateReferringStaffDropdown === 'function') populateReferringStaffDropdown();
-                const now = new Date();
-                const dateInput = document.getElementById('referralDate');
-                const timeInput = document.getElementById('referralTime');
-                if (dateInput && !dateInput.value) dateInput.value = now.toISOString().split('T')[0];
-                if (timeInput && !timeInput.value) timeInput.value = now.toTimeString().slice(0, 5);
+                // Today's date and the time now, in Los Angeles, unless the
+                // teacher typed their own. See applyReferralWhenDefaults.
+                applyReferralWhenDefaults(new Date());
                 if (typeof updateInterventionCount === 'function') updateInterventionCount();
             } else if (subtab === 'review') {
                 // Draw what we have immediately, then pull. A tab that shows
@@ -35705,9 +35703,14 @@
                 openUniformViolations();
             } else if (subtab === 'history') {
                 populateHistoryStudentDropdown();
+                // Draw from memory, then pull, like Open and Closed: a
+                // referral filed on another computer since this page loaded
+                // used to stay missing here until a full reload.
+                pullReferralsAndRedraw(false);
             } else if (subtab === 'analytics') {
                 updateReferralAnalytics();
                 switchAnalyticsTab(analyticsTab);
+                pullReferralsAndRedraw(false);
             }
         }
 
@@ -42601,6 +42604,17 @@
             }
         });
 
+        // The referral's date and time, by delegation for the same reason.
+        // Typing in either field makes it the teacher's own; picking a student
+        // starts a referral, so any default is brought up to this moment.
+        // Programmatic value changes fire neither event, so only a person's
+        // edit clears the mark.
+        document.addEventListener('input', referralWhenTyped);
+        document.addEventListener('change', function (e) {
+            referralWhenTyped(e);
+            if (e.target && e.target.id === 'referralStudentSelect') applyReferralWhenDefaults(new Date());
+        });
+
         function updateInterventionCount() {
             const n = document.querySelectorAll('.referral-intervention:checked').length;
             const el = document.getElementById('interventionCount');
@@ -42646,9 +42660,60 @@
             const severeBox = document.getElementById('referralSevereBypass');
             if (severeBox) severeBox.checked = false;
             updateInterventionCount();
+            // THE NEXT REFERRAL'S DATE AND TIME ARE DEFAULTS, NOT LEFTOVERS.
+            // The date is refilled with the Los Angeles day so the form does
+            // not look broken; the time is left blank on purpose. This runs
+            // right after a submit and the tab stays on the form, so a time
+            // filled in here would be stamped on the NEXT referral too, however
+            // much later it was written. Both are marked as defaults, and
+            // picking the next student fills them with that moment's date and
+            // time (applyReferralWhenDefaults).
             const d = document.getElementById('referralDate');
-            if (d) d.value = new Date().toISOString().split('T')[0];
+            if (d) {
+                d.value = window.WildcatDiscipline.schoolToday(new Date());
+                d.dataset.auto = '1';
+            }
+            const t = document.getElementById('referralTime');
+            if (t) t.dataset.auto = '1';
             populateReferringStaffDropdown();
+        }
+
+        /**
+         * The incident date and time a referral starts with: today in Los
+         * Angeles and the time now, filled into any field that is empty or
+         * still holds a default this function put there.
+         *
+         * WHY THE MARK. A default is only right at the moment it is made. The
+         * Submit tab stays open all day, and the date and time it showed at
+         * 7:50 are wrong for a referral written at 9:30, or the next morning
+         * on a tab left open overnight. So every value written here is marked
+         * data-auto="1", and the mark is refreshed each time the tab opens and
+         * each time a student is picked, which is the start of writing a
+         * referral. A value the teacher typed is theirs: typing removes the
+         * mark (referralWhenTyped) and nothing here overwrites it again.
+         *
+         * The date was toISOString().split('T')[0], which is UTC: after 5pm in
+         * Los Angeles (4pm in winter) the form defaulted to TOMORROW.
+         */
+        function applyReferralWhenDefaults(now) {
+            const at = now || new Date();
+            const D = window.WildcatDiscipline;
+            const fill = (id, value) => {
+                const el = document.getElementById(id);
+                if (!el) return;
+                if (el.value && el.dataset.auto !== '1') return;   // typed: leave it
+                el.value = value;
+                el.dataset.auto = '1';
+            };
+            fill('referralDate', D.schoolToday(at));
+            fill('referralTime', D.schoolClock(at));
+        }
+
+        /** A date or time the teacher touched is no longer a default. */
+        function referralWhenTyped(e) {
+            const el = e && e.target;
+            if (!el || !el.dataset) return;
+            if (el.id === 'referralDate' || el.id === 'referralTime') delete el.dataset.auto;
         }
 
         async function submitBehaviorReferral() {
@@ -42957,19 +43022,37 @@
          * the two by id and lets the later updatedAt win, so a referral still
          * sitting in this tab's save queue survives the refresh that goes
          * looking for everyone else's.
+         *
+         * ONE PULL AT A TIME, AND EVERY CALLER GETS ITS ANSWER (2026-10-07).
+         * _referralPullBusy holds the pull in flight, and a second caller is
+         * handed that same promise. It used to get { skipped: 'busy' } back:
+         * opening Analytics while the Open Referrals pull was still out drew
+         * from memory, was told "busy", and never redrew when the data came.
+         * Sharing also means two tabs opened in quick succession cost one
+         * read, not two.
          */
-        let _referralPullBusy = false;
+        let _referralPullBusy = null;
         let _referralPullAt = null;
-        async function refreshReferralsFromServer(opts) {
+        function refreshReferralsFromServer(opts) {
+            if (_referralPullBusy) return _referralPullBusy;
+            const pull = pullReferralsOnce(opts);
+            _referralPullBusy = pull;
+            // Cleared however it ends. pullReferralsOnce answers failures
+            // with { error } rather than throwing, but a stuck flag would
+            // stop every later pull in this tab, so both paths clear it.
+            const done = () => { if (_referralPullBusy === pull) _referralPullBusy = null; };
+            pull.then(done, done);
+            return pull;
+        }
+
+        async function pullReferralsOnce(opts) {
             const quiet = !(opts && opts.loud);
-            if (_referralPullBusy) return { skipped: 'busy' };
             const auth = window.WildcatAuth;
             const session = auth && auth.getSession && auth.getSession();
             // A username session carries no Convex identity. Not an error, and
             // not reported as one -- there is simply nothing to pull with.
             if (!auth || !session) return { skipped: 'no-session' };
 
-            _referralPullBusy = true;
             try {
                 const res = await loadLegacyDocsFromConvex(['referrals']);
                 // A FAILED READ IS NOT AN EMPTY SERVER. loadLegacyDocsFromConvex
@@ -42992,7 +43075,6 @@
                 console.warn('[referrals] refresh failed:', e);
                 return { error: (e && e.message) || String(e) };
             } finally {
-                _referralPullBusy = false;
                 if (!quiet) { /* caller redraws */ }
             }
         }
@@ -43004,6 +43086,12 @@
             const res = await refreshReferralsFromServer({ loud: !!loud });
             updateReferralReviewTable();
             if (typeof updateClosedReferralsList === 'function') updateClosedReferralsList();
+            // Analytics and Student History draw from memory when they open
+            // and then pull. Redrawn here ONLY when the pull changed
+            // something: the Demographics pane asks the server for its race
+            // counts on every draw, and a redraw that changes nothing would
+            // be a second whole-roster query each time Analytics opens.
+            if (res && (res.changed || res.added || res.updated)) redrawReferralInsightViews();
             if (!note) return;
             if (res.error) {
                 note.textContent = 'Could not check the server: ' + res.error;
@@ -43017,6 +43105,22 @@
             } else {
                 note.textContent = 'Up to date \u00B7 ' + _fmtPullTime();
             }
+        }
+
+        /** Redraw Analytics or Student History, whichever is on screen. */
+        function redrawReferralInsightViews() {
+            const shown = id => {
+                const el = document.getElementById(id);
+                return !!el && !el.classList.contains('hidden');
+            };
+            if (shown('behaviorAnalytics')) {
+                updateReferralAnalytics();
+                renderAnalyticsPane(analyticsTab);
+            }
+            // Only with a student chosen. Rebuilding the dropdown here would
+            // clear the choice the reader is looking at.
+            const pick = document.getElementById('historyStudentSelect');
+            if (shown('behaviorHistory') && pick && pick.value) updateStudentReferralHistory();
         }
 
         function _fmtPullTime() {
@@ -43460,37 +43564,68 @@
             document.getElementById('studentReferralSummary').classList.remove('hidden');
             document.getElementById('noHistoryMessage').classList.add('hidden');
             
-            // Severity retired — summarise by status and closure instead.
-            const minorCount = studentReferrals.filter(r => r.status !== 'closed').length;   // open
-            const majorCount = studentReferrals.filter(r => r.status === 'closed').length;   // closed
-            const severeCount = studentReferrals.filter(r => r.loopClosed).length;           // loop closed
+            // OPEN, CLOSED, LOOP CLOSED AND TOTAL (2026-10-07). The tiles were
+            // still labelled Minor / Major / Severe from before severity was
+            // retired, in severity colours, while the numbers under them were
+            // open, closed and loop-closed counts: a child with three closed
+            // referrals read as having three MAJOR ones. Open + Closed = Total.
+            // Loop closed is the part of Closed whose loop has been closed, not
+            // a fourth kind, and the note under the tiles says so.
+            //
+            // The element ids are the old severity ones, deliberately: a tab
+            // still running the previous script.js against this page's HTML
+            // must find them.
+            const openCount = studentReferrals.filter(r => r.status !== 'closed').length;
+            const closedCount = studentReferrals.filter(r => r.status === 'closed').length;
+            const loopClosedCount = studentReferrals.filter(r => r.status === 'closed' && r.loopClosed).length;
             
-            document.getElementById('summaryMinor').textContent = minorCount;
-            document.getElementById('summaryMajor').textContent = majorCount;
-            document.getElementById('summarySevere').textContent = severeCount;
+            document.getElementById('summaryMinor').textContent = openCount;
+            document.getElementById('summaryMajor').textContent = closedCount;
+            document.getElementById('summarySevere').textContent = loopClosedCount;
             document.getElementById('summaryTotal').textContent = studentReferrals.length;
             
             // Show history table
             document.getElementById('studentReferralHistoryContainer').classList.remove('hidden');
             const tbody = document.getElementById('studentReferralHistoryBody');
             
-            const sorted = [...studentReferrals].sort((a, b) => new Date(b.dateTime) - new Date(a.dateTime));
+            // THE DAY OF THE INCIDENT, AS A CALENDAR DAY. This was
+            // new Date(ref.dateTime).toLocaleDateString(), and dateTime is only
+            // the date when no time was entered: parsed as UTC midnight, an
+            // Oct 5 incident showed as Oct 4 in Los Angeles. Newest first, by
+            // incident day, then time, then filing.
+            const D = window.WildcatDiscipline;
+            const whenKey = r => `${D.incidentDay(r) || ''} ${r.time || ''} ${r.submittedAt || ''}`;
+            const sorted = [...studentReferrals].sort((a, b) => whenKey(b).localeCompare(whenKey(a)));
+            const muted = text => `<span style="color: #999;">${text}</span>`;
+            const orDash = v => String(v == null ? '' : v).trim() ? escapeHtml(v) : muted('—');
             
+            // EVERY STORED FIELD IS ESCAPED. behaviorType, location, referredBy
+            // and consequence went into innerHTML raw, and any staff save can
+            // write a referral's fields, so a stored "<img onerror=...>" would
+            // run in the browser of every admin who opened this child's
+            // history. A missing location printed "undefined".
             tbody.innerHTML = sorted.map(ref => {
-                const severityColor = ref.status === 'closed' ? '#2E7D52' : '#B7791F';
+                const statusColor = ref.status === 'closed' ? '#2E7D52' : '#B7791F';
+                let consequence;
+                if (String(ref.consequence || '').trim()) consequence = escapeHtml(ref.consequence);
+                else if (ref.status !== 'closed') consequence = muted('Pending');
+                // Closed with "No Action Required" stores no actions, so this
+                // used to read "Pending" on a referral that was finished.
+                else if (ref.resolutionType === 'no_action') consequence = D.resolutionLabel('no_action');
+                else consequence = muted('—');
                 
                 return `
                     <tr style="border-bottom: 1px solid #e5e7eb;">
-                        <td style="padding: 14px;">${new Date(ref.dateTime).toLocaleDateString()}</td>
-                        <td style="padding: 14px;">${ref.behaviorType}</td>
+                        <td style="padding: 14px;">${escapeHtml(D.dayLabel(D.incidentDay(ref))) || muted('—')}</td>
+                        <td style="padding: 14px;">${orDash(ref.behavior || ref.behaviorType)}</td>
                         <td style="padding: 14px; text-align: center;">
-                            <span style="background: ${severityColor}; color: white; padding: 5px 12px; border-radius: 12px; font-size: 12px; font-weight: 600;">
+                            <span style="background: ${statusColor}; color: white; padding: 5px 12px; border-radius: 12px; font-size: 12px; font-weight: 600;">
                                 ${ref.status === 'closed' ? 'Closed' : 'Open'}
                             </span>
                         </td>
-                        <td style="padding: 14px;">${ref.location}</td>
-                        <td style="padding: 14px;">${ref.referredBy}</td>
-                        <td style="padding: 14px;">${ref.consequence || '<span style="color: #999;">Pending</span>'}</td>
+                        <td style="padding: 14px;">${orDash(ref.location)}</td>
+                        <td style="padding: 14px;">${orDash(ref.referredBy)}</td>
+                        <td style="padding: 14px;">${consequence}</td>
                         <td style="padding: 14px; text-align: center;">
                             <button class="btn btn-sm-blue" onclick="viewReferralDetails('${ref.id}')">View</button>
                             <button class="btn btn-sm-pdf" onclick="printReferral('${ref.id}')" title="Open a printable referral (save as PDF)">📄 PDF</button>
@@ -43566,20 +43701,32 @@
         function renderReferralTrend(all) {
             const el = document.getElementById('referralTrend');
             if (!el) return;
-            const t = window.WildcatDiscipline.trend(all, trendGrain);
+            // BY THE DAY OF THE INCIDENT, from the first referral's week to
+            // this week in Los Angeles (2026-10-07). This printed raw keys like
+            // '2026-W40' and counted the moment a form was sent, so a Friday
+            // incident filed on Monday sat in the wrong week and the weeks
+            // since the last referral were simply missing. Past bars moved
+            // when this changed: by filing time the first four weeks read
+            // 4/3/3/8, by incident 4/3/5/6.
+            const t = window.WildcatDiscipline.trend(all, trendGrain, window.WildcatDiscipline.schoolToday());
             if (!t.points.length) {
                 el.innerHTML = '<p class="panel-hint">No referrals yet.</p>';
                 return;
             }
             const max = Math.max.apply(null, t.points.map(p => p.count)) || 1;
+            // Said, not dropped: an incident dated after today (the date box
+            // has no maximum) or before the chart's first period.
+            const outside = [];
+            if (t.later) outside.push(`${t.later} referral${t.later === 1 ? ' has an incident date' : 's have incident dates'} after today`);
+            if (t.earlier) outside.push(`${t.earlier} referral${t.earlier === 1 ? ' is' : 's are'} dated before ${escapeHtml(t.points[0].label)}`);
             el.innerHTML = `
                 <div class="wc-card">
                     <table class="wc-table"><thead><tr>
                         <th>${trendGrain === 'month' ? 'Month' : 'Week'}</th><th>Referrals</th><th></th>
                     </tr></thead><tbody>
                     ${t.points.map(p => `
-                        <tr${p.count === 0 ? ' class="trend-quiet"' : ''}>
-                            <td>${escapeHtml(p.key)}</td>
+                        <tr${p.count === 0 && !p.current ? ' class="trend-quiet"' : ''}>
+                            <td>${escapeHtml(p.label)}${p.current ? ' <span class="panel-hint">(so far)</span>' : ''}</td>
                             <td><strong>${p.count}</strong></td>
                             <td style="width:60%;">
                                 <div class="popularity-bar">
@@ -43588,7 +43735,9 @@
                             </td>
                         </tr>`).join('')}
                     </tbody></table>
-                </div>`;
+                </div>
+                <p class="panel-hint">Counted by the day of the incident, not the day the referral was filed.${
+                    outside.length ? ' Not shown: ' + outside.join('; ') + '. Check the date on those referrals.' : ''}</p>`;
         }
 
         function renderReferralBehaviors(all) {
@@ -44093,16 +44242,20 @@
         function renderClosedAnalytics(all) {
             const el = document.getElementById('referralClosedAnalytics');
             if (!el) return;
+            const D = window.WildcatDiscipline;
             const closed = all.filter(r => r && r.status === 'closed');
             if (!closed.length) {
                 el.innerHTML = '<p class="panel-hint">No referrals have been closed yet.</p>';
                 return;
             }
+            // IN WORDS. This grouped on the stored code and printed it, so the
+            // pane read "action_taken 8 89%". resolutionLabel is the one map
+            // from code to words; a blank code reads 'Not recorded'.
             const byResolution = {};
             let loopClosed = 0;
             let totalDays = 0, timed = 0;
             closed.forEach(r => {
-                const res = String(r.resolutionType || '').trim() || 'Not recorded';
+                const res = D.resolutionLabel(r.resolutionType);
                 byResolution[res] = (byResolution[res] || 0) + 1;
                 if (r.loopClosed) loopClosed += 1;
                 const a = new Date(r.submittedAt), b = new Date(r.closedAt);
@@ -44111,6 +44264,10 @@
             const rows = Object.keys(byResolution)
                 .map(k => ({ resolution: k, count: byResolution[k] }))
                 .sort((a, b) => b.count - a.count);
+            // What closers actually did, which the resolution alone cannot
+            // say: "Action taken" covers a parent call and a police call alike.
+            // Counted once per referral, so each reads "N of the closed".
+            const actions = D.closingActionCounts(closed);
 
             el.innerHTML = `
                 <div class="receipt-summary">
@@ -44123,6 +44280,14 @@
                     ${rows.map(r => `
                         <tr><td>${escapeHtml(r.resolution)}</td><td><strong>${r.count}</strong></td>
                         <td>${Math.round((r.count / closed.length) * 100)}%</td></tr>`).join('')}
+                    </tbody></table>
+                </div>
+                <div class="wc-card">
+                    <table class="wc-table"><thead><tr><th>Closing action</th><th>Referrals</th><th>Of the closed</th></tr></thead><tbody>
+                    ${actions.length ? actions.map(a => `
+                        <tr><td>${escapeHtml(a.action)}</td><td><strong>${a.count}</strong></td>
+                        <td>${a.count} of ${closed.length}</td></tr>`).join('')
+                      : '<tr><td colspan="3" class="cell-empty">No closing actions were recorded.</td></tr>'}
                     </tbody></table>
                 </div>`;
         }
@@ -44712,6 +44877,16 @@
         }
 
         function exportReferralReport() {
+            const D = window.WildcatDiscipline;
+            // ADMIN, SUPERADMIN AND PBIS ONLY, checked here and not only by
+            // which tab draws the button. The file names staff (Referred By,
+            // Closed By) and carries each child's student number and grade,
+            // and it leaves the app the moment it is written.
+            if (!D.seesAllReferrals(currentUser && currentUser.role)) {
+                alert('The referral report is for administrators and PBIS.');
+                return;
+            }
+
             // EXPORTS WHAT THE EXPORTER MAY SEE, not the whole table. A file
             // leaves the app and gets mailed around, so an unscoped export is
             // the most durable way to leak a discipline record.
@@ -44724,28 +44899,47 @@
             // Create workbook
             const wb = XLSX.utils.book_new();
             
-            // Prepare data
+            // THE COLUMNS SAY WHAT THE RECORD SAYS (2026-10-07).
+            //
+            // Date and Time were new Date(r.dateTime): dateTime is just the
+            // date when no time was entered, which parses as UTC midnight and
+            // printed the day BEFORE at 5:00 PM. They are now the date the
+            // teacher entered, exactly, and that time on a 12-hour clock.
+            //
+            // Parent Notified read r.parentNotified, which only the retired
+            // review flow wrote, so every row said No, including the closed
+            // referrals whose closer ticked "Notified parents/guardians
+            // promptly". It is now derived from the closing actions, and
+            // BLANK while a referral is open (D.parentNotified).
+            //
+            // Reviewed By, Tickets Deducted and Cash Deducted are gone: that
+            // same retired flow was the only writer, no referral has them,
+            // and a column of empty cells and zeros reads as "nobody was
+            // reviewed and nothing was deducted".
             const data = behaviorReferrals.map(r => ({
                 'Referral ID': r.id,
-                'Date': new Date(r.dateTime).toLocaleDateString(),
-                'Time': new Date(r.dateTime).toLocaleTimeString(),
+                'Date': r.date || D.incidentDay(r) || '',
+                'Time': wcClock(r.time),
                 'Student Name': r.studentName,
+                'Student Number': r.studentNumber || referralStudentNumber(r),
+                'Grade': r.studentGrade || '',
+                'Campus': r.school || '',
                 'Behavior Type': r.behaviorType,
                 'Interventions Attempted': (r.interventions || []).length,
                 'Too Severe For Interventions': r.severeBypass ? 'Yes' : 'No',
-                'Resolution': r.resolutionType === 'no_action' ? 'No action required' : (r.status === 'closed' ? 'Action taken' : ''),
+                'Resolution': r.status === 'closed' ? D.resolutionLabel(r.resolutionType) : '',
                 'Closing Actions': (r.closingActions || []).join('; '),
+                'Parent Notified': D.parentNotified(r),
                 'Loop Closed': r.loopClosed ? 'Yes' : 'No',
                 'Location': r.location,
                 'Description': r.description,
                 'Referred By': r.referredBy,
                 'Status': r.status,
+                'Closed By': r.status === 'closed' ? (r.closedBy || '') : '',
+                // closedAt is an instant; the day it fell on in Los Angeles.
+                'Closed Date': r.status === 'closed' ? (D.schoolDayOf(r.closedAt) || '') : '',
                 'Consequence': r.consequence || '',
-                'Admin Notes': r.adminNotes || '',
-                'Reviewed By': r.reviewedBy || '',
-                'Tickets Deducted': r.ticketsDeducted || 0,
-                'Cash Deducted': r.cashDeducted || 0,
-                'Parent Notified': r.parentNotified ? 'Yes' : 'No'
+                'Admin Notes': r.adminNotes || ''
             }));
             
             // Create worksheet
@@ -44754,8 +44948,9 @@
             // Add to workbook
             XLSX.utils.book_append_sheet(wb, ws, 'Behavior Referrals');
             
-            // Generate file
-            const filename = `Behavior_Referrals_${new Date().toISOString().split('T')[0]}.xlsx`;
+            // Generate file, named for the school's today rather than UTC's,
+            // which after 5pm is already tomorrow.
+            const filename = `Behavior_Referrals_${D.schoolToday()}.xlsx`;
             XLSX.writeFile(wb, filename);
             
             alert('✅ Referral report exported successfully!');
