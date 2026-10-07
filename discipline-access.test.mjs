@@ -186,5 +186,27 @@ console.log("\nThe app routes every referral table through one scope");
     /that is what the\n\s*\/\/ migration off cleartext passwords removed/.test(script));
 }
 
+console.log("\nWho may close a referral (owner, 2026-10-07)");
+{
+  // Measured first: all 9 closed referrals were closed by admins, none by a
+  // teacher, none loop-closed. So Close and Close-the-loop go to the three
+  // roles that see everything, and to nobody else.
+  const table = [
+    ["teacher", false], ["campusaide", false], ["pbis", true], ["admin", true], ["superadmin", true],
+    ["PBIS", true], [" Admin ", true], ["", false], [null, false], [undefined, false], ["custodian", false],
+  ];
+  for (const [role, want] of table) {
+    check(`canCloseReferrals(${JSON.stringify(role)}) is ${want}`, D.canCloseReferrals(role) === want);
+  }
+  check("a per-person grant never makes a closer (the role decides)",
+    D.canCloseReferrals("teacher") === false && D.disciplineTabsFor("teacher", { attendanceWatch: true }).length === 5);
+  check("closers are exactly the roles that see every referral",
+    ["teacher", "campusaide", "pbis", "admin", "superadmin"].every((r) => D.canCloseReferrals(r) === D.seesAllReferrals(r)));
+  // The R2 (name-only) and R3 (username-only) fixtures above still count as a
+  // teacher's own on SCREEN, inside whatever list the server sends; the
+  // server's own scope is email only (convex/referralAccessRules.ts).
+  check("the display rule is unchanged by the close rule", D.visibleReferrals(ALL, teacher).length === 3);
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

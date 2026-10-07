@@ -2913,8 +2913,40 @@
             sessionStorage.removeItem('currentUser');
             sessionStorage.removeItem('currentStudent');
             sessionStorage.removeItem('lastActivity');
+            // THE DISCIPLINE RECORD DOES NOT OUTLIVE THE PERSON WHO SIGNED IN
+            // (2026-10-07). Every save writes this device's referrals and
+            // detentions into localStorage 'raffleData', and nothing ever took
+            // them out: an admin's whole-school copy sat on a shared
+            // Chromebook, and loadDataLocal put it back in memory at the next
+            // page start, before anybody had signed in. Every way out of a
+            // session comes through here (logout, the inactivity timer, an
+            // expired session at page start, a student leaving the portal).
+            stripDisciplineFromLocalCache();
             if (inactivityTimer) {
                 clearTimeout(inactivityTimer);
+            }
+        }
+
+        /**
+         * Take the referrals, the detentions and the stamp saying whose they
+         * were out of the local cache, and leave the rest alone. The rest
+         * matters: recoverCashFromLocalCache reads unsaved cash from this same
+         * blob, so deleting the whole key would trade a privacy leak for lost
+         * money. Never throws, because a sign-out must not fail on a cache.
+         */
+        function stripDisciplineFromLocalCache() {
+            try {
+                const raw = localStorage.getItem('raffleData');
+                if (!raw) return;
+                const data = JSON.parse(raw);
+                if (!data || typeof data !== 'object') return;
+                if (!('behaviorReferrals' in data) && !('detentions' in data) && !('referralsOwner' in data)) return;
+                delete data.behaviorReferrals;
+                delete data.detentions;
+                delete data.referralsOwner;
+                localStorage.setItem('raffleData', JSON.stringify(data));
+            } catch (e) {
+                console.warn('Could not clear referrals from the local cache:', (e && e.name) || e);
             }
         }
 
@@ -3859,14 +3891,24 @@
                         // Prefer the dedicated referrals document; fall back to the
                         // legacy location so nothing is lost on first run after this
                         // change (and so an old tab's data still loads).
+                        //
+                        // ONLY WHAT THIS PERSON MAY HOLD (2026-10-07). A teacher
+                        // or campus aide keeps their own referrals (plus any this
+                        // tab has not finished saving) and nothing else, WHATEVER
+                        // THE SERVER SENT. The server scopes this read too, but
+                        // behind a switch that starts off and can be turned off
+                        // again; filtering here as well means a teacher's memory
+                        // and device copy are their own from the day this build
+                        // reaches the tab. Admin, superadmin and PBIS, and anyone
+                        // not yet signed in, keep the list as served.
                         const referralsData = referralsSnap.exists() ? referralsSnap.data() : {};
                         if (Array.isArray(referralsData.behaviorReferrals)) {
-                            behaviorReferrals = referralsData.behaviorReferrals;
+                            behaviorReferrals = cacheableReferrals(referralsData.behaviorReferrals);
                             if (typeof referralsData.referralIdCounter === 'number') {
                                 referralIdCounter = Math.max(referralIdCounter || 1, referralsData.referralIdCounter);
                             }
                         } else {
-                            behaviorReferrals = secondaryData.behaviorReferrals || [];
+                            behaviorReferrals = cacheableReferrals(secondaryData.behaviorReferrals || []);
                             if (behaviorReferrals.length) {
                                 console.log(`ℹ️ Migrating ${behaviorReferrals.length} referral(s) from secondary → referrals document on next save.`);
                             }
@@ -3892,7 +3934,15 @@
                             }
                         } catch (e) { /* the rules module is optional at this point */ }
 
-                        detentions = secondaryData.detentions || [];
+                        // Detentions are the same record by another route: each
+                        // one made from a referral names the child and the
+                        // behaviour. Only the Detention tab draws them, and only
+                        // admin, superadmin and PBIS have it, so anyone else's
+                        // tab holds none -- the answer the server gives under its
+                        // scope switch, given here whatever that switch says. An
+                        // empty list deletes nothing: detentions save through
+                        // mergeLegacySlice, a union.
+                        detentions = referralsScopedToViewer() ? [] : (secondaryData.detentions || []);
                         // Read the counter back from Firebase, not just localStorage.
                         // It used to be localStorage-only, and localStorage is never
                         // consulted when Firebase loads, so it reset to 1 every load
@@ -4079,9 +4129,19 @@
                 passSettings = data.passSettings || passSettings;
                 preventionGroups = data.preventionGroups || [];
                 schoolBranding = data.schoolBranding || schoolBranding;
-                behaviorReferrals = data.behaviorReferrals || [];
+                // ONLY THE SAME PERSON'S COPY (2026-10-07). This runs at every
+                // page start, before anyone has signed in, and used to put
+                // whoever last saved on this device -- an admin's whole school,
+                // on a shared Chromebook -- straight back into memory. The
+                // referrals and detentions are restored only when the cache is
+                // stamped with the email of the person signed in now, and then
+                // only what that person may hold. A cache written before the
+                // stamp existed carries none, so it restores nothing; the
+                // server load that follows a sign-in fills both anyway.
+                const discCacheMine = localCacheIsMine(data);
+                behaviorReferrals = discCacheMine ? cacheableReferrals(data.behaviorReferrals || []) : [];
                 referralIdCounter = data.referralIdCounter || 1;
-                detentions = data.detentions || [];
+                detentions = discCacheMine && !referralsScopedToViewer() ? (data.detentions || []) : [];
                 detentionIdCounter = data.detentionIdCounter || 1;
                 detentionLocations = data.detentionLocations || ['Main Office', 'Library', 'Room 101', 'Room 102', 'Cafeteria', 'Gym'];
                 detentionReasons = data.detentionReasons || ['Disrupting Class', 'Tardiness', 'Dress Code Violation', 'Inappropriate Behavior', 'Defiance/Disrespect', 'Cell Phone Violation', 'Missing Assignment', 'Other'];
@@ -4490,7 +4550,10 @@
          * threw away work rather than rebasing it.
          */
         async function reloadPreservingUnsavedWork() {
-            const pendingReferrals = Array.isArray(behaviorReferrals) ? behaviorReferrals.slice() : [];
+            // Only what this person may hold is carried across (2026-10-07):
+            // a teacher tab that loaded the whole school before this build
+            // must not merge it back in after a reload that scoped it.
+            const pendingReferrals = cacheableReferrals(Array.isArray(behaviorReferrals) ? behaviorReferrals.slice() : []);
             // The same rule for the two other things a tab can hold that the
             // server has not confirmed. loadData replaces both arrays.
             const pendingAudit = (auditLog || []).filter(e => {
@@ -4557,6 +4620,9 @@
          */
         function cacheLocally(blob, label) {
             const name = label || 'localStorage';
+            // Cut to what the person signed in may hold, and stamped with who
+            // that is, at the one place every cache write passes through.
+            blob = disciplineCacheBlob(blob);
             try {
                 localStorage.setItem('raffleData', JSON.stringify(blob));
                 return true;
@@ -5164,8 +5230,20 @@
                             // there for the same reason it was taken as a max
                             // here — the counter only ever goes up, or a stale
                             // tab hands out an id another tab already used.
-                            await mergeLegacySlice('referrals', 'behaviorReferrals', behaviorReferrals, 'id');
-                            console.log(`✅ Referrals saved (${(behaviorReferrals || []).length} records, merged)`);
+                            const refSaved = await mergeLegacySlice('referrals', 'behaviorReferrals', behaviorReferrals, 'id');
+                            // WHAT THE SERVER DID WITH IT, IN NUMBERS (2026-10-07).
+                            // The answer was thrown away, so a save the server
+                            // partly refused -- a stale copy, a close from a
+                            // tab that may not close -- read exactly like one it
+                            // took. Numbers only: referralSaveCounts copies
+                            // named counters and nothing else, so no name or
+                            // id can reach the console this way.
+                            const refCounts = (window.WildcatDiscipline && window.WildcatDiscipline.referralSaveCounts)
+                                ? window.WildcatDiscipline.referralSaveCounts(refSaved) : {};
+                            console.log(`✅ Referrals saved (${(behaviorReferrals || []).length} records, merged)`, refCounts);
+                            if (refCounts.refusedNotYours || refCounts.keptCloseFields || refCounts.refusedReferralDetentions) {
+                                console.warn('[referrals] the server kept its own copy of some rows:', refCounts);
+                            }
                         } catch (refErr) {
                             writesFailed.push('referrals');
                             if (isUnauthorized(refErr)) sawUnauthorized = true;
@@ -9014,7 +9092,12 @@
 
         async function establishTeacherSessionCore(teacher) {
             currentUser = teacher;
-            
+            // A Microsoft sign-in announces itself before this runs, so the
+            // load it starts can finish before anyone is signed in, and keep
+            // the referrals and detentions as served. Cut them to this
+            // person's now, before the save below sends or caches them.
+            shedReferralsNotMine();
+
             // Track login activity
             const loginRecord = {
                 id: 'login_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9),
@@ -43004,6 +43087,120 @@
         function getOpenReferrals()   { return visibleReferrals().filter(r => r.status !== 'closed'); }
         function getClosedReferrals() { return visibleReferrals().filter(r => r.status === 'closed'); }
 
+        // =====================================================================
+        // WHAT A TEACHER'S DEVICE HOLDS, NOT JUST WHAT IT DRAWS (2026-10-07)
+        //
+        // visibleReferrals above decides what a screen shows. Behind it, every
+        // staff tab held the whole school's referrals -- in memory, where the
+        // developer console reads them, and in localStorage, where they
+        // outlived sign-out. The server now scopes what it sends, behind a
+        // switch that starts off; these keep a teacher's device to their own
+        // WHATEVER that switch says, so it holds the right thing from the day
+        // this build reaches the tab.
+        // =====================================================================
+
+        /**
+         * Does this tab hold referrals for someone who may see only their own?
+         *
+         * No while nobody is signed in: the role is unknown, and the sign-in
+         * that follows scopes the list (establishTeacherSessionCore). No while
+         * an admin looks through a teacher's eyes: the admin's own list has to
+         * be there when the preview ends, and saves are blocked meanwhile.
+         * Any failure answers no, which is how every tab behaved before this.
+         */
+        function referralsScopedToViewer() {
+            try {
+                if (!currentUser) return false;
+                if (isPreviewingTeacher()) return false;
+                return !window.WildcatDiscipline.seesAllReferrals(currentUser.role);
+            } catch (e) {
+                return false;
+            }
+        }
+
+        /**
+         * The referrals this tab may keep: the list as given for admin,
+         * superadmin and PBIS (and before sign-in), otherwise the person's own
+         * plus any this tab has not finished saving. Rules in
+         * WildcatDiscipline.cacheableReferrals.
+         */
+        function cacheableReferrals(list) {
+            const rows = Array.isArray(list) ? list : (behaviorReferrals || []);
+            if (!referralsScopedToViewer()) return rows;
+            let unsaved = null;
+            try { unsaved = _unsavedReferrals; } catch (e) { /* not declared yet at page start */ }
+            return window.WildcatDiscipline.cacheableReferrals(rows, currentUser, unsaved);
+        }
+
+        /** Shed what this person may not hold from the list in memory. After a sign-in, and on a pull. */
+        function shedReferralsNotMine() {
+            if (!referralsScopedToViewer()) return 0;
+            const before = (behaviorReferrals || []).length;
+            behaviorReferrals = cacheableReferrals(behaviorReferrals || []);
+            detentions = [];
+            return before - behaviorReferrals.length;
+        }
+
+        /**
+         * Whose discipline record this device's cache holds: the person signed
+         * in (the admin, not the teacher, during a preview), else the Microsoft
+         * session's staff email, else nobody. Normalised as the server does.
+         */
+        function referralCacheOwner() {
+            let who = currentUser;
+            try { if (isPreviewingTeacher()) who = realUser; } catch (e) { /* page start */ }
+            let email = who && who.email;
+            if (!email) {
+                try {
+                    const s = window.WildcatAuth && window.WildcatAuth.getSession && window.WildcatAuth.getSession();
+                    if (s && s.me && s.me.kind === 'staff') email = s.me.email;
+                } catch (e) { /* no session */ }
+            }
+            return String(email || '').trim().toLowerCase();
+        }
+
+        /** Is the local cache's discipline record this person's? Never true for nobody. */
+        function localCacheIsMine(data) {
+            const owner = referralCacheOwner();
+            const stamp = String((data && data.referralsOwner) || '').trim().toLowerCase();
+            return Boolean(owner) && stamp === owner;
+        }
+
+        /**
+         * The blob cacheLocally writes, cut to what the person signed in may
+         * hold and stamped with who that is. With nobody to stamp it for, it
+         * holds no referrals or detentions at all. Never throws: on any error
+         * it drops both rather than risk writing the whole school.
+         */
+        function disciplineCacheBlob(blob) {
+            if (!blob || typeof blob !== 'object') return blob;
+            try {
+                const owner = referralCacheOwner();
+                const out = Object.assign({}, blob, { referralsOwner: owner });
+                if (!owner) {
+                    out.behaviorReferrals = [];
+                    out.detentions = [];
+                } else if (referralsScopedToViewer()) {
+                    out.behaviorReferrals = cacheableReferrals(blob.behaviorReferrals || []);
+                    out.detentions = [];
+                }
+                return out;
+            } catch (e) {
+                return Object.assign({}, blob, { behaviorReferrals: [], detentions: [], referralsOwner: '' });
+            }
+        }
+
+        /** Close and Close-the-loop are for admin, superadmin and PBIS. */
+        function canCloseReferralsHere() {
+            return Boolean(currentUser) && window.WildcatDiscipline.canCloseReferrals(currentUser.role);
+        }
+
+        /** What a tab that may not close says if a close is reached anyway (an old link, the console). */
+        function refuseReferralClose() {
+            showReferralToast('Only an administrator or the PBIS team can close a referral. ' +
+                'Yours stays open until one of them does.', 'warn');
+        }
+
         /**
          * Pull referrals from the server on demand.
          *
@@ -43064,9 +43261,19 @@
                     return { error: (res.errors && res.errors[0] && res.errors[0].error) || 'read failed' };
                 }
                 const doc = res.docs && res.docs.referrals;
-                const rows = doc && Array.isArray(doc.behaviorReferrals) ? doc.behaviorReferrals : null;
-                if (!rows) return { skipped: 'no-doc' };
+                const served = doc && Array.isArray(doc.behaviorReferrals) ? doc.behaviorReferrals : null;
+                if (!served) return { skipped: 'no-doc' };
 
+                // BOTH SIDES CUT TO WHAT THIS PERSON MAY HOLD, BEFORE THE MERGE
+                // (2026-10-07). The served side, so "N new" counts only rows
+                // the reader can see: filtered after the merge, a teacher was
+                // told "17 new" on every pull while the server still sent the
+                // whole school. The held side, so a tab that loaded everything
+                // before this build sheds it here, since the merge keeps every
+                // local-only row by design. A no-op for admin, superadmin and
+                // PBIS, and during a teacher preview.
+                const rows = cacheableReferrals(served);
+                shedReferralsNotMine();
                 const merged = window.WildcatDiscipline.mergeReferrals(behaviorReferrals, rows);
                 behaviorReferrals = merged.referrals;
                 _referralPullAt = new Date();
@@ -43147,6 +43354,10 @@
                 return;
             }
 
+            // CLOSE IS FOR ADMIN, SUPERADMIN AND PBIS (owner, 2026-10-07).
+            // Everyone else sees where the referral stands instead of a button.
+            // Asked once per draw, not per row.
+            const mayClose = canCloseReferralsHere();
             tbody.innerHTML = open.map(r => {
                 const d = new Date(r.submittedAt);
                 const ivCount = (r.interventions || []).length;
@@ -43170,7 +43381,9 @@
                     <td>
                         <button class="btn btn-sm-blue" onclick="viewReferralDetails('${r.id}')">View</button>
                         <button class="btn btn-sm-pdf" onclick="printReferral('${r.id}')" title="Printable referral">📄</button>
-                        <button class="btn btn-sm-close" onclick="openCloseReferralModal('${r.id}')">Close</button>
+                        ${mayClose
+                            ? `<button class="btn btn-sm-close" onclick="openCloseReferralModal('${r.id}')">Close</button>`
+                            : '<span class="tag-neutral" title="An administrator or the PBIS team closes referrals.">Awaiting an administrator</span>'}
                     </td>
                 </tr>`;
             }).join('');
@@ -43199,11 +43412,15 @@
                 return;
             }
 
+            // Closing the loop is a close too: admin, superadmin and PBIS only.
+            const mayClose = canCloseReferralsHere();
             host.innerHTML = closed.map(r => {
                 const actions = (r.closingActions || []);
                 const loopBadge = r.loopClosed
                     ? '<span class="tag-ok">Loop closed</span>'
-                    : `<button class="btn btn-sm-loop" onclick="openCloseLoopModal('${r.id}')">Loop pending, close it</button>`;
+                    : mayClose
+                    ? `<button class="btn btn-sm-loop" onclick="openCloseLoopModal('${r.id}')">Loop pending, close it</button>`
+                    : '<span class="tag-neutral" title="An administrator or the PBIS team closes the loop.">Loop pending</span>';
                 return `
                 <div class="wc-card closed-ref-card">
                     <div class="closed-ref-head">
@@ -43239,6 +43456,9 @@
 
         // ---------- Stage 1: close the referral ----------
         function openCloseReferralModal(referralId) {
+            // The button is not drawn for anyone else; this catches the other
+            // ways in (the detail modal of an old draw, the console).
+            if (!canCloseReferralsHere()) { refuseReferralClose(); return; }
             const r = (behaviorReferrals || []).find(x => x.id === referralId);
             if (!r) return;
             const modal = document.getElementById('closeReferralModal');
@@ -43299,6 +43519,10 @@
         }
 
         async function confirmCloseReferral(referralId) {
+            // Before anything is written to the referral: a close from a tab
+            // that may not close must not even show as closed here, because
+            // the server keeps its own copy and the two would disagree.
+            if (!canCloseReferralsHere()) { refuseReferralClose(); return; }
             const r = (behaviorReferrals || []).find(x => x.id === referralId);
             if (!r) return;
             const resolution = (document.querySelector('input[name="closeResolution"]:checked') || {}).value || 'action_taken';
@@ -43322,10 +43546,11 @@
             // Auto-create a Detention Tracker record when that action is checked.
             // Days come from the inline field that appears with the checkbox, so
             // admins don't have to go and edit the tracker afterwards.
-            let detentionMade = false, detentionDays = 0;
+            let detentionMade = false, detentionDays = 0, detentionAlready = false;
             if (actions.includes(DETENTION_CLOSING_ACTION)) {
                 const daysEl = document.getElementById('detentionDaysForReferral');
                 detentionDays = Math.max(1, Math.min(20, parseInt(daysEl && daysEl.value, 10) || 1));
+                detentionAlready = Boolean(window.WildcatDiscipline.activeDetentionFor(detentions, r.id));
                 detentionMade = createDetentionFromReferral(r, detentionDays);
                 r.detentionDays = detentionDays;
             }
@@ -43338,12 +43563,19 @@
             showReferralToast(
                 `✅ <strong>Referral closed</strong> for ${escapeHtml(r.studentName)}.` +
                 (detentionMade ? ` 🕐 ${detentionDays} day${detentionDays === 1 ? '' : 's'} of detention added to the tracker.` : '') +
+                (detentionAlready ? ' 🕐 This referral already has an active detention in the tracker, so no second one was added.' : '') +
                 ` Next: close the loop from Closed Referrals.`, 'ok');
 
             saveInBackground('Closing referral for ' + r.studentName);
         }
 
         function createDetentionFromReferral(r, days) {
+            // ONE ACTIVE DETENTION PER REFERRAL (2026-10-07). A referral could
+            // collect two: a teacher's old tab closed it with this action, the
+            // server kept the referral open (a teacher's close fields are not
+            // taken), and an admin then closed it for real. The child had two
+            // detentions for one incident and nothing noticed.
+            if (window.WildcatDiscipline.activeDetentionFor(detentions, r && r.id)) return false;
             try {
                 const student = students.find(s => s.id === r.studentId);
                 if (!student) return false;
@@ -43377,6 +43609,7 @@
 
         // ---------- Stage 2: close the loop ----------
         function openCloseLoopModal(referralId) {
+            if (!canCloseReferralsHere()) { refuseReferralClose(); return; }
             const r = (behaviorReferrals || []).find(x => x.id === referralId);
             if (!r) return;
             const modal = document.getElementById('closeLoopModal');
@@ -43431,6 +43664,8 @@
         }
 
         async function confirmCloseLoop(referralId) {
+            // Closing the loop stops the reminder emails, so it is a close.
+            if (!canCloseReferralsHere()) { refuseReferralClose(); return; }
             const r = (behaviorReferrals || []).find(x => x.id === referralId);
             if (!r) return;
             const picked = Array.from(document.querySelectorAll('.loop-staff:checked')).map(cb => cb.value);
@@ -43533,7 +43768,7 @@
                 <div class="modal-actions">
                     <button class="btn btn-secondary" onclick="closeModalById('referralDetailModal')">Close</button>
                     <button class="btn btn-sm-pdf" onclick="printReferral('${r.id}')">📄 Download PDF</button>
-                    ${r.status !== 'closed' ? `<button class="btn btn-referral-submit" onclick="closeModalById('referralDetailModal'); openCloseReferralModal('${r.id}')">Close this referral</button>` : ''}
+                    ${r.status !== 'closed' && canCloseReferralsHere() ? `<button class="btn btn-referral-submit" onclick="closeModalById('referralDetailModal'); openCloseReferralModal('${r.id}')">Close this referral</button>` : ''}
                 </div>`;
             openRefModal(modal.id);
         }
@@ -43806,13 +44041,15 @@
                 };
             }
 
-            // The join happens on the server, but the server cannot see
-            // referrals: they are still in Firestore and race is in Convex.
-            // So this sends the student NUMBERS it already holds and gets
-            // COUNTS back. No race value ever crosses back to this page.
-            //
-            // studentNumber, not studentId: a referral's studentId may be a
-            // legacy CSV value, and psRestricted is keyed by student number.
+            // The join happens on the server, and since 2026-10-07 so does the
+            // list: byRace counts the referrals the server itself stores, and
+            // ignores what a page sends. (It used to trust this list, which
+            // let anyone holding a child's number ask for that child's race by
+            // padding the list to ten.) The numbers are still sent, and
+            // ignored, so that rolling the server back to the build before
+            // that one would not leave this panel empty; they come out once
+            // the server side has settled. COUNTS come back; no race value
+            // ever crosses to this page.
             const numbers = referralStudentNumbers(referrals);
 
             try {
@@ -44022,6 +44259,13 @@
                     <p class="panel-hint">
                         Served by the server as counts only. No student's race is sent to this page.
                     </p>
+                    ${res.windowApplied === false ? `
+                        <p class="receipt-meta demo-legend">
+                            The whole school year, counted as of the last time ten more students had
+                            been referred (${Number(res.snapshotStudents) || 0} students so far). These
+                            figures move only in steps of ten students, so a single new referral can
+                            never show which group one child is in.
+                        </p>` : ''}
                     <table class="wc-table"><thead><tr>
                         <th>Race / Ethnicity</th><th>Referrals</th><th>Share of referrals</th>
                         <th>Share of enrolment</th><th>Index</th>
@@ -44029,10 +44273,14 @@
                     ${rows.map(r => `
                         <tr>
                             <td>${escapeHtml(r.code)}</td>
-                            <td>${r.suppressed ? '<span class="receipt-meta">withheld</span>' : `<strong>${r.count}</strong>`}</td>
+                            <td>${r.countSuppressed
+                                ? `<span class="receipt-meta" title="Fewer than ${res.smallGroupThreshold} referred students, or held back with such a group so its number cannot be worked out from the total.">withheld to protect a small group</span>`
+                                : r.suppressed ? '<span class="receipt-meta">withheld</span>' : `<strong>${r.count}</strong>`}</td>
                             <td>${r.suppressed ? '—' : Math.round(r.shareOfReferrals * 100) + '%'}</td>
                             <td>${r.suppressed ? '—' : Math.round(r.shareOfEnrollment * 100) + '%'}</td>
-                            <td>${r.suppressed
+                            <td>${r.countSuppressed
+                                ? '<span class="receipt-meta">withheld</span>'
+                                : r.suppressed
                                 ? `<span class="receipt-meta" title="Fewer than ${res.smallGroupThreshold} enrolled: withheld by the server.">withheld</span>`
                                 : r.tooFewReferrals
                                 ? `<span class="receipt-meta demo-thin" title="An index over ${r.count} referral${r.count === 1 ? '' : 's'} measures the size of the sample, not the school. It appears at ${res.minReferralsForIndex}.">too few</span>`
@@ -44051,6 +44299,16 @@
                         are the federal reporting groups; PowerSchool's detailed CALPADS
                         subcodes are rolled up.
                     </p>
+                    ${rows.some(r => r.countSuppressed) ? `
+                        <p class="receipt-meta demo-legend">
+                            "Withheld to protect a small group": a group with fewer than
+                            ${res.smallGroupThreshold} referred students, including none, is not
+                            counted here, because you can see who was referred and a small number
+                            would say which group a child is in. Where that number could then be
+                            worked out from the total, the next-smallest group is withheld with it,
+                            so a withheld row may also be a larger group. Withheld rows are listed
+                            last, in name order, so their position says nothing either.
+                        </p>` : ''}
                     ${res.unmappedStudents ? `
                         <p class="receipt-meta demo-legend">
                             ${res.unmappedStudents} student${res.unmappedStudents === 1 ? '' : 's'}

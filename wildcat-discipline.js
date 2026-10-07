@@ -302,6 +302,86 @@
     return rows.filter(function (r) { return ownsReferral(r, user); });
   }
 
+  /**
+   * Who may close a referral, or close its loop: admin, superadmin and PBIS.
+   *
+   * THE SAME THREE AS DISCIPLINE_ALL_ROLES, and reusing that list on purpose
+   * (owner, 2026-10-07). Measured before deciding: all 9 closed referrals in
+   * production were closed by an admin, none by a teacher, and none had its
+   * loop closed. So taking Close away from teachers and campus aides changes
+   * nothing anybody actually does, and it matches the server, which keeps a
+   * teacher's close fields once its close guard is on
+   * (convex/referralAccessRules.ts REFERRAL_CLOSE_ROLES; the test pins the
+   * two lists together).
+   *
+   * A separate function from seesAllReferrals because they are two different
+   * permissions that happen to agree today.
+   */
+  function canCloseReferrals(role) {
+    return DISCIPLINE_ALL_ROLES.indexOf(trimmed(role).toLowerCase()) !== -1;
+  }
+
+  /**
+   * The referrals this person's DEVICE may hold: what they can see, plus any
+   * referral this tab has not finished saving.
+   *
+   * WHY A DEVICE COPY NEEDS ITS OWN RULE (2026-10-07). visibleReferrals
+   * decides what a screen draws, but the array behind the screens was the
+   * whole school's: every staff browser held every referral in memory, where
+   * the developer console reads it, and in localStorage, where it outlived
+   * sign-out. Trimming the screens was never trimming the data.
+   *
+   * keepIds is the tab's unsaved referrals. They are this person's own in
+   * every real case (the filer's email is written at filing), but a referral
+   * that exists only in this tab must never be dropped by a rule about who
+   * owns it: losing a child's referral is worse than keeping one row too many.
+   */
+  function cacheableReferrals(referrals, user, keepIds) {
+    var rows = Array.isArray(referrals) ? referrals : [];
+    if (user && seesAllReferrals(user.role)) return rows.slice();
+    var keep = keepIds && typeof keepIds.has === 'function' ? keepIds : null;
+    return rows.filter(function (r) {
+      return ownsReferral(r, user) || Boolean(keep && r && keep.has(r.id));
+    });
+  }
+
+  /**
+   * The active detention already made from this referral, or null.
+   *
+   * A referral could collect two: a teacher's old tab closed it with the
+   * detention action, the server kept the referral open, and an admin closed
+   * it again for real. Nothing checked, so the child had two detentions for
+   * one incident. One per referral while it is active.
+   */
+  function activeDetentionFor(detentions, referralId) {
+    if (!referralId || !Array.isArray(detentions)) return null;
+    for (var i = 0; i < detentions.length; i++) {
+      var d = detentions[i];
+      if (d && d.sourceReferralId === referralId && d.status === 'active') return d;
+    }
+    return null;
+  }
+
+  /**
+   * What a referral save reports, as NUMBERS ONLY, for the console.
+   *
+   * legacyData:mergeSlice answers every save with counters; the browser
+   * ignored them, so a save the server partly refused still read "Referrals
+   * saved". Only these named counters are copied, and only when they are
+   * numbers, so nothing the server might add later -- an id, a name -- can
+   * ride into a log line by accident.
+   */
+  var REFERRAL_SAVE_COUNTERS = ['incoming', 'inserted', 'updated', 'deleted', 'refusedAsHistory',
+    'refusedNotYours', 'keptCloseFields', 'clampedStamps', 'refusedReferralDetentions'];
+  function referralSaveCounts(res) {
+    var out = {};
+    if (!res || typeof res !== 'object') return out;
+    REFERRAL_SAVE_COUNTERS.forEach(function (k) {
+      if (typeof res[k] === 'number' && isFinite(res[k])) out[k] = res[k];
+    });
+    return out;
+  }
+
   /** Read a dimension off a referral, preferring the snapshot taken at filing. */
   function valueOf(referral, dimension) {
     var r = referral || {};
@@ -1522,6 +1602,11 @@
     canEditInsightSettings: canEditInsightSettings,
     ownsReferral: ownsReferral,
     visibleReferrals: visibleReferrals,
+    canCloseReferrals: canCloseReferrals,
+    cacheableReferrals: cacheableReferrals,
+    activeDetentionFor: activeDetentionFor,
+    REFERRAL_SAVE_COUNTERS: REFERRAL_SAVE_COUNTERS,
+    referralSaveCounts: referralSaveCounts,
     valueOf: valueOf,
     availability: availability,
     breakdownBy: breakdownBy,

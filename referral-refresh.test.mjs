@@ -183,11 +183,17 @@ function loadPull(src, G) {
     const window = { WildcatAuth: { getSession: () => G.session }, WildcatDiscipline: G.D };
     const console = { warn() {}, log() {} };
     let behaviorReferrals = G.local;
-    // An admin, so any scoping of what a pull keeps is a no-op here: these
-    // checks are about how many reads happen, not who sees what.
+    let detentions = G.detentions || [];
+    const _unsavedReferrals = G.unsaved || new Map();
+    // An admin unless a test says otherwise, so scoping what a pull keeps is
+    // a no-op for the read-count checks; the device-copy checks below pass a
+    // teacher.
     let currentUser = G.user || { role: 'admin', email: 'admin@x.org' };
-    function isPreviewingTeacher() { return false; }
+    function isPreviewingTeacher() { return Boolean(G.previewing); }
     ${liftFn(src, "visibleReferrals")}
+    ${liftFn(src, "referralsScopedToViewer")}
+    ${liftFn(src, "cacheableReferrals")}
+    ${liftFn(src, "shedReferralsNotMine")}
     ${liftLet(src, "_referralPullBusy")}
     ${liftLet(src, "_referralPullAt")}
     async function loadLegacyDocsFromConvex(names) {
@@ -198,7 +204,8 @@ function loadPull(src, G) {
     }
     ${liftFn(src, "refreshReferralsFromServer")}
     ${liftFn(src, "pullReferralsOnce")}
-    return { refreshReferralsFromServer, held: () => behaviorReferrals, busy: () => _referralPullBusy };
+    return { refreshReferralsFromServer, held: () => behaviorReferrals, busy: () => _referralPullBusy,
+             detentions: () => detentions };
   `;
   return new Function("G", body)(G);
 }
@@ -234,6 +241,68 @@ function loadPull(src, G) {
     const res = await app.refreshReferralsFromServer();
     check("with no session nothing is read and nothing is stuck",
       res.skipped === "no-session" && G.reads.length === 0 && (await Promise.resolve(), app.busy() === null));
+  });
+
+  // ---- what a teacher's tab keeps (2026-10-07) ----------------------------
+  // The server scopes this read behind a switch that starts OFF, so for a
+  // while it still sends a teacher the whole school. The tab cuts both sides
+  // to the teacher's own BEFORE the merge, whatever the server sent.
+  const T = { role: "teacher", email: "t@x.org", name: "T Teacher" };
+  const mineR = (id, at) => R(id, at, { filedByEmail: "t@x.org", referredByEmail: "t@x.org" });
+  const theirsR = (id, at) => R(id, at, { filedByEmail: "o@x.org", referredByEmail: "o@x.org", referredBy: "O Other" });
+
+  later("a teacher's pull with the server switch OFF", async () => {
+    // A tab that loaded the whole school before this build.
+    const local = [mineR("MINE1", "1"), theirsR("THEIRS1", "1"), theirsR("THEIRS2", "1")];
+    const rows = [mineR("MINE1", "1"), mineR("MINE2", "2"), theirsR("THEIRS1", "1"), theirsR("THEIRS2", "1"), theirsR("THEIRS3", "2")];
+    const G = { D, session: { ok: 1 }, local, rows, reads: [], user: T, detentions: [{ id: "detention_1" }] };
+    const app = loadPull(script, G);
+    const res = await app.refreshReferralsFromServer();
+    check("the teacher's tab keeps only their own after a pull",
+      ids(app.held()).sort().join() === "MINE1,MINE2", ids(app.held()).join());
+    check("'N new' counts only what they can see (1), not the colleague's new one too",
+      res.added === 1 && res.updated === 0, JSON.stringify(res));
+    check("and any detentions the tab held are dropped (only the Detention tab draws them)",
+      app.detentions().length === 0);
+  });
+
+  later("a referral this tab has not saved is never shed", async () => {
+    // Owned in every real case; kept even when it somehow is not.
+    const odd = R("UNSAVED", "3", { filedByEmail: "" });
+    const G = { D, session: { ok: 1 }, local: [odd, theirsR("THEIRS1", "1")], rows: [theirsR("THEIRS1", "1")],
+      reads: [], user: T, unsaved: new Map([["UNSAVED", odd]]) };
+    const app = loadPull(script, G);
+    await app.refreshReferralsFromServer();
+    check("the unsaved referral survives the pull", ids(app.held()).join() === "UNSAVED", ids(app.held()).join());
+  });
+
+  later("admin, PBIS and a teacher preview keep everything", async () => {
+    for (const [label, user, previewing] of [
+      ["admin", { role: "admin", email: "a@x.org" }, false],
+      ["PBIS", { role: "pbis", email: "p@x.org" }, false],
+      ["an admin previewing a teacher", T, true],
+    ]) {
+      const G = { D, session: { ok: 1 }, local: [theirsR("THEIRS1", "1")], rows: [theirsR("THEIRS1", "1"), mineR("MINE1", "1")],
+        reads: [], user, previewing, detentions: [{ id: "detention_1" }] };
+      const app = loadPull(script, G);
+      const res = await app.refreshReferralsFromServer();
+      check(`${label}: every referral is kept and the new one counted`,
+        app.held().length === 2 && res.added === 1, `${app.held().length} held, ${res.added} added`);
+      check(`${label}: detentions untouched`, app.detentions().length === 1);
+    }
+  });
+
+  later("teeth: device copy", async () => {
+    const noFilter = breakOnce(script, "const rows = cacheableReferrals(served);", "const rows = served;", "served side");
+    let G = { D, session: { ok: 1 }, local: [mineR("MINE1", "1")], rows: [mineR("MINE1", "1"), theirsR("THEIRS9", "2")], reads: [], user: T };
+    let res = await loadPull(noFilter, G).refreshReferralsFromServer();
+    check("TEETH: without the served-side filter a colleague's referral arrives (and is counted)", res.added === 1);
+
+    const noShed = breakOnce(script, "                shedReferralsNotMine();\n                const merged", "                const merged", "held side");
+    G = { D, session: { ok: 1 }, local: [mineR("MINE1", "1"), theirsR("THEIRS1", "1")], rows: [mineR("MINE1", "1")], reads: [], user: T };
+    const app = loadPull(noShed, G);
+    await app.refreshReferralsFromServer();
+    check("TEETH: without the shed an old whole-school copy stays in memory", app.held().length === 2);
   });
 
   later("teeth: busy", async () => {
