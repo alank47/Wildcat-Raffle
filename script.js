@@ -43460,37 +43460,68 @@
             document.getElementById('studentReferralSummary').classList.remove('hidden');
             document.getElementById('noHistoryMessage').classList.add('hidden');
             
-            // Severity retired — summarise by status and closure instead.
-            const minorCount = studentReferrals.filter(r => r.status !== 'closed').length;   // open
-            const majorCount = studentReferrals.filter(r => r.status === 'closed').length;   // closed
-            const severeCount = studentReferrals.filter(r => r.loopClosed).length;           // loop closed
+            // OPEN, CLOSED, LOOP CLOSED AND TOTAL (2026-10-07). The tiles were
+            // still labelled Minor / Major / Severe from before severity was
+            // retired, in severity colours, while the numbers under them were
+            // open, closed and loop-closed counts: a child with three closed
+            // referrals read as having three MAJOR ones. Open + Closed = Total.
+            // Loop closed is the part of Closed whose loop has been closed, not
+            // a fourth kind, and the note under the tiles says so.
+            //
+            // The element ids are the old severity ones, deliberately: a tab
+            // still running the previous script.js against this page's HTML
+            // must find them.
+            const openCount = studentReferrals.filter(r => r.status !== 'closed').length;
+            const closedCount = studentReferrals.filter(r => r.status === 'closed').length;
+            const loopClosedCount = studentReferrals.filter(r => r.status === 'closed' && r.loopClosed).length;
             
-            document.getElementById('summaryMinor').textContent = minorCount;
-            document.getElementById('summaryMajor').textContent = majorCount;
-            document.getElementById('summarySevere').textContent = severeCount;
+            document.getElementById('summaryMinor').textContent = openCount;
+            document.getElementById('summaryMajor').textContent = closedCount;
+            document.getElementById('summarySevere').textContent = loopClosedCount;
             document.getElementById('summaryTotal').textContent = studentReferrals.length;
             
             // Show history table
             document.getElementById('studentReferralHistoryContainer').classList.remove('hidden');
             const tbody = document.getElementById('studentReferralHistoryBody');
             
-            const sorted = [...studentReferrals].sort((a, b) => new Date(b.dateTime) - new Date(a.dateTime));
+            // THE DAY OF THE INCIDENT, AS A CALENDAR DAY. This was
+            // new Date(ref.dateTime).toLocaleDateString(), and dateTime is only
+            // the date when no time was entered: parsed as UTC midnight, an
+            // Oct 5 incident showed as Oct 4 in Los Angeles. Newest first, by
+            // incident day, then time, then filing.
+            const D = window.WildcatDiscipline;
+            const whenKey = r => `${D.incidentDay(r) || ''} ${r.time || ''} ${r.submittedAt || ''}`;
+            const sorted = [...studentReferrals].sort((a, b) => whenKey(b).localeCompare(whenKey(a)));
+            const muted = text => `<span style="color: #999;">${text}</span>`;
+            const orDash = v => String(v == null ? '' : v).trim() ? escapeHtml(v) : muted('—');
             
+            // EVERY STORED FIELD IS ESCAPED. behaviorType, location, referredBy
+            // and consequence went into innerHTML raw, and any staff save can
+            // write a referral's fields, so a stored "<img onerror=...>" would
+            // run in the browser of every admin who opened this child's
+            // history. A missing location printed "undefined".
             tbody.innerHTML = sorted.map(ref => {
-                const severityColor = ref.status === 'closed' ? '#2E7D52' : '#B7791F';
+                const statusColor = ref.status === 'closed' ? '#2E7D52' : '#B7791F';
+                let consequence;
+                if (String(ref.consequence || '').trim()) consequence = escapeHtml(ref.consequence);
+                else if (ref.status !== 'closed') consequence = muted('Pending');
+                // Closed with "No Action Required" stores no actions, so this
+                // used to read "Pending" on a referral that was finished.
+                else if (ref.resolutionType === 'no_action') consequence = D.resolutionLabel('no_action');
+                else consequence = muted('—');
                 
                 return `
                     <tr style="border-bottom: 1px solid #e5e7eb;">
-                        <td style="padding: 14px;">${new Date(ref.dateTime).toLocaleDateString()}</td>
-                        <td style="padding: 14px;">${ref.behaviorType}</td>
+                        <td style="padding: 14px;">${escapeHtml(D.dayLabel(D.incidentDay(ref))) || muted('—')}</td>
+                        <td style="padding: 14px;">${orDash(ref.behavior || ref.behaviorType)}</td>
                         <td style="padding: 14px; text-align: center;">
-                            <span style="background: ${severityColor}; color: white; padding: 5px 12px; border-radius: 12px; font-size: 12px; font-weight: 600;">
+                            <span style="background: ${statusColor}; color: white; padding: 5px 12px; border-radius: 12px; font-size: 12px; font-weight: 600;">
                                 ${ref.status === 'closed' ? 'Closed' : 'Open'}
                             </span>
                         </td>
-                        <td style="padding: 14px;">${ref.location}</td>
-                        <td style="padding: 14px;">${ref.referredBy}</td>
-                        <td style="padding: 14px;">${ref.consequence || '<span style="color: #999;">Pending</span>'}</td>
+                        <td style="padding: 14px;">${orDash(ref.location)}</td>
+                        <td style="padding: 14px;">${orDash(ref.referredBy)}</td>
+                        <td style="padding: 14px;">${consequence}</td>
                         <td style="padding: 14px; text-align: center;">
                             <button class="btn btn-sm-blue" onclick="viewReferralDetails('${ref.id}')">View</button>
                             <button class="btn btn-sm-pdf" onclick="printReferral('${ref.id}')" title="Open a printable referral (save as PDF)">📄 PDF</button>
