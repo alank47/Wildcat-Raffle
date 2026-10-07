@@ -192,6 +192,69 @@ const L = load();
   check("the app's real call inserts the new referral and keeps every other", res.inserted === 1 && referralCount(d2) === 4);
 }
 
+// THE CLOSE GUARD (1D), through the real handler and its real return value.
+const ADMIN = { _id: "a1", email: "admin@school.org", name: "An Admin", role: "admin" };
+const GUARD_ON = [{ key: "referralCloseGuard", value: { enabled: true }, mirroredAt: "x" }];
+const recent = () => new Date(Date.now() - 60e3).toISOString();
+async function guardBehaviour(L) {
+  const out = {};
+  const mk = () => makeDb({ ...seed(), appState: GUARD_ON });
+  {
+    const d = mk();
+    const res = await L.mergeSlice.handler({ ...d.ctx, __me: TEACHER }, { doc: "referrals", collection: "behaviorReferrals",
+      rows: [{ payload: { id: "R1", status: "closed", closedAt: recent(), filedByEmail: TEACHER.email, updatedAt: recent() } }], dedupeField: "id" });
+    const r1 = d.tables.legacyMirror.find((r) => r.payload.id === "R1").payload;
+    out.teacherCloseKeptOpen = r1.status === "open" && res.keptCloseFields === 1;
+    out.teacherSeesNoSchoolTotal = !("stored" in res);
+    out.countersReturned = ["refusedNotYours", "keptCloseFields", "clampedStamps", "refusedReferralDetentions"].every((k) => typeof res[k] === "number");
+  }
+  {
+    const d = mk();
+    const res = await L.mergeSlice.handler({ ...d.ctx, __me: TEACHER }, { doc: "referrals", collection: "behaviorReferrals",
+      rows: [{ payload: { id: "R8", status: "open", filedByEmail: "other@school.org", referredByEmail: "other@school.org" } }], dedupeField: "id" });
+    out.colleagueRefiledRefused = res.inserted === 0 && res.refusedNotYours === 1 && referralCount(d) === 3;
+  }
+  {
+    const d = mk();
+    const res = await L.mergeSlice.handler({ ...d.ctx, __me: TEACHER }, { doc: "secondary", collection: "detentions",
+      rows: [{ payload: { id: "detention_1", sourceReferralId: "R1" } }], dedupeField: "id" });
+    out.referralDetentionRefused = res.inserted === 0 && res.refusedReferralDetentions === 1;
+  }
+  {
+    const d = mk();
+    const res = await L.mergeSlice.handler({ ...d.ctx, __me: ADMIN }, { doc: "referrals", collection: "behaviorReferrals",
+      rows: [{ payload: { id: "R2", status: "closed", closedAt: recent(), updatedAt: recent() } }], dedupeField: "id" });
+    out.adminCloseLands = d.tables.legacyMirror.find((r) => r.payload.id === "R2").payload.status === "closed";
+    out.adminSeesSchoolTotal = res.stored === 3;
+  }
+  {
+    // Switch row absent: a teacher's close lands exactly as today.
+    const d = makeDb(seed());
+    await L.mergeSlice.handler({ ...d.ctx, __me: TEACHER }, { doc: "referrals", collection: "behaviorReferrals",
+      rows: [{ payload: { id: "R1", status: "closed", closedAt: recent(), filedByEmail: TEACHER.email, updatedAt: recent() } }], dedupeField: "id" });
+    out.offIsToday = d.tables.legacyMirror.find((r) => r.payload.id === "R1").payload.status === "closed";
+  }
+  return out;
+}
+
+console.log("\nThe close guard, through the real handler (switch 'referralCloseGuard')");
+{
+  const g = await guardBehaviour(L);
+  check("guard on: a teacher's Close on their own referral is kept open, and counted", g.teacherCloseKeptOpen);
+  check("guard on: a teacher cannot re-file a colleague's referral", g.colleagueRefiledRefused);
+  check("guard on: a teacher's detention made from a referral is not inserted", g.referralDetentionRefused);
+  check("guard on: an admin's close lands", g.adminCloseLands);
+  check("switch absent: a teacher's close lands exactly as today", g.offIsToday);
+  check("a teacher's referral save no longer reports the school's referral total", g.teacherSeesNoSchoolTotal);
+  check("...an admin's still does", g.adminSeesSchoolTotal);
+  check("the guard's four counters are in the return", g.countersReturned);
+  // Any other slice keeps `stored`, for anyone.
+  const d = makeDb(seed());
+  const res = await L.mergeSlice.handler({ ...d.ctx, __me: TEACHER }, { doc: "secondary", collection: "hallPasses",
+    rows: [{ payload: { id: "p1" } }], dedupeField: "id" });
+  check("...and a teacher's save of any other slice still reports `stored`", res.stored === 1);
+}
+
 console.log("\nTEETH: each refusal, removed, fails a check above");
 {
   const breaks = [
@@ -204,6 +267,20 @@ console.log("\nTEETH: each refusal, removed, fails a check above");
     const B = load({ legacyData: (s) => s.replace(from, to) });
     const b = await behaviour(B);
     check(`TEETH: ${what} -> "${key}" fails`, b[key] === false);
+  }
+  const guardBreaks = [
+    ["the update guard removed", "if (stored && closeGuard && doc === \"referrals\") {", "if (false) {", "teacherCloseKeptOpen"],
+    ["the insert guard removed", "if (closeGuard && doc === \"referrals\") {\n        const plan = planReferralInsert", "if (false) {\n        const plan = planReferralInsert", "colleagueRefiledRefused"],
+    ["the referral-detention guard removed", "if (closeGuard && doc === \"secondary\" && madeFromReferral(r.payload)) {", "if (false) {", "referralDetentionRefused"],
+    ["closers guarded too", "&& !canCloseReferrals(me.role)\n", "\n", "adminCloseLands"],
+    ["the school total returned to everyone", "...(doc === \"referrals\" && !seesAllReferrals(me.role)", "...(false", "teacherSeesNoSchoolTotal"],
+    ["the switch ignored (always on)", "&& switchAllows(await readReferralSwitch(ctx, REFERRAL_CLOSE_GUARD_KEY), me.email);", ";", "offIsToday"],
+  ];
+  for (const [what, from, to, key] of guardBreaks) {
+    if (!SRC.legacyData.includes(from)) { check(`TEETH (${what}): the break applied`, false, "pattern not found"); continue; }
+    const B = load({ legacyData: (s) => s.replace(from, to) });
+    const g = await guardBehaviour(B).catch((e) => ({ error: e.message }));
+    check(`TEETH: ${what} -> "${key}" fails`, g[key] === false, g.error);
   }
 }
 

@@ -130,9 +130,18 @@ const runNew = new Function("RULES", "ConvexError",
   // is row-for-row what it always was; cash-arrival-alerts.test.mjs runs the
   // real one.
   "const noteArrivedCash = async () => null;\n" +
-  "const { pinOwnerFields } = RULES;\n" +
+  "const { pinOwnerFields, planReferralUpdate, planReferralInsert, canCloseReferrals, seesAllReferrals,\n" +
+  "  switchAllows, normalizeSwitch, REFERRAL_CLOSE_GUARD_KEY } = RULES;\n" +
+  // The close-guard switch (2026-10-07) is an appState row, read through
+  // legacyData's readReferralSwitch. Injected per call as ctx.__switches, and
+  // every read is counted so a test can prove which merges pay for it.
+  "const readReferralSwitch = async (ctx, key) => {\n" +
+  "  ctx.__switchReads = (ctx.__switchReads || 0) + 1;\n" +
+  "  return normalizeSwitch((ctx.__switches || {})[key]);\n" +
+  "};\n" +
   "return (async () => {" + js +
-  "\nreturn { inserted: toInsert.length, updated: toUpdate.length, deleted, refusedAsHistory, keptCancelledReceipts };" +
+  "\nreturn { inserted: toInsert.length, updated: toUpdate.length, deleted, refusedAsHistory, keptCancelledReceipts," +
+  " refusedNotYours, keptCloseFields, clampedStamps, refusedReferralDetentions };" +
   "})();" +
   "};")(RULES, ConvexError);
 
@@ -712,6 +721,160 @@ console.log("\nForged referral shapes are refused; the app's own call is untouch
   check("control: a cash week still merges", (await ok("cash_tx_2026_W40", "transactions", [row({ id: "t1" })], "id")) === 1);
   check("control: keyed ticket history still merges", (await ok("ticket_history_ms", "histories", [row([{ entryId: "a" }], "s1")], "entryId")) === 1);
   check("control: an audit week on entryId still merges", (await ok("audit_log_2026_W40", "auditLog", [row({ entryId: "e1" })], "entryId")) === 1);
+}
+
+console.log("\nThe close guard: a non-closer's copy cannot close, claim or lock a referral (2026-10-07)");
+{
+  // Behind the appState switch 'referralCloseGuard'. Only admin, superadmin
+  // and PBIS close referrals; with the switch on for anyone else, their tab's
+  // copies are taken row by row -- their own edits land, close fields keep
+  // the stored values, other people's rows are skipped -- and NOTHING THROWS,
+  // because an old tab re-sends every referral it holds on every save.
+  const T = { email: "teacher.one@school.org", name: "Teacher One", role: "teacher" };
+  const ADMIN = { email: "admin@school.org", name: "An Admin", role: "admin" };
+  const PBIS = { email: "pbis@school.org", name: "Pbis Lead", role: "pbis" };
+  const ON = { referralCloseGuard: { enabled: true } };
+  const past = new Date(Date.now() - 5 * 86400e3).toISOString();
+  const recent = new Date(Date.now() - 60e3).toISOString();
+  const ref = (i, who, extra) => ({ id: "R" + i, studentName: "Student " + i, description: "d" + i,
+    status: i % 3 ? "open" : "closed", adminNotes: i % 3 ? "" : "met parent", closedBy: i % 3 ? "" : "An Admin",
+    closedAt: i % 3 ? "" : past, loopClosed: false, loopClosedBy: "", loopClosedAt: "", forwardedTo: [],
+    resolutionType: "", closingActions: [], filedByEmail: who, referredByEmail: who,
+    submittedAt: past, updatedAt: past, ...extra });
+  // 18 rows, as production holds: 5 filed by this teacher, 13 by others.
+  const SEED = Array.from({ length: 18 }, (_, i) => row(ref(i + 1, i < 5 ? T.email : `other${i}@school.org`)));
+  const go = async ({ me, existing = SEED, rows, switches = ON, doc = "referrals", coll = "behaviorReferrals" }) => {
+    const f = fakeDb(existing);
+    const ctx = { db: { ...f.ctx.db }, __me: me, __switches: switches };
+    const spy = mailSpy();
+    const res = await runNew(ctx, doc, coll, rows, "id", MAX_ROWS_PER_SLICE, spy.fn).then((r) => r, (e) => ({ threw: e }));
+    return { res, final: f.ctx.rowsInOrder().map((r) => r.payload), byId: (id) => f.ctx.rowsInOrder().find((r) => r.payload.id === id)?.payload,
+      mailed: spy.mailed(), mailCalls: spy.calls, switchReads: ctx.__switchReads || 0 };
+  };
+  const copy = (p) => JSON.parse(JSON.stringify(p));
+
+  {
+    // THE OLD TEACHER TAB: every row it loaded, unchanged, plus a new filing.
+    const fresh = ref(98, T.email, { submittedAt: recent, updatedAt: recent });   // 98: an open one
+    const g = await go({ me: T, rows: [...SEED.map((r) => row(copy(r.payload))), row(fresh)] });
+    check("an old teacher tab's whole-list save does not throw", !g.res.threw, g.res.threw && g.res.threw.message);
+    check("...its new referral is inserted", g.res.inserted === 1 && !!g.byId("R98"));
+    check("...and mailed, to the verified filer", g.mailed.join() === "R98" && g.mailCalls[0].me.email === T.email);
+    check("...nothing else is written", g.res.updated === 0 && g.res.deleted === 0);
+    check("...the 13 rows that are not theirs are counted as notYours", g.res.refusedNotYours === 13);
+    check("...and every stored row is byte-identical to before",
+      SEED.every((r) => JSON.stringify(g.byId(r.payload.id)) === JSON.stringify(r.payload)));
+    check("...and its own unchanged copies are NOT counted as close attempts (stale)", g.res.keptCloseFields === 0);
+  }
+  {
+    // CLICKING CLOSE IN AN OLD TAB, on their own referral.
+    const mine = copy(SEED[0].payload);
+    const g = await go({ me: T, rows: [row({ ...mine, status: "closed", closedAt: recent, closedBy: T.name,
+      adminNotes: "sorted it", resolutionType: "action_taken", closingActions: ["x"], updatedAt: recent })] });
+    check("a teacher's Close on their own referral leaves it open", g.byId("R1").status === "open");
+    check("...with the admin notes and close fields as they were", g.byId("R1").adminNotes === "" && g.byId("R1").closedBy === "");
+    check("...counted as keptCloseFields, not written", g.res.keptCloseFields === 1 && g.res.updated === 0);
+  }
+  {
+    const g = await go({ me: T, rows: [row({ ...copy(SEED[1].payload), description: "corrected", updatedAt: recent })] });
+    check("a teacher's own description edit lands", g.byId("R2").description === "corrected" && g.res.updated === 1);
+  }
+  {
+    const g = await go({ me: T, rows: [row({ ...copy(SEED[10].payload), description: "mine now", updatedAt: recent })] });
+    check("a teacher's edit to someone else's referral is skipped", g.byId("R11").description === "d11" && g.res.refusedNotYours === 1);
+  }
+  {
+    // THE LOCK. A copy stamped 9999 used to win every later merge, so no
+    // admin's close could ever land on that referral again.
+    const mine = copy(SEED[3].payload);   // R4: theirs, and open
+    const g = await go({ me: T, rows: [row({ ...mine, description: "edit", updatedAt: "9999-01-01T00:00:00.000Z" })] });
+    const lockedAt = g.byId("R4").updatedAt;
+    check("a teacher's 9999 stamp is pulled back to the server's clock", !lockedAt.startsWith("9999") && g.res.clampedStamps === 1);
+    const adminClose = new Date(Date.now() + 60e3).toISOString();
+    const f = fakeDb([row(g.byId("R4"))]);
+    await runNew({ db: { ...f.ctx.db }, __me: ADMIN, __switches: ON }, "referrals", "behaviorReferrals",
+      [row({ ...g.byId("R4"), status: "closed", closedAt: adminClose, closedBy: ADMIN.name, adminNotes: "done", updatedAt: adminClose })],
+      "id", MAX_ROWS_PER_SLICE, mailSpy().fn);
+    check("...so an admin's close afterwards still lands", f.ctx.rowsInOrder()[0].payload.status === "closed");
+    // The control: without the guard the 9999 stamp is stored and the
+    // admin's close is thrown away -- the bug.
+    const off = await go({ me: T, switches: {}, rows: [row({ ...mine, description: "edit", updatedAt: "9999-01-01T00:00:00.000Z" })] });
+    const f2 = fakeDb([row(off.byId("R4"))]);
+    await runNew({ db: { ...f2.ctx.db }, __me: ADMIN }, "referrals", "behaviorReferrals",
+      [row({ ...off.byId("R4"), status: "closed", closedAt: adminClose, updatedAt: adminClose })], "id", MAX_ROWS_PER_SLICE, mailSpy().fn);
+    check("control: with the guard off the 9999 copy is stored and the admin's close is lost (today's bug)",
+      f2.ctx.rowsInOrder()[0].payload.status === "open");
+  }
+  for (const who of [ADMIN, PBIS]) {
+    const g = await go({ me: who, rows: [row({ ...copy(SEED[12].payload), status: "closed", closedAt: recent,
+      closedBy: who.name, adminNotes: "closed by " + who.role, updatedAt: recent })] });
+    check(`${who.role}'s close lands on anyone's referral, with the guard on`,
+      g.byId("R13").status === "closed" && g.byId("R13").adminNotes === "closed by " + who.role && g.res.updated === 1);
+    check(`...and ${who.role} pays no switch read`, g.switchReads === 0);
+  }
+  {
+    const g = await go({ me: T, rows: [row(ref(50, T.email, { status: "closed", closedAt: recent, closedBy: T.name,
+      adminNotes: "pre-closed", submittedAt: recent, updatedAt: recent }))] });
+    check("a teacher's new referral sent already closed is filed OPEN", g.byId("R50").status === "open"
+      && g.byId("R50").adminNotes === "" && g.byId("R50").closedAt === "" && g.res.inserted === 1);
+    check("...counted as keptCloseFields", g.res.keptCloseFields === 1);
+  }
+  {
+    // An admin deleted a colleague's referral; this teacher's old tab still holds it.
+    const deleted = copy(SEED[14].payload);
+    const g = await go({ me: T, existing: SEED.filter((r) => r.payload.id !== deleted.id), rows: [row({ ...deleted, submittedAt: recent })] });
+    check("an old tab cannot re-file a colleague's deleted referral", !g.byId(deleted.id) && g.res.inserted === 0 && g.res.refusedNotYours === 1);
+    check("...and nobody is mailed about it", g.mailed.length === 0);
+  }
+  {
+    // GUARD OFF: no row, a pilot list without this teacher, or switched off.
+    for (const [label, switches] of [["no switch row", {}], ["a pilot list without them", { referralCloseGuard: { enabled: true, pilotEmails: ["someone@school.org"] } }],
+      ["switched off", { referralCloseGuard: { enabled: false } }]]) {
+      const g = await go({ me: T, switches, rows: [row({ ...copy(SEED[0].payload), status: "closed", closedAt: recent, adminNotes: "mine", updatedAt: recent })] });
+      check(`${label}: a teacher's close lands exactly as today`, g.byId("R1").status === "closed" && g.res.updated === 1
+        && g.res.keptCloseFields === 0 && g.res.refusedNotYours === 0);
+    }
+    const g = await go({ me: T, switches: { referralCloseGuard: { enabled: true, pilotEmails: [T.email] } },
+      rows: [row({ ...copy(SEED[0].payload), status: "closed", closedAt: recent, updatedAt: recent })] });
+    check("a pilot list naming them: guarded", g.byId("R1").status === "open" && g.res.keptCloseFields === 1);
+  }
+  {
+    // THE DETENTION A REFUSED CLOSE WOULD LEAVE BEHIND. Closing with the
+    // detention action makes a detention in the same save; if the close is
+    // kept open, the detention must not land either, or the admin's real
+    // close makes a second one for the same referral.
+    const det = (id, extra) => ({ id, studentName: "Student 1", status: "active", totalDays: 1, ...extra });
+    const g = await go({ me: T, doc: "secondary", coll: "detentions", existing: [],
+      rows: [row(det("detention_7", { sourceReferralId: "R1", reason: "Referral R1: x" }))] });
+    check("a teacher's detention made from a referral is not inserted", g.res.inserted === 0 && g.res.refusedReferralDetentions === 1);
+    check("...and the merge paid one switch read", g.switchReads === 1);
+    const plain = await go({ me: T, doc: "secondary", coll: "detentions", existing: [], rows: [row(det("detention_8"))] });
+    check("a detention not made from a referral is not this rule's business", plain.res.inserted === 1);
+    const adm = await go({ me: ADMIN, doc: "secondary", coll: "detentions", existing: [],
+      rows: [row(det("detention_9", { sourceReferralId: "R1" }))] });
+    check("an admin's detention from a referral is inserted", adm.res.inserted === 1 && adm.res.refusedReferralDetentions === 0);
+    const off = await go({ me: T, switches: {}, doc: "secondary", coll: "detentions", existing: [],
+      rows: [row(det("detention_10", { sourceReferralId: "R1" }))] });
+    check("with the guard off, a teacher's is inserted as today", off.res.inserted === 1);
+    // The whole old-tab Close-with-detention sequence: two merges, one save.
+    const close = await go({ me: T, rows: [row({ ...copy(SEED[0].payload), status: "closed", closedAt: recent,
+      closingActions: ["Assigned the student to mandatory detention"], detentionDays: 2, updatedAt: recent })] });
+    const detSave = await go({ me: T, doc: "secondary", coll: "detentions", existing: [],
+      rows: [row(det("detention_11", { sourceReferralId: "R1" }))] });
+    check("an old tab's Close with the detention action: referral kept open AND no detention",
+      close.byId("R1").status === "open" && close.res.keptCloseFields === 1 && detSave.res.inserted === 0);
+  }
+  {
+    // CONTROLS: what the switch read costs, and who it touches.
+    const cash = await go({ me: T, doc: "cash_tx_2026_W40", coll: "transactions", existing: [], rows: [row({ id: "t1" })] });
+    const recs = await go({ me: T, doc: "secondary", coll: "cashReceipts", existing: [], rows: [row({ id: "WC-1", sourceReferralId: "R1" })] });
+    const passes = await go({ me: T, doc: "secondary", coll: "hallPasses", existing: [], rows: [row({ id: "p1" })] });
+    check("control: cash weeks, receipts and passes merge as before, with no switch read",
+      cash.res.inserted === 1 && recs.res.inserted === 1 && passes.res.inserted === 1
+      && cash.switchReads + recs.switchReads + passes.switchReads === 0);
+    const t = await go({ me: T, rows: [] });
+    check("a teacher's referral merge pays exactly one switch read", t.switchReads === 1);
+  }
 }
 
 console.log(`\n${pass} passed, ${fail} failed\n`);

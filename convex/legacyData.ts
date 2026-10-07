@@ -5,8 +5,8 @@ import { requireStaff } from "./identity";
 import { notifyNewReferrals } from "./referralMail";
 import { noteArrivedCash } from "./cashArrival";
 import {
-  pinOwnerFields, scopeReferralRows, seesAllReferrals, normalizeSwitch, switchAllows,
-  REFERRAL_SCOPE_KEY,
+  pinOwnerFields, scopeReferralRows, seesAllReferrals, canCloseReferrals, normalizeSwitch, switchAllows,
+  planReferralUpdate, planReferralInsert, REFERRAL_SCOPE_KEY, REFERRAL_CLOSE_GUARD_KEY,
 } from "./referralAccessRules";
 import type { ReferralSwitch } from "./referralAccessRules";
 
@@ -540,6 +540,47 @@ export const mergeSlice = mutation({
       );
     }
 
+    // THE CLOSE GUARD (2026-10-07), behind the appState switch
+    // 'referralCloseGuard' -- absent means off, which is today's merge exactly.
+    //
+    // Only admin, superadmin and PBIS close referrals (the owner, 10/7; every
+    // one of the 9 closed so far was closed by an admin). While the switch is
+    // on for a caller who is not one of them:
+    //   - a referral that is not theirs is skipped, row by row;
+    //   - on their own, only what a filer may change lands: the close fields
+    //     keep their stored values and the stamps are clamped to this server's
+    //     clock (referralAccessRules.ts planReferralUpdate);
+    //   - a new referral is filed as theirs, open (planReferralInsert);
+    //   - a detention made FROM a referral is not inserted. Closing is the
+    //     only way a teacher's tab makes one, and a close that did not land
+    //     must not leave a detention behind it, or the admin's real close
+    //     makes a second.
+    //
+    // SKIPPED AND COUNTED, NEVER THROWN, exactly like keptCancelledReceipts.
+    // A tab that predates the new site re-sends every referral it holds on
+    // every save; a throw would also take that teacher's own new referral down
+    // with it and leave the "not saved" bar up for good.
+    //
+    // ON ONLY AFTER THE SITE THAT HIDES CLOSE FROM TEACHERS HAS REACHED THE
+    // OPEN TABS. Before that, a teacher clicking Close in an old tab sees
+    // "closed" while the server keeps it open (it stays open for the admins
+    // and the reminder emails, which is the right answer, but that tab is
+    // wrong until it updates itself).
+    const closeGuard = (doc === "referrals" || (doc === "secondary" && collection === "detentions"))
+      && !canCloseReferrals(me.role)
+      && switchAllows(await readReferralSwitch(ctx, REFERRAL_CLOSE_GUARD_KEY), me.email);
+    const nowMs = Date.now();
+    const madeFromReferral = (p: unknown) =>
+      !!p && typeof p === "object" && !!(p as Record<string, unknown>).sourceReferralId;
+    /** Referrals skipped because they are someone else's (guard on). */
+    let refusedNotYours = 0;
+    /** Copies whose close fields were kept at the stored values (guard on). */
+    let keptCloseFields = 0;
+    /** Rows written with a stamp pulled back to this server's clock (guard on). */
+    let clampedStamps = 0;
+    /** Detentions from a referral, not inserted for a non-closer (guard on). */
+    let refusedReferralDetentions = 0;
+
     const existing = await ctx.db
       .query("legacyMirror")
       .withIndex("by_doc_collection", (q) =>
@@ -630,6 +671,20 @@ export const mergeSlice = mutation({
           keptCancelledReceipts++;
           continue;
         }
+        // THE CLOSE GUARD, on a referral already stored. The plan decides
+        // everything, staleness included; see referralAccessRules.ts.
+        if (stored && closeGuard && doc === "referrals") {
+          const plan = planReferralUpdate(stored.payload, r.payload, me, { guard: true, nowMs });
+          if (!plan.write) {
+            if (plan.reason === "notYours") refusedNotYours++;
+            else if (plan.reason === "keptCloseFields") keptCloseFields++;
+            continue;
+          }
+          if (plan.keptCloseFields) keptCloseFields++;
+          if (plan.clamped) clampedStamps++;
+          toUpdate.push({ id: stored._id, payload: plan.payload });
+          continue;
+        }
         if (stored && touchedAt(r.payload) > touchedAt(stored.payload)) {
           const merged = keepServerStock(collection, stored.payload,
             mergeRowFields(stored.payload, r.payload), r.payload);
@@ -647,6 +702,21 @@ export const mergeSlice = mutation({
         continue;
       }
       seen.add(token);
+
+      // THE CLOSE GUARD, on a row the server has never stored.
+      let accepted = r;
+      let clamped = 0;
+      if (closeGuard && doc === "referrals") {
+        const plan = planReferralInsert(r.payload, me, { guard: true, nowMs });
+        if (!plan.write) { refusedNotYours++; continue; }
+        if (plan.keptCloseFields) keptCloseFields++;
+        clamped = plan.clamped;
+        accepted = { ...r, payload: plan.payload };
+      }
+      if (closeGuard && doc === "secondary" && madeFromReferral(r.payload)) {
+        refusedReferralDetentions++;
+        continue;
+      }
 
       // THE HISTORY CUTOFF. A row older than the school's cutoff is not
       // inserted, and the caller is told how many were refused.
@@ -670,13 +740,14 @@ export const mergeSlice = mutation({
       // AN UNDATED ROW IS INSERTED. A row whose date will not parse cannot be
       // proved old, and refusing it would lose real work to be tidy.
       if (cutoff !== null && isHistorySlice(doc, collection)) {
-        const when = rowDate(r.payload);
+        const when = rowDate(accepted.payload);
         if (Number.isFinite(when) && when < cutoff - HISTORY_CUTOFF_SLACK_MS) {
           refusedAsHistory++;
           continue;
         }
       }
-      toInsert.push(r);
+      if (clamped) clampedStamps++;
+      toInsert.push(accepted);
     }
 
     // Only rows that did NOT survive the merge are touched.
@@ -733,7 +804,13 @@ export const mergeSlice = mutation({
     return {
       doc,
       collection,
-      stored: keptStored.length + toInsert.length,
+      // THE SCHOOL'S REFERRAL TOTAL IS NOT A TEACHER'S TO READ (2026-10-07).
+      // A teacher served only their own referrals could otherwise read the
+      // whole school's count from every save, and watch it move when a
+      // colleague files. Left out for anyone who does not see every
+      // referral; no screen reads it.
+      ...(doc === "referrals" && !seesAllReferrals(me.role)
+        ? {} : { stored: keptStored.length + toInsert.length }),
       incoming: rows.length,
       // So a caller can see that a re-send of unchanged data wrote nothing.
       inserted: toInsert.length,
@@ -748,6 +825,11 @@ export const mergeSlice = mutation({
       cashArrival,
       // Store receipts kept cancelled against an incoming copy that was not.
       keptCancelledReceipts,
+      // The close guard's per-row decisions (all zero while it is off).
+      refusedNotYours,
+      keptCloseFields,
+      clampedStamps,
+      refusedReferralDetentions,
     };
 
   },
