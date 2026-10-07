@@ -43597,20 +43597,32 @@
         function renderReferralTrend(all) {
             const el = document.getElementById('referralTrend');
             if (!el) return;
-            const t = window.WildcatDiscipline.trend(all, trendGrain);
+            // BY THE DAY OF THE INCIDENT, from the first referral's week to
+            // this week in Los Angeles (2026-10-07). This printed raw keys like
+            // '2026-W40' and counted the moment a form was sent, so a Friday
+            // incident filed on Monday sat in the wrong week and the weeks
+            // since the last referral were simply missing. Past bars moved
+            // when this changed: by filing time the first four weeks read
+            // 4/3/3/8, by incident 4/3/5/6.
+            const t = window.WildcatDiscipline.trend(all, trendGrain, window.WildcatDiscipline.schoolToday());
             if (!t.points.length) {
                 el.innerHTML = '<p class="panel-hint">No referrals yet.</p>';
                 return;
             }
             const max = Math.max.apply(null, t.points.map(p => p.count)) || 1;
+            // Said, not dropped: an incident dated after today (the date box
+            // has no maximum) or before the chart's first period.
+            const outside = [];
+            if (t.later) outside.push(`${t.later} referral${t.later === 1 ? ' has an incident date' : 's have incident dates'} after today`);
+            if (t.earlier) outside.push(`${t.earlier} referral${t.earlier === 1 ? ' is' : 's are'} dated before ${escapeHtml(t.points[0].label)}`);
             el.innerHTML = `
                 <div class="wc-card">
                     <table class="wc-table"><thead><tr>
                         <th>${trendGrain === 'month' ? 'Month' : 'Week'}</th><th>Referrals</th><th></th>
                     </tr></thead><tbody>
                     ${t.points.map(p => `
-                        <tr${p.count === 0 ? ' class="trend-quiet"' : ''}>
-                            <td>${escapeHtml(p.key)}</td>
+                        <tr${p.count === 0 && !p.current ? ' class="trend-quiet"' : ''}>
+                            <td>${escapeHtml(p.label)}${p.current ? ' <span class="panel-hint">(so far)</span>' : ''}</td>
                             <td><strong>${p.count}</strong></td>
                             <td style="width:60%;">
                                 <div class="popularity-bar">
@@ -43619,7 +43631,9 @@
                             </td>
                         </tr>`).join('')}
                     </tbody></table>
-                </div>`;
+                </div>
+                <p class="panel-hint">Counted by the day of the incident, not the day the referral was filed.${
+                    outside.length ? ' Not shown: ' + outside.join('; ') + '. Check the date on those referrals.' : ''}</p>`;
         }
 
         function renderReferralBehaviors(all) {
@@ -44124,16 +44138,20 @@
         function renderClosedAnalytics(all) {
             const el = document.getElementById('referralClosedAnalytics');
             if (!el) return;
+            const D = window.WildcatDiscipline;
             const closed = all.filter(r => r && r.status === 'closed');
             if (!closed.length) {
                 el.innerHTML = '<p class="panel-hint">No referrals have been closed yet.</p>';
                 return;
             }
+            // IN WORDS. This grouped on the stored code and printed it, so the
+            // pane read "action_taken 8 89%". resolutionLabel is the one map
+            // from code to words; a blank code reads 'Not recorded'.
             const byResolution = {};
             let loopClosed = 0;
             let totalDays = 0, timed = 0;
             closed.forEach(r => {
-                const res = String(r.resolutionType || '').trim() || 'Not recorded';
+                const res = D.resolutionLabel(r.resolutionType);
                 byResolution[res] = (byResolution[res] || 0) + 1;
                 if (r.loopClosed) loopClosed += 1;
                 const a = new Date(r.submittedAt), b = new Date(r.closedAt);
@@ -44142,6 +44160,10 @@
             const rows = Object.keys(byResolution)
                 .map(k => ({ resolution: k, count: byResolution[k] }))
                 .sort((a, b) => b.count - a.count);
+            // What closers actually did, which the resolution alone cannot
+            // say: "Action taken" covers a parent call and a police call alike.
+            // Counted once per referral, so each reads "N of the closed".
+            const actions = D.closingActionCounts(closed);
 
             el.innerHTML = `
                 <div class="receipt-summary">
@@ -44154,6 +44176,14 @@
                     ${rows.map(r => `
                         <tr><td>${escapeHtml(r.resolution)}</td><td><strong>${r.count}</strong></td>
                         <td>${Math.round((r.count / closed.length) * 100)}%</td></tr>`).join('')}
+                    </tbody></table>
+                </div>
+                <div class="wc-card">
+                    <table class="wc-table"><thead><tr><th>Closing action</th><th>Referrals</th><th>Of the closed</th></tr></thead><tbody>
+                    ${actions.length ? actions.map(a => `
+                        <tr><td>${escapeHtml(a.action)}</td><td><strong>${a.count}</strong></td>
+                        <td>${a.count} of ${closed.length}</td></tr>`).join('')
+                      : '<tr><td colspan="3" class="cell-empty">No closing actions were recorded.</td></tr>'}
                     </tbody></table>
                 </div>`;
         }
