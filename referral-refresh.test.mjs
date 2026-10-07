@@ -142,5 +142,186 @@ console.log("\n-- the permission rule is untouched --");
     D.visibleReferrals(all, { email: "a@x.org", role: "PBIS" }).length === 2);
 }
 
+// ---------------------------------------------------------------------------
+// Analytics and Student History pull too, and a second pull is never dropped.
+//
+// 2026-10-07. Open and Closed pulled on opening; Analytics and Student History
+// drew only from what the page loaded with, so a referral filed on another
+// computer stayed out of the counts until a reload. And a pull already in
+// flight answered a second caller with { skipped: 'busy' }, so opening
+// Analytics right after Open Referrals drew stale numbers and never redrew.
+// THE SHIPPED CODE RUNS below: the pull and the redraw are lifted out of
+// script.js. Every "TEETH" check breaks it on purpose.
+// ---------------------------------------------------------------------------
+
+function liftFn(src, name) {
+  const m = new RegExp("\\n        (?:async )?function " + name + "\\(").exec(src);
+  if (!m) throw new Error("missing function " + name);
+  const start = m.index + 1;
+  const end = src.indexOf("\n        }\n", start);
+  if (end < 0) throw new Error("unterminated function " + name);
+  return src.slice(start, end + 10);
+}
+function breakOnce(src, from, to, label) {
+  const at = src.indexOf(from);
+  if (at < 0 || src.indexOf(from, at + 1) >= 0) throw new Error(`teeth "${label}": anchor not found exactly once`);
+  return src.slice(0, at) + to + src.slice(at + from.length);
+}
+/** The `let` line that declares a module-level variable, as shipped. */
+function liftLet(src, name) {
+  const m = new RegExp("\\n        let " + name + " = [^\\n]*;").exec(src);
+  if (!m) throw new Error("missing let " + name);
+  return m[0].trim();
+}
+
+/**
+ * The pull, lifted, against a fake server. `G.rows` is what the server holds;
+ * each read is counted and answered after `G.delay` milliseconds.
+ */
+function loadPull(src, G) {
+  const body = `
+    const window = { WildcatAuth: { getSession: () => G.session }, WildcatDiscipline: G.D };
+    const console = { warn() {}, log() {} };
+    let behaviorReferrals = G.local;
+    // An admin, so any scoping of what a pull keeps is a no-op here: these
+    // checks are about how many reads happen, not who sees what.
+    let currentUser = G.user || { role: 'admin', email: 'admin@x.org' };
+    function isPreviewingTeacher() { return false; }
+    ${liftFn(src, "visibleReferrals")}
+    ${liftLet(src, "_referralPullBusy")}
+    ${liftLet(src, "_referralPullAt")}
+    async function loadLegacyDocsFromConvex(names) {
+      G.reads.push(names.slice());
+      await new Promise((r) => setTimeout(r, G.delay || 5));
+      if (G.fail) return { failed: ['referrals'], errors: [{ error: 'boom' }], docs: {} };
+      return { docs: { referrals: { behaviorReferrals: G.rows } } };
+    }
+    ${liftFn(src, "refreshReferralsFromServer")}
+    ${liftFn(src, "pullReferralsOnce")}
+    return { refreshReferralsFromServer, held: () => behaviorReferrals, busy: () => _referralPullBusy };
+  `;
+  return new Function("G", body)(G);
+}
+
+{
+  const tests = [];
+  const later = (name, fn) => tests.push([name, fn]);
+
+  later("two pulls at once", async () => {
+    const G = { D, session: { ok: 1 }, local: [R("MINE", "1")], rows: [R("MINE", "1"), R("NEW1", "2"), R("NEW2", "2")], reads: [] };
+    const app = loadPull(script, G);
+    const [a, b] = await Promise.all([app.refreshReferralsFromServer({ loud: true }), app.refreshReferralsFromServer()]);
+    check("two pulls at once make ONE read of the referrals document", G.reads.length === 1, String(G.reads.length));
+    check("the second caller gets the same answer, not 'busy'", a === b && !("skipped" in b));
+    check("and both see what arrived", a.added === 2 && b.added === 2 && b.updated === 0 && b.changed === true);
+    check("the merged list is held once, not twice", app.held().length === 3);
+    check("the flag is clear once the pull is done", app.busy() === null);
+    await app.refreshReferralsFromServer();
+    check("so the next pull reads again", G.reads.length === 2);
+  });
+
+  later("a failed read", async () => {
+    const G = { D, session: { ok: 1 }, local: [], rows: [], reads: [], fail: true };
+    const app = loadPull(script, G);
+    const res = await app.refreshReferralsFromServer();
+    check("a failed read is reported, not swallowed", res.error === "boom");
+    check("and does not leave the pull stuck", app.busy() === null);
+  });
+
+  later("no session", async () => {
+    const G = { D, session: null, local: [], rows: [], reads: [] };
+    const app = loadPull(script, G);
+    const res = await app.refreshReferralsFromServer();
+    check("with no session nothing is read and nothing is stuck",
+      res.skipped === "no-session" && G.reads.length === 0 && (await Promise.resolve(), app.busy() === null));
+  });
+
+  later("teeth: busy", async () => {
+    const broken = breakOnce(script, "if (_referralPullBusy) return _referralPullBusy;", "", "shared pull");
+    const G = { D, session: { ok: 1 }, local: [], rows: [R("A", "1")], reads: [] };
+    const app = loadPull(broken, G);
+    await Promise.all([app.refreshReferralsFromServer(), app.refreshReferralsFromServer()]);
+    check("TEETH: without the shared pull two callers make two reads", G.reads.length === 2);
+  });
+
+  // ---- the redraw ---------------------------------------------------------
+  function loadRedraw(src, G) {
+    const el = (id, hidden, value) => ({ id, value: value || "", textContent: "",
+      classList: { contains: (c) => c === "hidden" && hidden } });
+    const els = {
+      behaviorAnalytics: el("behaviorAnalytics", !G.analytics),
+      behaviorHistory: el("behaviorHistory", !G.history),
+      historyStudentSelect: el("historyStudentSelect", false, G.student || ""),
+      referralRefreshNote: el("referralRefreshNote", false),
+    };
+    const body = `
+      const document = { getElementById: (id) => G.els[id] || null };
+      let analyticsTab = 'demographics';
+      let _referralPullAt = null;
+      async function refreshReferralsFromServer() { return G.res; }
+      function updateReferralReviewTable() {}
+      function updateClosedReferralsList() {}
+      function updateReferralAnalytics() { G.calls.push('analytics'); }
+      function renderAnalyticsPane(tab) { G.calls.push('pane:' + tab); }
+      function updateStudentReferralHistory() { G.calls.push('history'); }
+      ${liftFn(src, "redrawReferralInsightViews")}
+      ${liftFn(src, "_fmtPullTime")}
+      ${liftFn(src, "pullReferralsAndRedraw")}
+      return { pullReferralsAndRedraw };
+    `;
+    G.els = els;
+    G.calls = [];
+    return new Function("G", body)(G);
+  }
+
+  later("redraw", async () => {
+    let G = { analytics: true, res: { added: 1, updated: 0, changed: true } };
+    await loadRedraw(script, G).pullReferralsAndRedraw(false);
+    check("Analytics on screen is redrawn when the pull brought something",
+      G.calls.join() === "analytics,pane:demographics", G.calls.join());
+
+    G = { analytics: true, res: { added: 0, updated: 0, changed: false } };
+    await loadRedraw(script, G).pullReferralsAndRedraw(false);
+    check("and NOT when nothing changed (Demographics would query the server again)", G.calls.length === 0, G.calls.join());
+
+    G = { history: true, student: "S1", res: { added: 0, updated: 1, changed: true } };
+    await loadRedraw(script, G).pullReferralsAndRedraw(false);
+    check("Student History is redrawn for the student on screen", G.calls.join() === "history", G.calls.join());
+
+    G = { history: true, student: "", res: { added: 1, updated: 0, changed: true } };
+    await loadRedraw(script, G).pullReferralsAndRedraw(false);
+    check("but not with no student chosen", G.calls.length === 0);
+
+    G = { res: { added: 1, updated: 0, changed: true } };
+    await loadRedraw(script, G).pullReferralsAndRedraw(false);
+    check("a pane that is not on screen is not redrawn", G.calls.length === 0);
+
+    const always = breakOnce(script, "if (res && (res.changed || res.added || res.updated)) redrawReferralInsightViews();",
+      "redrawReferralInsightViews();", "changed only");
+    G = { analytics: true, res: { added: 0, updated: 0, changed: false } };
+    await loadRedraw(always, G).pullReferralsAndRedraw(false);
+    check("TEETH: redrawing on every pull is caught", G.calls.length > 0);
+  });
+
+  console.log("\n-- Analytics and Student History pull too --");
+  {
+    const tab = liftFn(script, "switchDisciplineTab");
+    const history = tab.slice(tab.indexOf("subtab === 'history'"), tab.indexOf("subtab === 'analytics'"));
+    const analytics = tab.slice(tab.indexOf("subtab === 'analytics'"));
+    check("opening Student History pulls from the server", /pullReferralsAndRedraw\(false\)/.test(history));
+    check("after drawing what it has", history.indexOf("populateHistoryStudentDropdown()") < history.indexOf("pullReferralsAndRedraw(false)"));
+    check("opening Analytics pulls from the server", /pullReferralsAndRedraw\(false\)/.test(analytics));
+    check("after drawing what it has", analytics.indexOf("switchAnalyticsTab(analyticsTab)") < analytics.indexOf("pullReferralsAndRedraw(false)"));
+    const pullCode = (liftFn(script, "refreshReferralsFromServer") + liftFn(script, "pullReferralsOnce"))
+      .replace(/\/\/.*$/gm, "");
+    check("nothing answers a second caller with 'busy' any more", !/skipped: 'busy'/.test(pullCode));
+  }
+
+  for (const [name, fn] of tests) {
+    console.log(`\n-- ${name} --`);
+    await fn();
+  }
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 if (fail) process.exit(1);

@@ -35703,9 +35703,14 @@
                 openUniformViolations();
             } else if (subtab === 'history') {
                 populateHistoryStudentDropdown();
+                // Draw from memory, then pull, like Open and Closed: a
+                // referral filed on another computer since this page loaded
+                // used to stay missing here until a full reload.
+                pullReferralsAndRedraw(false);
             } else if (subtab === 'analytics') {
                 updateReferralAnalytics();
                 switchAnalyticsTab(analyticsTab);
+                pullReferralsAndRedraw(false);
             }
         }
 
@@ -43017,19 +43022,37 @@
          * the two by id and lets the later updatedAt win, so a referral still
          * sitting in this tab's save queue survives the refresh that goes
          * looking for everyone else's.
+         *
+         * ONE PULL AT A TIME, AND EVERY CALLER GETS ITS ANSWER (2026-10-07).
+         * _referralPullBusy holds the pull in flight, and a second caller is
+         * handed that same promise. It used to get { skipped: 'busy' } back:
+         * opening Analytics while the Open Referrals pull was still out drew
+         * from memory, was told "busy", and never redrew when the data came.
+         * Sharing also means two tabs opened in quick succession cost one
+         * read, not two.
          */
-        let _referralPullBusy = false;
+        let _referralPullBusy = null;
         let _referralPullAt = null;
-        async function refreshReferralsFromServer(opts) {
+        function refreshReferralsFromServer(opts) {
+            if (_referralPullBusy) return _referralPullBusy;
+            const pull = pullReferralsOnce(opts);
+            _referralPullBusy = pull;
+            // Cleared however it ends. pullReferralsOnce answers failures
+            // with { error } rather than throwing, but a stuck flag would
+            // stop every later pull in this tab, so both paths clear it.
+            const done = () => { if (_referralPullBusy === pull) _referralPullBusy = null; };
+            pull.then(done, done);
+            return pull;
+        }
+
+        async function pullReferralsOnce(opts) {
             const quiet = !(opts && opts.loud);
-            if (_referralPullBusy) return { skipped: 'busy' };
             const auth = window.WildcatAuth;
             const session = auth && auth.getSession && auth.getSession();
             // A username session carries no Convex identity. Not an error, and
             // not reported as one -- there is simply nothing to pull with.
             if (!auth || !session) return { skipped: 'no-session' };
 
-            _referralPullBusy = true;
             try {
                 const res = await loadLegacyDocsFromConvex(['referrals']);
                 // A FAILED READ IS NOT AN EMPTY SERVER. loadLegacyDocsFromConvex
@@ -43052,7 +43075,6 @@
                 console.warn('[referrals] refresh failed:', e);
                 return { error: (e && e.message) || String(e) };
             } finally {
-                _referralPullBusy = false;
                 if (!quiet) { /* caller redraws */ }
             }
         }
@@ -43064,6 +43086,12 @@
             const res = await refreshReferralsFromServer({ loud: !!loud });
             updateReferralReviewTable();
             if (typeof updateClosedReferralsList === 'function') updateClosedReferralsList();
+            // Analytics and Student History draw from memory when they open
+            // and then pull. Redrawn here ONLY when the pull changed
+            // something: the Demographics pane asks the server for its race
+            // counts on every draw, and a redraw that changes nothing would
+            // be a second whole-roster query each time Analytics opens.
+            if (res && (res.changed || res.added || res.updated)) redrawReferralInsightViews();
             if (!note) return;
             if (res.error) {
                 note.textContent = 'Could not check the server: ' + res.error;
@@ -43077,6 +43105,22 @@
             } else {
                 note.textContent = 'Up to date \u00B7 ' + _fmtPullTime();
             }
+        }
+
+        /** Redraw Analytics or Student History, whichever is on screen. */
+        function redrawReferralInsightViews() {
+            const shown = id => {
+                const el = document.getElementById(id);
+                return !!el && !el.classList.contains('hidden');
+            };
+            if (shown('behaviorAnalytics')) {
+                updateReferralAnalytics();
+                renderAnalyticsPane(analyticsTab);
+            }
+            // Only with a student chosen. Rebuilding the dropdown here would
+            // clear the choice the reader is looking at.
+            const pick = document.getElementById('historyStudentSelect');
+            if (shown('behaviorHistory') && pick && pick.value) updateStudentReferralHistory();
         }
 
         function _fmtPullTime() {
