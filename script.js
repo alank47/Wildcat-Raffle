@@ -35675,11 +35675,9 @@
                 resetReferralRosterFetch();
                 populateReferralStudentDropdown();
                 if (typeof populateReferringStaffDropdown === 'function') populateReferringStaffDropdown();
-                const now = new Date();
-                const dateInput = document.getElementById('referralDate');
-                const timeInput = document.getElementById('referralTime');
-                if (dateInput && !dateInput.value) dateInput.value = now.toISOString().split('T')[0];
-                if (timeInput && !timeInput.value) timeInput.value = now.toTimeString().slice(0, 5);
+                // Today's date and the time now, in Los Angeles, unless the
+                // teacher typed their own. See applyReferralWhenDefaults.
+                applyReferralWhenDefaults(new Date());
                 if (typeof updateInterventionCount === 'function') updateInterventionCount();
             } else if (subtab === 'review') {
                 // Draw what we have immediately, then pull. A tab that shows
@@ -42601,6 +42599,17 @@
             }
         });
 
+        // The referral's date and time, by delegation for the same reason.
+        // Typing in either field makes it the teacher's own; picking a student
+        // starts a referral, so any default is brought up to this moment.
+        // Programmatic value changes fire neither event, so only a person's
+        // edit clears the mark.
+        document.addEventListener('input', referralWhenTyped);
+        document.addEventListener('change', function (e) {
+            referralWhenTyped(e);
+            if (e.target && e.target.id === 'referralStudentSelect') applyReferralWhenDefaults(new Date());
+        });
+
         function updateInterventionCount() {
             const n = document.querySelectorAll('.referral-intervention:checked').length;
             const el = document.getElementById('interventionCount');
@@ -42646,9 +42655,60 @@
             const severeBox = document.getElementById('referralSevereBypass');
             if (severeBox) severeBox.checked = false;
             updateInterventionCount();
+            // THE NEXT REFERRAL'S DATE AND TIME ARE DEFAULTS, NOT LEFTOVERS.
+            // The date is refilled with the Los Angeles day so the form does
+            // not look broken; the time is left blank on purpose. This runs
+            // right after a submit and the tab stays on the form, so a time
+            // filled in here would be stamped on the NEXT referral too, however
+            // much later it was written. Both are marked as defaults, and
+            // picking the next student fills them with that moment's date and
+            // time (applyReferralWhenDefaults).
             const d = document.getElementById('referralDate');
-            if (d) d.value = new Date().toISOString().split('T')[0];
+            if (d) {
+                d.value = window.WildcatDiscipline.schoolToday(new Date());
+                d.dataset.auto = '1';
+            }
+            const t = document.getElementById('referralTime');
+            if (t) t.dataset.auto = '1';
             populateReferringStaffDropdown();
+        }
+
+        /**
+         * The incident date and time a referral starts with: today in Los
+         * Angeles and the time now, filled into any field that is empty or
+         * still holds a default this function put there.
+         *
+         * WHY THE MARK. A default is only right at the moment it is made. The
+         * Submit tab stays open all day, and the date and time it showed at
+         * 7:50 are wrong for a referral written at 9:30, or the next morning
+         * on a tab left open overnight. So every value written here is marked
+         * data-auto="1", and the mark is refreshed each time the tab opens and
+         * each time a student is picked, which is the start of writing a
+         * referral. A value the teacher typed is theirs: typing removes the
+         * mark (referralWhenTyped) and nothing here overwrites it again.
+         *
+         * The date was toISOString().split('T')[0], which is UTC: after 5pm in
+         * Los Angeles (4pm in winter) the form defaulted to TOMORROW.
+         */
+        function applyReferralWhenDefaults(now) {
+            const at = now || new Date();
+            const D = window.WildcatDiscipline;
+            const fill = (id, value) => {
+                const el = document.getElementById(id);
+                if (!el) return;
+                if (el.value && el.dataset.auto !== '1') return;   // typed: leave it
+                el.value = value;
+                el.dataset.auto = '1';
+            };
+            fill('referralDate', D.schoolToday(at));
+            fill('referralTime', D.schoolClock(at));
+        }
+
+        /** A date or time the teacher touched is no longer a default. */
+        function referralWhenTyped(e) {
+            const el = e && e.target;
+            if (!el || !el.dataset) return;
+            if (el.id === 'referralDate' || el.id === 'referralTime') delete el.dataset.auto;
         }
 
         async function submitBehaviorReferral() {
