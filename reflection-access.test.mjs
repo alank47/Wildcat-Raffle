@@ -117,7 +117,7 @@ console.log("\nThe Discipline tabs: one more, and only while the grant runs");
 console.log("\nOn the server: read, print and nothing more");
 Object.assign(process.env, { STAFF_DOMAIN: "school.test", ENTRA_TENANT_ID: "tenant-1", PS_TERM_ID: "3601" });
 const ISSUER = "https://login.microsoftonline.com/tenant-1/v2.0";
-const loaded = await loadConvex(new URL("./", import.meta.url), ["reflectionList", "reflectionRules", "staffInvites", "uniformViolations"]);
+const loaded = await loadConvex(new URL("./", import.meta.url), ["reflectionList", "reflectionRoom", "reflectionRules", "staffInvites", "uniformViolations"]);
 try {
   const R = loaded.mods.reflectionRules;
   const la = (date, hhmm) => { const [h, m] = hhmm.split(":").map(Number); return R.laWallToUtc(date, h * 60 + m, "America/Los_Angeles"); };
@@ -173,6 +173,33 @@ try {
       ["expired@school.test", "2026-10-12", false, null]]), J(adminList.grants));
   const log = await tryRun("aide", "uniformViolations.log", { studentNumber: "12001", loanerProvided: false, attemptId: "a1" });
   check("the grant holder is refused uniform logging", /limited to administrators and the PBIS team/.test(log.threw || ""), J(log));
+
+  // Today's list was made at 11:45 with one detention; it is 12:40, during lunch.
+  const dayId = await store.db.insert("reflectionDays", { date: TODAY, readsDone: ["closing"], frozenAt: la(TODAY, "11:45"),
+    freezeKind: "closing", kind: "regular", schoolDay: true, updatedAt: la(TODAY, "11:45") });
+  const unit = await store.db.insert("reflectionUnits", { studentNumber: "12001", division: "hs", kind: "new", tardyIds: [], uniformIds: [],
+    lines: ["Tue 10/13: Tardy P2"], recordedAt: la(TODAY, "11:45"), state: "listed", serveDay: TODAY, mode: "shadow", carryCount: 0, tags: [] });
+  clock.set(la(TODAY, "12:40"));
+  const tick = await tryRun("aide", "reflectionRoom.markRoom", { unitId: unit, notHere: true });
+  const done = await tryRun("aide", "reflectionRoom.roomAttendanceDone", { day: TODAY });
+  check("an aide with the grant may tick Not here and press Attendance done",
+    tick.ok === true && done.ok === true && store.rows("reflectionUnits")[0].roomNotHere === true
+      && !!store.rows("reflectionDays").find((d) => d._id === dayId).roomAttendanceDoneAt, J([tick, done]));
+  const refusedToGrant = [];
+  for (const [path, args] of [
+    ["reflectionRoom.reviewQueue", {}], ["reflectionRoom.resolveReview", { kind: "detention", id: unit, action: "dismiss", reason: "x" }],
+    ["reflectionRoom.readNow", {}], ["reflectionRoom.markSchoolDay", {}], ["reflectionRoom.roomDidNotRun", { day: TODAY, reason: "x" }],
+    ["reflectionRoom.health", {}],
+  ]) {
+    const r = await tryRun("aide", path, args);
+    refusedToGrant.push((r.ok === false || r.allowed === false) && /Only administrators and the PBIS team/.test(r.reason || "") ? "refused" : `${path}: ${J(r)}`);
+  }
+  check("the grant holder is refused admin review, its decisions, Read PowerSchool now, This is a school day, Room did not run and the health card",
+    refusedToGrant.every((x) => x === "refused"), J(refusedToGrant));
+  const pbisLike = await tryRun("admin", "reflectionRoom.reviewQueue", {});
+  check("...which the roles may use", pbisLike.allowed === true, J(pbisLike));
+  check("...and the list's settings are never reachable from a browser at all (internal, command line only)",
+    /export const saveSettings = internalMutation\(/.test(read("./convex/reflection.ts")) && /export const setMode = internalMutation\(/.test(read("./convex/reflection.ts")));
 
   // The aide is made a teacher: the grant goes with the old role.
   const moved = await tryRun("admin", "staffInvites.setStaffRole", { email: "aide@school.test", role: "teacher" });

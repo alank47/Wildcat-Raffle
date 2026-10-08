@@ -9,10 +9,10 @@ import {
   tardyItemOf, uniformItemOf, unitItemOf,
 } from "./reflection";
 import {
-  claimAtFreeze, clockText, dayLabel, dayTimes, freezeBanner, idSetHash, nextSchoolDayGuess, noListBanner,
-  provesNoSchool, pullTimes, QUEUED_TAG, rosterAgeBanner, scheduleKindFor, schoolDayVerdict, studentMap, tardyKey, tardyLine,
+  beforeLunchClass, claimAtFreeze, clockText, dayLabel, dayTimes, freezeBanner, idSetHash, nextSchoolDayGuess, noListBanner,
+  provesNoSchool, pullTimes, QUEUED_TAG, roomWindow, rosterAgeBanner, scheduleKindFor, schoolDayVerdict, studentMap, tardyKey, tardyLine,
   termBanner, uniformLine, unitReleased, wallClock,
-  type ClaimResult, type Division, type Mode, type RosterMeta, type RosterSnap, type ScheduleKind, type UnitItem,
+  type ClaimResult, type Division, type Mode, type ReflectionSettings, type RosterMeta, type RosterSnap, type ScheduleKind, type UnitItem,
 } from "./reflectionRules";
 
 /**
@@ -52,7 +52,7 @@ const addDays = (iso: string, n: number) =>
   new Date(Date.parse(iso + "T00:00:00Z") + n * 86400000).toISOString().slice(0, 10);
 
 /** Now, today, and the zone, in the school's time. No zone means no list day can be placed. */
-async function schoolNow(ctx: Ctx): Promise<{ tz: string | null; nowIso: string; today: string; minute: number | null }> {
+export async function schoolNow(ctx: Ctx): Promise<{ tz: string | null; nowIso: string; today: string; minute: number | null }> {
   const tz = await schoolTimeZone(ctx);
   const nowIso = new Date().toISOString();
   const lt = tz ? wallClock(nowIso, tz) : null;
@@ -64,7 +64,7 @@ async function schoolNow(ctx: Ctx): Promise<{ tz: string | null; nowIso: string;
 }
 
 /** The school day after `date`: the next weekday not marked no school in Settings > Bell Schedule. */
-async function nextSchoolDay(ctx: Ctx, date: string): Promise<string> {
+export async function nextSchoolDay(ctx: Ctx, date: string): Promise<string> {
   const marks = await ctx.db.query("bellScheduleDays").withIndex("by_date", (q) => q.gt("date", date)).take(120);
   return nextSchoolDayGuess(date, marks.filter((m) => m.noSchool).map((m) => m.date));
 }
@@ -100,6 +100,14 @@ export type ListRowOut = {
   voided: Array<{ line: string; at: string }>;
   /** What happened afterwards: "Carries to the next list (absent)". */
   after: string | null;
+  /** The room ticked this student Not here (screen only, never printed). */
+  notHere: boolean;
+  /**
+   * Who the pull slip goes to when the division's slips are addressed to the
+   * class right before lunch (setting slipAddresseeByDivision); null means the
+   * Power-Up teacher, the default.
+   */
+  slipTo: { teacher: string | null; label: string } | null;
 };
 
 function puOf(snap: RosterSnap | null | undefined, frozen?: Doc<"reflectionUnits">["puSnapshot"]): ListRowOut["pu"] {
@@ -111,7 +119,8 @@ function puOf(snap: RosterSnap | null | undefined, frozen?: Doc<"reflectionUnits
 }
 
 /** The rows of a list already made (or given up), from its detentions. */
-async function rowsOfMadeList(ctx: Ctx, date: string, tz: string, gradeOf: Record<string, string>, frozenAt: string | null): Promise<ListRowOut[]> {
+async function rowsOfMadeList(ctx: Ctx, date: string, tz: string, gradeOf: Record<string, string>, frozenAt: string | null,
+  slips?: { settings: ReflectionSettings; rowCounts: Record<string, number> | null }): Promise<ListRowOut[]> {
   const units = await ctx.db.query("reflectionUnits").withIndex("by_serveDay", (q) => q.eq("serveDay", date)).collect();
   const roster = await rosterFor(ctx, units.map((u) => u.studentNumber));
   const out: ListRowOut[] = [];
@@ -140,9 +149,13 @@ async function rowsOfMadeList(ctx: Ctx, date: string, tz: string, gradeOf: Recor
       const carry = await ctx.db.get(u.carriedToUnitId);
       if (carry) after = carry.tags?.[0] ? `Carries to the next list: ${carry.tags[0]}` : "Carries to the next list";
     } else if (u.state === "review") {
-      after = `In admin review: ${u.reviewReason ?? "waiting for a decision"}`;
+      after = u.resolvedAt
+        ? `Review closed (${u.resolution ?? "decided"}): ${u.resolutionReason ?? u.reviewReason ?? ""}`.replace(/: $/, "")
+        : `In admin review: ${u.reviewReason ?? "waiting for a decision"}`;
     }
     const snap = roster[u.studentNumber] ?? null;
+    const lunch = slips && slips.settings.slipAddresseeByDivision[u.division] === "before-lunch"
+      ? beforeLunchClass(snap, slips.rowCounts) : null;
     out.push({
       key: u._id, unitId: u._id, studentNumber: u.studentNumber,
       grade: snap?.grade || gradeOf[u.studentNumber] || uniforms[0]?.studentGrade || "",
@@ -151,6 +164,8 @@ async function rowsOfMadeList(ctx: Ctx, date: string, tz: string, gradeOf: Recor
       pu: puOf(snap, u.puSnapshot), notOnRoster: !snap,
       lines: u.lines, tags: u.tags, owes: u.owes ?? 1, absentMorning: !!u.absentMorning,
       released, cleared, voided, after,
+      notHere: !!u.roomNotHere,
+      slipTo: lunch ? { teacher: lunch.teacher, label: lunch.label } : null,
     });
   }
   return out;
@@ -169,7 +184,7 @@ function rowsOfClaim(claim: ClaimResult, roster: Record<string, RosterSnap>, gra
       division: r.division, mode: r.mode, state: "so-far",
       pu: puOf(snap), notOnRoster: !snap,
       lines: r.lines, tags: r.tags, owes: r.owes, absentMorning: false,
-      released: null, cleared: [], voided: [], after: null,
+      released: null, cleared: [], voided: [], after: null, notHere: false, slipTo: null,
     };
   });
 }
@@ -285,6 +300,10 @@ export type ReviewItem = {
   date: string;
   reason: string;
   ageSchoolDays: number;
+  /** The violations it is about, each with its date. */
+  lines: string[];
+  /** What the resolve screen may do with it: "add" (to the next list) and/or "dismiss" (with a reason). */
+  actions: Array<"add" | "dismiss">;
 };
 
 /**
@@ -295,24 +314,32 @@ export type ReviewItem = {
  * Each with its age in SCHOOL days, because the control is "nothing older
  * than 2 school days".
  */
-async function reviewItems(ctx: Ctx, today: string, tz: string | null): Promise<ReviewItem[]> {
+export async function reviewItems(ctx: Ctx, today: string, tz: string | null): Promise<ReviewItem[]> {
   const items: Omit<ReviewItem, "ageSchoolDays">[] = [];
   const tardies = await ctx.db.query("reflectionTardies").withIndex("by_state_attDate", (q) => q.eq("state", "review")).collect();
   for (const t of tardies) {
     if (t.resolvedAt) continue;
-    items.push({ kind: "tardy", id: t._id, studentNumber: t.studentNumber, date: t.attDate, reason: t.reason ?? "Review" });
+    items.push({
+      kind: "tardy", id: t._id, studentNumber: t.studentNumber, date: t.attDate, reason: t.reason ?? "Review",
+      lines: [tardyLine(tardyItemOf(t))], actions: ["add", "dismiss"],
+    });
   }
   const units = await ctx.db.query("reflectionUnits").withIndex("by_state", (q) => q.eq("state", "review")).collect();
   for (const u of units) {
     if (u.resolvedAt) continue;
     const lt = tz ? wallClock(u.recordedAt, tz) : null;
     const date = u.serveDay ?? (lt && lt.ok ? lt.dateKey : u.recordedAt.slice(0, 10));
-    items.push({ kind: "detention", id: u._id, studentNumber: u.studentNumber, date, reason: u.reviewReason ?? "Review" });
+    items.push({
+      kind: "detention", id: u._id, studentNumber: u.studentNumber, date, reason: u.reviewReason ?? "Review",
+      lines: u.lines, actions: ["add", "dismiss"],
+    });
   }
   const from = addDays(today, -60);
   const days = await ctx.db.query("reflectionDays").withIndex("by_date", (q) => q.gte("date", from).lte("date", today)).collect();
   for (const d of days) {
-    if (d.fallbackReview) items.push({ kind: "day", id: d._id, studentNumber: null, date: d.date, reason: d.fallbackReview.reason });
+    if (d.fallbackReview && !d.fallbackReview.resolvedAt) {
+      items.push({ kind: "day", id: d._id, studentNumber: null, date: d.date, reason: d.fallbackReview.reason, lines: [], actions: ["dismiss"] });
+    }
   }
   const schoolDays = days.filter((d) => d.schoolDay === true).map((d) => d.date);
   return items
@@ -394,7 +421,7 @@ export const listForDay = query({
     let view: "made" | "so-far" | "no-list" | "no-school" | "not-made";
     if (row?.frozenAt) {
       view = "made";
-      rows = await rowsOfMadeList(ctx, date, tz, gradeOf, row.frozenAt);
+      rows = await rowsOfMadeList(ctx, date, tz, gradeOf, row.frozenAt, { settings, rowCounts: row.rowCounts ?? null });
     } else if (date === today && todayOpen) {
       view = "so-far";
       rows = (await soFar(ctx, { first: null, target: today, tz, settings, gradeOf, nowIso })).rows;
@@ -430,9 +457,45 @@ export const listForDay = query({
         pullAt: hhmm(pullMinute),
         count,
         capacity: capacity[division],
+        // More students than the room holds at this division's sitting: shown,
+        // never decided here (an over-capacity rule is the owner's, later).
+        overCapacity: capacity[division] !== null && count > (capacity[division] as number),
+        slipTo: settings.slipAddresseeByDivision[division],
         rows: mine,
       };
     });
+
+    // ---- The room's own attendance for this day (build step 8b): Not here
+    // and Attendance done from Lunch & Power-Up start until the next list is
+    // made; Room did not run (roles) from this list's freeze until then.
+    let room: Record<string, any> | null = null;
+    if (frozen) {
+      const later = await ctx.db.query("reflectionDays").withIndex("by_date", (q) => q.gt("date", date)).collect();
+      const nextMade = later.filter((d) => d.frozenAt).sort((a, b) => a.date.localeCompare(b.date))[0] ?? null;
+      const w = roomWindow({
+        nowIso, listMadeAt: row?.frozenAt ?? null, powerUpMs: times.ok ? times.powerUpMs : null,
+        nextListMadeAt: nextMade?.frozenAt ?? null, tz,
+      });
+      room = {
+        tick: w.tick, closeRoom: w.closeRoom && roles, why: w.why,
+        doneAt: row?.roomAttendanceDoneAt ?? null, doneBy: row?.roomAttendanceDoneBy ?? null,
+        closed: row?.roomClosed ?? null,
+        notHere: rows.filter((r) => r.notHere && r.state !== "released").length,
+      };
+    }
+
+    // ---- The roles' buttons for today: "Read PowerSchool now" and "This is a
+    // school day". Never for a grant holder; the server checks again.
+    let controls: Record<string, any> | null = null;
+    if (roles && date === today) {
+      const switchedOn = settings.modeByDivision.ms !== "off" || settings.modeByDivision.hs !== "off";
+      const noSchool = todaySd.basis === "no-school" || todaySd.basis === "weekend";
+      controls = {
+        readNow: switchedOn && !noSchool,
+        markSchoolDay: switchedOn && !noSchool && todaySd.verdict !== "yes",
+        schoolDayMarked: !!todayRow?.adminMarkedSchoolDay,
+      };
+    }
 
     // ---- Changes since a print: the viewer's own newest print of this day.
     const mine = await ctx.db.query("reflectionPrints").withIndex("by_day_email", (q) => q.eq("day", date).eq("printedByEmail", staff.email)).order("desc").first();
@@ -584,6 +647,8 @@ export const listForDay = query({
       myPrintChanges,
       printsToday,
       grants,
+      room,
+      controls,
     };
   },
 });

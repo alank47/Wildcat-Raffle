@@ -51,7 +51,7 @@ const J = (x) => JSON.stringify(x);
 const realLog = console.log;
 console.log = (...a) => { if (!(typeof a[0] === "string" && a[0].startsWith("[reflection]"))) realLog(...a); };
 
-const loaded = await loadConvex(new URL("./", import.meta.url), ["reflection", "reflectionRead", "reflectionRules", "reflectionList"], {
+const loaded = await loadConvex(new URL("./", import.meta.url), ["reflection", "reflectionRead", "reflectionRules", "reflectionList", "reflectionRoom"], {
   transform: (name, src) => (name === "attendanceDays" ? src.replace("const RETRY_PAUSE_MS = 1000;", "const RETRY_PAUSE_MS = 1;") : src),
 });
 const { mods } = loaded;
@@ -835,6 +835,254 @@ try {
   }
 
   // ==========================================================================
+  console.log("\n11. THE ROOM'S OWN ATTENDANCE: Not here, Attendance done (reflectionRoom.ts)\n");
+  // ==========================================================================
+  {
+    const TUE = "2026-10-13", WED = "2026-10-14";
+    const ms = { grade: 7, sections: MS };
+    const w = await world({
+      students: { A: ms, C: ms, E: ms },
+      days: [{ date: TUE, slots: TUE_SLOTS }, { date: WED, slots: WED_SLOTS }],
+      settings: { modeByDivision: { ms: "live", hs: "off" }, countFromDateByDivision: { ms: "2026-10-12", hs: null } },
+    });
+    const staff = {
+      pbis: { email: "pbis@school.test", role: "pbis" },
+      granted: { email: "granted@school.test", role: "campusaide", reflectionList: true, reflectionListUntil: "2026-12-18" },
+      teacher: { email: "teacher@school.test", role: "teacher" },
+    };
+    for (const t of Object.values(staff)) await w.store.db.insert("teachers", { name: "Staff", ticketsAwarded: 0, ...t });
+    const as = (who) => { w.rt.signIn({ issuer: STAFF_ISSUER, email: staff[who].email }); return w.rt; };
+    const unitOf = (sn, day = TUE) => w.units(sn).find((u) => u.serveDay === day);
+    for (const sn of ["A", "C", "E"]) w.mark(TUE, sn, 3, "T");     // late to P2
+    w.mark(TUE, "C", 9, "A");          // pulled: the Power-Up teacher marked C absent, but C was in the room
+    await drive(w, la(TUE, "07:30"), la(TUE, "11:45"));
+    check("the list is made at 11:45 with A, C and E", J(w.listed(TUE)) === J(["A", "C", "E"]) && w.day(TUE).freezeKind === "closing", J(w.listed(TUE)));
+
+    clock.set(la(TUE, "12:00"));
+    const early = await as("granted").run("reflectionRoom.markRoom", { unitId: unitOf("A")._id, notHere: true });
+    check("Not here opens at Lunch & Power-Up, never before the room has run",
+      early.ok === false && /opens at Lunch & Power-Up \(12:31 PM\)/.test(early.reason) && !unitOf("A").roomNotHere, J(early));
+    const before = await as("granted").run("reflectionList.listForDay", { day: "today" });
+    check("...and the screen says so, with no box to tick yet",
+      before.room && before.room.tick === false && /opens at Lunch/.test(before.room.why) && before.room.closeRoom === false, J(before.room));
+
+    clock.set(la(TUE, "12:35"));
+    const refusedTeacher = await as("teacher").run("reflectionRoom.markRoom", { unitId: unitOf("A")._id, notHere: true });
+    check("a teacher cannot tick anyone", refusedTeacher.ok === false && !unitOf("A").roomNotHere);
+    const tick = await as("granted").run("reflectionRoom.markRoom", { unitId: unitOf("A")._id, notHere: true });
+    const done = await as("granted").run("reflectionRoom.roomAttendanceDone", { day: TUE });
+    const audit = w.store.rows("reflectionAudit").filter((r) => r.day === TUE).map((r) => [r.action, r.byEmail]);
+    check("a grant holder may tick Not here and press Attendance done; each is kept on the detention or the day, and in reflectionAudit",
+      tick.ok && done.ok && unitOf("A").roomNotHere === true && unitOf("A").roomMarkedBy === "granted@school.test"
+        && w.day(TUE).roomAttendanceDoneAt === la(TUE, "12:35") && w.day(TUE).roomAttendanceDoneBy === "granted@school.test"
+        && J(audit) === J([["room-not-here", "granted@school.test"], ["room-attendance-done", "granted@school.test"]]), J({ tick, done, audit }));
+    const screen = await as("pbis").run("reflectionList.listForDay", { day: "today" });
+    const rowA = screen.sections[0].rows.find((r) => r.studentNumber === "A");
+    check("the screen shows the tick, the count and who pressed Attendance done",
+      rowA.notHere === true && screen.room.tick === true && screen.room.notHere === 1 && screen.room.doneBy === "granted@school.test"
+        && screen.room.closeRoom === true, J(screen.room));
+    check("...and no reflection code wrote appAuditLog", w.store.rows("appAuditLog").length === 0);
+
+    await drive(w, la(TUE, "12:40"), la(TUE, "15:45"));
+    const carryA = w.units("A").find((u) => u.kind === "carry");
+    check("Attendance done: exactly the ticked row carries (A); C, marked absent at Power-Up but unticked, served",
+      unitOf("A").state === "carried" && unitOf("A").carryBasis === "room" && carryA?.state === "pending"
+        && /^Carried over from Tue 10\/13 \(at school: did not come\)$/.test(carryA.tags[0])
+        && unitOf("C").state === "listed" && unitOf("C").carryBasis === "room" && unitOf("E").state === "listed",
+      J({ A: unitOf("A"), carryA, C: unitOf("C") }));
+
+    await drive(w, la(WED, "07:30"), la(WED, "11:45"));
+    check("the carry lands on the next list, with its tag", unitOf("A", WED)?.kind === "carry" && unitOf("A", WED).state === "listed");
+    clock.set(la(WED, "12:40"));
+    const afterNext = await as("pbis").run("reflectionRoom.markRoom", { unitId: unitOf("C")._id, notHere: true });
+    const doneAfter = await as("pbis").run("reflectionRoom.roomAttendanceDone", { day: TUE, done: false });
+    check("a tick after the next freeze is refused: the next list has claimed the carries",
+      afterNext.ok === false && /next list was made at 11:20 AM/.test(afterNext.reason) && !unitOf("C").roomNotHere
+        && doneAfter.ok === false && !!w.day(TUE).roomAttendanceDoneAt, J({ afterNext, doneAfter }));
+  }
+
+  // ==========================================================================
+  console.log("\n12. ROOM DID NOT RUN TODAY\n");
+  // ==========================================================================
+  {
+    const TUE = "2026-10-13";
+    const ms = { grade: 7, sections: MS };
+    const w = await world({
+      students: { A: ms, C: ms },
+      days: [{ date: TUE, slots: TUE_SLOTS }],
+      settings: { modeByDivision: { ms: "live", hs: "off" }, countFromDateByDivision: { ms: "2026-10-12", hs: null } },
+    });
+    const staff = {
+      admin: { email: "admin@school.test", role: "admin" },
+      granted: { email: "granted@school.test", role: "campusaide", reflectionList: true, reflectionListUntil: "2026-12-18" },
+    };
+    for (const t of Object.values(staff)) await w.store.db.insert("teachers", { name: "Staff", ticketsAwarded: 0, ...t });
+    const as = (who) => { w.rt.signIn({ issuer: STAFF_ISSUER, email: staff[who].email }); return w.rt; };
+    const unitOf = (sn) => w.units(sn).find((u) => u.serveDay === TUE);
+    for (const sn of ["A", "C"]) w.mark(TUE, sn, 3, "T");
+    await drive(w, la(TUE, "07:30"), la(TUE, "11:45"));
+    // A's detention has already carried twice (from earlier lists).
+    await w.store.db.patch(unitOf("A")._id, { carryCount: 2 });
+
+    clock.set(la(TUE, "11:55"));
+    const byGrant = await as("granted").run("reflectionRoom.roomDidNotRun", { day: TUE, reason: "no supervisor" });
+    const noReason = await as("admin").run("reflectionRoom.roomDidNotRun", { day: TUE });
+    check("Room did not run is the roles' alone, and needs a reason",
+      byGrant.ok === false && /Only administrators and the PBIS team/.test(byGrant.reason) && noReason.ok === false && /Say why/.test(noReason.reason)
+        && !w.day(TUE).roomClosed, J({ byGrant, noReason }));
+    const closed = await as("admin").run("reflectionRoom.roomDidNotRun", { day: TUE, reason: "Supervisor out sick" });
+    check("an admin may press it as soon as the list is made, before lunch, and it is recorded on the day and in reflectionAudit",
+      closed.ok && w.day(TUE).roomClosed?.reason === "Supervisor out sick" && w.day(TUE).roomClosed.by === "admin@school.test"
+        && w.store.rows("reflectionAudit").some((r) => r.action === "room-did-not-run" && r.day === TUE && r.reason === "Supervisor out sick"));
+    await drive(w, la(TUE, "12:00"), la(TUE, "15:45"));
+    const carries = w.units().filter((u) => u.kind === "carry");
+    check("Room did not run carries everything with no carryCount increase",
+      ["A", "C"].every((sn) => unitOf(sn).state === "carried" && unitOf(sn).carryBasis === "room-closed")
+        && carries.length === 2 && carries.every((c) => c.state === "pending" && c.tags[0] === "Carried over from Tue 10/13 (room closed)")
+        && carries.find((c) => c.studentNumber === "A").carryCount === 2 && carries.find((c) => c.studentNumber === "C").carryCount === 0,
+      J(carries.map((c) => [c.studentNumber, c.carryCount, c.tags])));
+  }
+
+  // ==========================================================================
+  console.log("\n13. THE REVIEW QUEUE'S DECISIONS, THE ADMIN BUTTONS AND THE HEALTH CARD\n");
+  // ==========================================================================
+  {
+    const TUE = "2026-10-13", MON = "2026-10-12";
+    const ms = { grade: 7, sections: MS };
+    const w = await world({
+      students: { A: ms, V: ms, V2: ms, U: ms },
+      days: [{ date: MON, slots: MON_SLOTS }, { date: TUE, slots: TUE_SLOTS }],
+      settings: { modeByDivision: { ms: "live", hs: "off" }, countFromDateByDivision: { ms: MON, hs: null } },
+    });
+    const staff = {
+      admin: { email: "admin@school.test", role: "admin" },
+      pbis: { email: "pbis@school.test", role: "pbis" },
+      granted: { email: "granted@school.test", role: "campusaide", reflectionList: true, reflectionListUntil: "2026-12-18" },
+    };
+    for (const t of Object.values(staff)) await w.store.db.insert("teachers", { name: "Staff", ticketsAwarded: 0, ...t });
+    const as = (who) => { w.rt.signIn({ issuer: STAFF_ISSUER, email: staff[who].email }); return w.rt; };
+
+    // PowerSchool has TWO marks for V2's P2 on Tuesday: a collision, for review.
+    w.mark(TUE, "V2", 3, "T"); w.mark(TUE, "V2", 3, "T");
+    w.mark(MON, "V", 2, "T");
+    await drive(w, la(TUE, "07:30"), la(TUE, "07:30"));
+    const v2 = () => w.tardies("V2")[0];
+    check("a collision goes to review", v2()?.state === "review" && /2 marks/.test(v2().reason), J(w.tardies("V2")));
+    // Two more, as the reader would leave them: a very late Monday entry and
+    // a detention whose carry hit the limit.
+    const late = w.tardies("V")[0]._id;
+    await w.store.db.patch(late, { state: "review", reason: "Entered after 5 lists were made", listsBeforeSeen: 5 });
+    const limit = await w.store.db.insert("reflectionUnits", {
+      studentNumber: "U", division: "ms", kind: "carry", tardyIds: [], uniformIds: [], lines: ["Mon 10/12: Tardy P1 (Ms Lee)"],
+      recordedAt: la(MON, "15:45"), state: "review", serveDay: MON, mode: "live", carryCount: 5, tags: [], reviewReason: "Carried 5 times",
+    });
+
+    clock.set(la(TUE, "09:00"));
+    const grantQ = await as("granted").run("reflectionRoom.reviewQueue", {});
+    const q = await as("pbis").run("reflectionRoom.reviewQueue", {});
+    check("the review queue is the roles' alone: a grant holder is refused it",
+      grantQ.allowed === false && q.allowed === true && q.count === 3, J({ grantQ, n: q.count }));
+    check("...each item with what it is about, why, its age in school days, and what may be done with it",
+      J(q.items.map((i) => [i.kind, i.studentNumber, i.actions.join("+")])) === J([["detention", "U", "add+dismiss"], ["tardy", "V", "add+dismiss"], ["tardy", "V2", "add+dismiss"]])
+        && q.items.find((i) => i.studentNumber === "V").lines[0] === "Mon 10/12: Tardy P1 (Ms Lee)"
+        && q.items.find((i) => i.studentNumber === "V").ageSchoolDays === 1 && q.items.find((i) => i.studentNumber === "V2").ageSchoolDays === 0, J(q.items));
+
+    const byGrant = await as("granted").run("reflectionRoom.resolveReview", { kind: "tardy", id: late, action: "add" });
+    check("a resolve by a grant holder is refused, and changes nothing",
+      byGrant.ok === false && w.tardies("V")[0].state === "review" && !w.tardies("V")[0].resolvedAt, J(byGrant));
+    const bare = await as("pbis").run("reflectionRoom.resolveReview", { kind: "detention", id: limit, action: "dismiss" });
+    check("Dismiss needs a reason", bare.ok === false && /reason/.test(bare.reason));
+
+    const addLate = await as("pbis").run("reflectionRoom.resolveReview", { kind: "tardy", id: late, action: "add", reason: "Teacher was out; real tardy" });
+    const tV = w.tardies("V")[0];
+    check("Add to next list: a very late tardy becomes countable for the next freeze, the decision kept on the item",
+      addLate.ok && tV.state === "countable" && !tV.unitId && tV.resolvedBy === "pbis@school.test" && tV.resolution === "added"
+        && tV.resolutionReason === "Teacher was out; real tardy", J(tV));
+    const addLimit = await as("pbis").run("reflectionRoom.resolveReview", { kind: "detention", id: limit, action: "add" });
+    const uU = w.units("U").find((u) => u._id === limit), carryU = w.units("U").find((u) => u.carryFromUnitId === limit);
+    check("Add to next list: a detention at the carry limit carries now, tagged, without counting toward the limit",
+      addLimit.ok && uU.state === "carried" && uU.resolution === "added" && carryU?.state === "pending" && carryU.carryCount === 5
+        && carryU.tags[0] === "Added to the next list by review (from Mon 10/12)", J({ uU, carryU }));
+    const addV2 = await as("admin").run("reflectionRoom.resolveReview", { kind: "tardy", id: v2()._id, action: "add" });
+    const auditRows = w.store.rows("reflectionAudit").filter((r) => /^review-/.test(r.action));
+    check("every decision is written to reflectionAudit, never appAuditLog",
+      addV2.ok && auditRows.length === 3 && auditRows.every((r) => r.byEmail && (r.tardyId || r.unitId)) && w.store.rows("appAuditLog").length === 0, J(auditRows));
+
+    await drive(w, la(TUE, "09:30"), la(TUE, "09:30"));
+    check("the reader respects the decision: the resolved collision is not sent back to review",
+      v2().state === "countable" && v2().resolution === "added", J(v2()));
+    const soFar = await as("pbis").run("reflectionList.listForDay", { day: "today" });
+    check("...and both added tardies, and the added carry, are on today's list so far",
+      ["U", "V", "V2"].every((sn) => soFar.sections[0].rows.some((r) => r.studentNumber === sn)), J(soFar.sections[0].rows.map((r) => r.studentNumber)));
+    const after = await as("pbis").run("reflectionRoom.reviewQueue", {});
+    check("the queue is empty once each item is decided", after.count === 0, J(after.items));
+
+    // A day-level item: room attendance not recorded on a live day.
+    const mon = await w.store.db.insert("reflectionDays", { date: "2026-10-09", readsDone: [], updatedAt: "x", schoolDay: true,
+      fallbackReview: { reason: "Room attendance not recorded Fri 10/9 (3 detentions decided from PowerSchool)", at: la("2026-10-09", "15:45") } });
+    const addDay = await as("pbis").run("reflectionRoom.resolveReview", { kind: "day", id: mon, action: "add" });
+    const okDay = await as("pbis").run("reflectionRoom.resolveReview", { kind: "day", id: mon, action: "dismiss", reason: "Supervisor forgot; told her" });
+    check("a day's item can only be dismissed, with a reason, and then leaves the queue",
+      addDay.ok === false && okDay.ok && (await as("pbis").run("reflectionRoom.reviewQueue", {})).count === 0
+        && w.store.rows("reflectionDays").find((d) => d._id === mon).fallbackReview.resolvedBy === "pbis@school.test", J({ addDay, okDay }));
+
+    // ---- Read PowerSchool now, at 11:47: a closing read, which makes the list.
+    clock.set(la(TUE, "11:41"));
+    const nowByGrant = await as("granted").run("reflectionRoom.readNow", {});
+    check("Read PowerSchool now is refused to a grant holder", nowByGrant.ok === false && /Only administrators/.test(nowByGrant.reason));
+    clock.set(la(TUE, "11:47"));
+    w.log.length = 0;
+    const pressed = await as("admin").run("reflectionRoom.readNow", {});
+    check("pressed by an admin between the close and ready - 4 minutes, it is a CLOSING read that makes the list",
+      pressed.ok && pressed.kind === "closing" && pressed.makesList === true
+        && w.rt.jobs.some((j) => j.path === "reflectionRead.read" && j.args.key === "closing" && j.args.freeze === "closing"), J(pressed));
+    const again = await as("admin").run("reflectionRoom.readNow", {});
+    check("...a second press while that read holds the lease is refused (never two readers)",
+      again.ok === false && /already running/.test(again.reason), J(again));
+    await runJobs(w, Date.parse(la(TUE, "11:48")));
+    check("...and the read it booked made the list", w.day(TUE).frozenAt && w.day(TUE).freezeKind === "closing"
+      && w.day(TUE).closingReadStartedAt === la(TUE, "11:47"), J({ f: w.day(TUE).frozenAt, k: w.day(TUE).freezeKind }));
+    clock.set(la(TUE, "11:48"));
+    const tooSoon = await as("pbis").run("reflectionRoom.readNow", {});
+    check("...and it runs at most once every 2 minutes, whoever presses it", tooSoon.ok === false && /once every 2 minutes/.test(tooSoon.reason), J(tooSoon));
+    check("each press is in reflectionAudit", w.store.rows("reflectionAudit").filter((r) => r.action === "read-now").length === 1);
+
+    // ---- The health card.
+    const hGrant = await as("granted").run("reflectionRoom.health", {});
+    const health = await as("admin").run("reflectionRoom.health", {});
+    check("the health card is the roles' alone, and names no student",
+      hGrant.allowed === false && health.allowed === true && health.day.made === "11:47 AM" && health.day.freezeKind === "closing"
+        && health.review.count === 0 && !/"studentNumber"|\b(A|V|V2|U)\b"/.test(J(health)) && Array.isArray(health.recent), J(health).slice(0, 400));
+  }
+
+  // ==========================================================================
+  console.log("\n14. THIS IS A SCHOOL DAY, WHEN POWERSCHOOL CANNOT SAY SO\n");
+  // ==========================================================================
+  {
+    const TUE = "2026-10-13";
+    const w = await world({
+      students: { A: { grade: 7, sections: MS } },
+      days: [{ date: TUE, slots: TUE_SLOTS }],
+      settings: { modeByDivision: { ms: "live", hs: "off" }, countFromDateByDivision: { ms: "2026-10-12", hs: null } },
+    });
+    await w.store.db.insert("teachers", { name: "Staff", ticketsAwarded: 0, email: "admin@school.test", role: "admin" });
+    await w.store.db.insert("teachers", { name: "Staff", ticketsAwarded: 0, email: "granted@school.test", role: "campusaide", reflectionList: true });
+    w.ctl.down = true;          // PowerSchool unreadable all morning
+    await drive(w, la(TUE, "07:30"), la(TUE, "09:55"));
+    clock.set(la(TUE, "10:00"));
+    w.rt.signIn({ issuer: STAFF_ISSUER, email: "granted@school.test" });
+    const byGrant = await w.rt.run("reflectionRoom.markSchoolDay", {});
+    w.rt.signIn({ issuer: STAFF_ISSUER, email: "admin@school.test" });
+    const marked = await w.rt.run("reflectionRoom.markSchoolDay", {});
+    check("This is a school day: refused to a grant holder; an admin's press is recorded on the day and in reflectionAudit",
+      byGrant.ok === false && marked.ok && w.day(TUE).adminMarkedSchoolDay === true && w.day(TUE).schoolDayMarkedBy === "admin@school.test"
+        && w.store.rows("reflectionAudit").some((r) => r.action === "mark-school-day" && r.day === TUE), J({ byGrant, marked }));
+    await drive(w, la(TUE, "10:05"), la(TUE, "12:00"));
+    check("...so the list is made at the ready time without PowerSchool (the fallback), instead of no list",
+      w.day(TUE).freezeKind === "fallback" && w.day(TUE).frozenAt === la(TUE, "12:00") && !w.day(TUE).noList, J({ k: w.day(TUE).freezeKind, n: w.day(TUE).noList }));
+  }
+
+  // ==========================================================================
   console.log("\nWIRING\n");
   // ==========================================================================
   {
@@ -871,14 +1119,26 @@ try {
     check("static: no appAuditLog insert from reflection code carries a student number, name or unit id",
       files.includes("reflectionList.ts") && inserts.every((x) => !IDENT.test(x.text)),
       inserts.filter((x) => IDENT.test(x.text)).map((x) => `${x.f}: ${x.text.slice(0, 120)}`).join(" | "));
-    const listSrc = strip(read("./convex/reflectionList.ts"));
-    const publicFns = [...listSrc.matchAll(/export const (\w+) = (query|mutation|action)\(/g)].map((m) => m[1]);
-    check("the list's only public functions are listForDay and recordPrint, and each checks canReadReflection first",
-      J(publicFns) === J(["listForDay", "recordPrint"]) && publicFns.every((n) => {
-        const body = listSrc.slice(listSrc.indexOf(`export const ${n} =`));
-        const gate = body.indexOf("canReadReflection(staff, today)");
-        return gate > 0 && gate < body.indexOf("requireStaff(ctx)") + 200 && gate < body.search(/ctx\.db\.|getDay\(|loadSettings\(/);
-      }), J(publicFns));
+    // EVERY public reflection function checks who is asking before it reads
+    // a row: the list and the room's attendance with canReadReflection (the
+    // roles and a grant), everything else with canAdminReflection (the roles
+    // alone, never a grant).
+    const READERS = { "reflectionList.ts": ["listForDay", "recordPrint"], "reflectionRoom.ts": ["markRoom", "roomAttendanceDone"] };
+    const ADMINS = { "reflectionRoom.ts": ["roomDidNotRun", "reviewQueue", "resolveReview", "markSchoolDay", "readNow", "health"] };
+    const gated = [];
+    for (const f of ["reflectionList.ts", "reflectionRoom.ts"]) {
+      const code = strip(read(`./convex/${f}`));
+      const fns = [...code.matchAll(/export const (\w+) = (query|mutation|action)\(/g)].map((m) => m[1]);
+      const want = [...(READERS[f] || []), ...(ADMINS[f] || [])];
+      gated.push(J(fns.slice().sort()) === J(want.slice().sort()) && fns.every((n) => {
+        const body = code.slice(code.indexOf(`export const ${n} =`));
+        const gate = (READERS[f] || []).includes(n) ? body.indexOf("canReadReflection(staff, today)") : body.indexOf("canAdminReflection(staff)");
+        return gate > 0 && gate < body.indexOf("requireStaff(ctx)") + 200
+          && gate < body.search(/ctx\.db\.|getDay\(|loadSettings\(|roomStateOf\(|reviewItems\(|markedOf\(/);
+      }) ? "ok" : `${f}: ${J(fns)}`);
+    }
+    check("the list's public functions are exactly these, and each checks who is asking (the roles, or a grant only where named) first",
+      gated.every((g) => g === "ok"), J(gated));
     const pkg = JSON.parse(read("./package.json"));
     check("this test runs in npm test", /&& node reflection-reader\.test\.mjs\b/.test(pkg.scripts.test));
   }

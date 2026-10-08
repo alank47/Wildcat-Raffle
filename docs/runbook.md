@@ -198,13 +198,48 @@ npx convex run --prod staffInvites:setStaffReflectionListFromCli '{"email":"some
 The list reads
 `reflectionList:listForDay` every 30 seconds while it is open; its Print
 button reads the list again, records the print (`reflectionPrints`: ids and
-student numbers, never names) and then prints. Until the resolve screen
-lands, the review queue and the audit trail are read from the command line:
+student numbers, never names) and then prints. Ctrl+P (Cmd+P) on that screen
+goes through the same Print button. Printing from the browser's own menu
+prints the list on screen, unrecorded, and marks every page "STALE" when it
+is more than a minute old.
+
+- **Print slips** (optional, never on the main path): only once the list is
+  final. Several Power-Up teachers to a page with cut lines, MS first; each
+  slip folds to the teacher's name and carries only each student's name,
+  number, grade and "Reflection Room today". An RSP, Designated ELD or 7002A
+  student's slip names the class they are actually in, flagged.
+- **Print changes only** appears when your own print is out of date: the
+  students added since it, and a "release this student" list.
+- **Room attendance** (roles and grant holders), from Lunch & Power-Up start
+  until the next list is made: tick **Not here**, then press **Attendance
+  done**; only ticked students carry. **Room did not run today** (roles only,
+  with a reason) carries everyone without counting toward the limit. Each act
+  is kept on the detention or the day, and in `reflectionAudit`.
+- **Review** (roles only) is the admin review queue: "Add to next list" or
+  "Dismiss" (a reason is required), each with its age in school days.
+- **Read PowerSchool now** and **This is a school day** (roles only) are on
+  Today. Read now respects the lease and runs at most once every 2 minutes;
+  between the close and 4 minutes before the ready time it is the closing
+  read, which makes the list. "This is a school day" lets the list be made at
+  the ready time when PowerSchool cannot show it; on a weekend or a day marked
+  no school it is refused (mark the day in Settings > Bell Schedule).
+- The **health card** is in Settings > Integrations, beside the attendance
+  rebuild: today's list (how and when it was made, how long the closing read
+  took), the last good read and any error, the review queue's size and age,
+  the roster snapshot and the last sync's roster guard. Counts only.
+
+The same queue and the audit trail from the command line:
 
 ```
 npx convex run --prod reflectionList:adminReview '{}'                    # each item, with its age in school days
 npx convex run --prod reflectionList:auditTrail '{"day":"2026-10-21"}'   # every human act on that day's list
 ```
+
+The Uniform Tracker files each entry under the school day of the moment Enter
+was pressed (the server decides, never the Chromebook), queues and retries a
+save that fails, keeps unsent entries on the device for the person who
+entered them, and holds an app update while any are unsent. Undo needs a
+reason once the entry's list is made.
 
 ### Checking the list during the pilot (`scripts/reflection-verify.mjs`)
 

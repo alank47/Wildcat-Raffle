@@ -141,6 +141,18 @@ const mustBeCalled = [
   // print record "what changed since your print" is worked out against.
   "reflectionList:listForDay",
   "reflectionList:recordPrint",
+  // ...and what people do to it (build steps 6, 7b, 8b): the grant, the
+  // review queue's decisions, the room's own attendance, the admin buttons
+  // and the health card. Each one uncalled is a control that does nothing.
+  "staffInvites:setStaffReflectionList",
+  "reflectionRoom:reviewQueue",
+  "reflectionRoom:resolveReview",
+  "reflectionRoom:markRoom",
+  "reflectionRoom:roomAttendanceDone",
+  "reflectionRoom:roomDidNotRun",
+  "reflectionRoom:markSchoolDay",
+  "reflectionRoom:readNow",
+  "reflectionRoom:health",
 ];
 for (const n of mustBeCalled) {
   check(`${n} has a caller`, called.has(n), server.has(n) ? "exported, never called" : "not exported at all");

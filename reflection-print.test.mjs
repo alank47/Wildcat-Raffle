@@ -94,7 +94,8 @@ function makeWorld(src, answer) {
     classList: { add: (c) => classes.add(c), remove: (...c) => c.forEach((x) => classes.delete(x)), contains: (c) => classes.has(c) },
     appendChild: (el) => { children.push(el); return el; },
   };
-  const fixed = Object.fromEntries(["rrDayNote", "rrBanners", "rrList", "rrFoot", "rrPrintBtn", "rrPastWrap"].map((id) => [id, new El("div")]));
+  const fixed = Object.fromEntries(["rrDayNote", "rrBanners", "rrList", "rrFoot", "rrPrintBtn", "rrPastWrap", "rrSlipsBtn", "rrChangesBtn", "rrReviewPill"]
+    .map((id) => [id, new El("div")]));
   const document = {
     title: "Wildcat Hub",
     visibilityState: "visible",
@@ -117,7 +118,7 @@ function makeWorld(src, answer) {
   let onScreen = true;
   const api = new Function(
     "window", "document", "setTimeout", "clearTimeout", "setInterval", "clearInterval", "showAlert", "wcPanelOnScreen",
-    "closePerfectAttendanceSheet", "students", "currentUser",
+    "closePerfectAttendanceSheet", "students", "currentUser", "showToast", "showPrompt", "showConfirm",
     `const _wcSortState = new Map(), _wcSortRedraw = new Map();
     const WC_SORT_ARROWS = { none: '-', asc: '^', desc: 'v' };
     ${SORT_FNS.map((n) => lift(src, n)).join("\n\n")}
@@ -125,7 +126,9 @@ function makeWorld(src, answer) {
     return {
       loadReflectionList, openReflectionRoom, reflectionRefreshTick, setReflectionView, renderReflectionRoom,
       printReflectionList, reflectionSheetHtml, reflectionSheetTitle, closeReflectionSheet, forgetReflectionRoom, rrClock,
-      rrRowsInOrder, rrStudentIndex,
+      rrRowsInOrder, rrStudentIndex, printReflectionSlips, printReflectionChanges, reflectionSlipsHtml, reflectionChangesHtml,
+      reflectionBeforePrint, reflectionPrintKeys, markReflectionNotHere, reflectionAttendanceDone, setReflectionView,
+      setLoadedAt(ms) { _rrLoadedAt = ms; },
       sortBy(table, col, type) { wcSortSet(table, col, type || '', ''); },
       get data() { return _rrData; },
       get why() { return _rrWhy; },
@@ -138,7 +141,10 @@ function makeWorld(src, answer) {
     (m) => { alerts.push(String(m)); return Promise.resolve(); },
     () => onScreen,
     () => {},
-    STUDENTS, { name: "Pat Supervisor", email: "pat@school.test" });
+    STUDENTS, { name: "Pat Supervisor", email: "pat@school.test" },
+    (m, kind) => { alerts.push("toast:" + String(m)); },
+    async () => (answer.prompt ? answer.prompt() : null),
+    async () => true);
   return {
     app: api, document, window, fixed, alerts, prints, children, timers, intervals, calls, listeners, docListeners,
     sheet: () => children.find((c) => c.id === "wcPrintSheet") || null,
@@ -354,6 +360,136 @@ console.log("\n5. WIRING\n");
   check("the sheet's title is built from the date alone",
     /return 'Reflection Room list ' \+ String\(res && res\.date \|\| ''\);/.test(lift(scriptSrc, "reflectionSheetTitle")));
   check("this test runs in npm test", /&& node reflection-print\.test\.mjs\b/.test(pkg.scripts.test));
+}
+
+// ======================================================================
+console.log("\n6. PULL SLIPS: FINAL LISTS ONLY, FOUR FIELDS ONLY\n");
+// ======================================================================
+{
+  let answer = RES();
+  const recorded = [];
+  const w = makeWorld(scriptSrc, {
+    query: () => answer,
+    mutation: (a) => { recorded.push(a); return { ok: true, id: "reflectionPrints:2", final: true, at: "2026-10-13T18:50:00.000Z" }; },
+  });
+  await w.app.loadReflectionList();
+  const disabledEarly = w.fixed.rrSlipsBtn.disabled === true;
+  await w.app.printReflectionSlips();
+  check("slips are disabled while the list is not final: the button is off, and pressing it prints and records nothing",
+    disabledEarly && w.prints.length === 0 && recorded.length === 0 && w.sheet() === null
+      && /only once the list is final/.test(w.alerts[0] || ""), J({ disabledEarly, prints: w.prints.length, alerts: w.alerts }));
+
+  answer = FRESH();
+  answer.sections[0].rows.find((r) => r.studentNumber === "1003").pu = { teacher: "Ms Ruiz", course: "Power Up 7A", flag: null, check: false };
+  await w.app.loadReflectionList();
+  check("...and on once it is final", w.fixed.rrSlipsBtn.disabled === false);
+  await w.app.printReflectionSlips();
+  const sheet = w.prints[0]?.sheet || "";
+  check("a final list prints slips, recorded as a slips print from a fresh read",
+    w.prints.length === 1 && recorded.length === 1 && recorded[0].kind === "slips" && w.prints[0].title === "Reflection Room slips 2026-10-13",
+    J({ prints: w.prints.length, recorded }));
+  const rowCells = [...sheet.matchAll(/<tr data-rr-slip-row>((?:<td>[^<]*<\/td>)*)<\/tr>/g)]
+    .map((m) => [...m[1].matchAll(/<td>([^<]*)<\/td>/g)].map((x) => x[1]));
+  check("slips contain only the four fields: name, student number, grade, 'Reflection Room today'",
+    rowCells.length === 5 && rowCells.every((c) => c.length === 4 && /^Grade \d+$/.test(c[2]) && c[3] === "Reflection Room today")
+      && !/Tardy|Uniform|Ms Ng|loaner|Absent this morning|students?\b \(|PILOT: do not assign/.test(sheet.replace(/<h2>[^<]*<\/h2>/g, "")),
+    J(rowCells));
+  const outs = [...sheet.matchAll(/<div class="rr-slip-out">([^<]*)(?: <span class="rr-slip-extra">([^<]*)<\/span>)?<\/div>/g)].map((m) => [m[1], m[2] || ""]);
+  check("several teachers to a page, one slip each, alphabetical, each folding to the teacher's name only",
+    J(outs) === J([["Mr Abel", "RSP A (RSP)"], ["Ms Ruiz", ""], ["Ms Cruz", ""]]) && (sheet.match(/class="rr-slip"/g) || []).length === 3, J(outs));
+  check("an RSP student is pulled like anyone: the slip names the class they are actually in, flagged",
+    /Mr Abel <span class="rr-slip-extra">RSP A \(RSP\)<\/span>/.test(sheet));
+  check("MS slips first, then HS, each headed with its pull time; the released student gets none",
+    /Middle school \(grades 6-8\) — pull at about 12:31/.test(sheet) && sheet.indexOf("Middle school") < sheet.indexOf("High school")
+      && /High school \(grades 9-12\) — pull at about 12:57/.test(sheet) && !/Zane/.test(sheet));
+  check("the slips button prints from its own fresh read, never the list on screen",
+    /async function printReflectionSlips\(\) \{[\s\S]*?const answer = await loadReflectionList\(\);[\s\S]*?if \(answer\.frozen !== true\) \{/.test(scriptSrc));
+}
+
+// ======================================================================
+console.log("\n7. PRINT CHANGES ONLY\n");
+// ======================================================================
+{
+  const answer = FRESH();
+  answer.myPrintChanges = { printAt: "2026-10-13T18:31:07.000Z", kind: "master", final: false, count: 2, outOfDate: true,
+    added: ["1009"], release: [{ studentNumber: "1004", reason: "now Excused Tardy" }], cleared: [], voided: [] };
+  const recorded = [];
+  const w = makeWorld(scriptSrc, { query: () => answer, mutation: (a) => { recorded.push(a); return { ok: true, at: "2026-10-13T18:52:00.000Z" }; } });
+  await w.app.loadReflectionList();
+  check("Print changes only is offered when this person's own print is out of date", w.fixed.rrChangesBtn.hidden === false);
+  await w.app.printReflectionChanges();
+  const sheet = w.prints[0]?.sheet || "";
+  check("it prints only the rows added since their print, with the list's columns, and a release list",
+    /Changes since your 11:31 AM print/.test(sheet) && /<td>Comer, New<\/td>/.test(sheet) && !/<td>Diaz, Ana<\/td>/.test(sheet)
+      && /<th>Served<\/th><th>Student<\/th>/.test(sheet) && /Release this student:<\/b> Zane, Dee \(1004\) — now Excused Tardy/.test(sheet), sheet.slice(0, 300));
+  check("...recorded as a 'changes' print of the whole list now, which is what that person holds once it is added",
+    recorded.length === 1 && recorded[0].kind === "changes" && recorded[0].studentNumbers.length === 5 && !recorded[0].studentNumbers.includes("1004"));
+  const none = makeWorld(scriptSrc, { query: () => FRESH(), mutation: () => ({ ok: true }) });
+  await none.app.loadReflectionList();
+  await none.app.printReflectionChanges();
+  check("with nothing changed it is not offered, and prints nothing", none.fixed.rrChangesBtn.hidden === true && none.prints.length === 0);
+}
+
+// ======================================================================
+console.log("\n8. CTRL+P AND THE BROWSER'S PRINT MENU\n");
+// ======================================================================
+{
+  const w = makeWorld(scriptSrc, { query: () => FRESH(), mutation: () => ({ ok: true, at: "2026-10-13T18:47:00.000Z" }) });
+  await w.app.loadReflectionList();
+  const keyHandler = (w.docListeners.keydown || [])[0];
+  let prevented = 0;
+  const press = (k, mods) => keyHandler && keyHandler({ key: k, ctrlKey: true, metaKey: false, altKey: false, shiftKey: false, ...mods, preventDefault() { prevented++; } });
+  w.calls.length = 0;
+  press("p");
+  await new Promise((r) => setImmediate(r));
+  check("Ctrl+P is intercepted on this screen: it goes through the Print button's fresh read and recorded print",
+    prevented === 1 && w.calls[0]?.path === "reflectionList:listForDay" && w.calls.some((c) => c.path === "reflectionList:recordPrint") && w.prints.length === 1,
+    J({ prevented, calls: w.calls.map((c) => c.path) }));
+  w.fire("afterprint"); w.app.closeReflectionSheet();
+  press("p", { ctrlKey: false, metaKey: true });
+  await new Promise((r) => setImmediate(r));
+  check("...and so is Cmd+P", prevented === 2 && w.prints.length === 2);
+  w.fire("afterprint"); w.app.closeReflectionSheet();
+  w.setOnScreen(false);
+  press("p");
+  check("...but not on any other screen, where Ctrl+P is the browser's", prevented === 2);
+  w.setOnScreen(true);
+
+  // The browser's own menu: no time to read, so it prints what is on screen.
+  w.app.setLoadedAt(Date.now() - 5000);
+  w.fire("beforeprint");
+  const fresh = w.sheet()?.innerHTML || "";
+  check("Print from the browser menu draws the list on screen at once, says it is not recorded, and is NOT stale when under a minute old",
+    !!w.sheet() && /This print is not recorded: use the Print button\./.test(fresh) && !/STALE/.test(fresh) && w.document.body.classList.contains("wc-printing"));
+  w.fire("afterprint");
+  check("...and the sheet it drew goes when the print dialog closes", w.sheet() === null && !w.document.body.classList.contains("wc-printing"));
+  w.app.setLoadedAt(Date.now() - 61000);
+  w.fire("beforeprint");
+  const stale = w.sheet()?.innerHTML || "";
+  const pages = sheetPages(stale);
+  check("the STALE banner: an answer over 60 s old says 'STALE: as of 11:46:10 AM. Use the Print button' on every page",
+    pages.length === 2 && pages.every((p) => /STALE: as of 11:46:10 AM\. Use the Print button/.test(p)), J(pages.map((p) => (/rr-watermark">([^<]*)</.exec(p) || [])[1])));
+  w.fire("afterprint");
+}
+
+// ======================================================================
+console.log("\n9. THE ROOM'S ATTENDANCE ON SCREEN\n");
+// ======================================================================
+{
+  const answer = FRESH();
+  answer.room = { tick: true, closeRoom: false, why: null, doneAt: null, doneBy: null, closed: null, notHere: 0 };
+  const sent = [];
+  const w = makeWorld(scriptSrc, { query: () => answer, mutation: (a) => { sent.push(a); return { ok: true }; } });
+  await w.app.loadReflectionList();
+  const html = w.fixed.rrList.innerHTML;
+  check("while the room's attendance is open, each row has a Not here box (screen only) and there is an Attendance done button",
+    /<th>Not here<\/th>/.test(html) && (html.match(/data-rr-unit="/g) || []).length === 5 && /onclick="reflectionAttendanceDone\(true\)">Attendance done</.test(html)
+      && !/Room did not run today/.test(html), html.slice(0, 200));
+  w.app.printReflectionList && (await w.app.printReflectionList());
+  check("...never on paper: the printed list has the empty Served box instead", !/Not here/.test(w.prints[0]?.sheet || "x"));
+  await w.app.markReflectionNotHere("reflectionUnits:9", true);
+  await w.app.reflectionAttendanceDone(true);
+  check("a tick and Attendance done go to the server as they are", J(sent.slice(-2)) === J([{ unitId: "reflectionUnits:9", notHere: true }, { day: "2026-10-13", done: true }]), J(sent));
 }
 
 console.log(`\n${pass} passed, ${fail} failed\n`);

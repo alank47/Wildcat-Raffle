@@ -1914,7 +1914,11 @@ export default defineSchema({
     roomAttendanceDoneAt: v.optional(v.string()),
     roomAttendanceDoneBy: v.optional(v.string()),
     roomClosed: v.optional(v.object({ by: v.string(), at: v.string(), reason: v.string() })),
-    fallbackReview: v.optional(v.object({ reason: v.string(), at: v.string() })),
+    fallbackReview: v.optional(v.object({
+      reason: v.string(), at: v.string(),
+      // An admin's acknowledgement in the review queue (build step 7b).
+      resolvedBy: v.optional(v.string()), resolvedAt: v.optional(v.string()), resolutionReason: v.optional(v.string()),
+    })),
     rowCounts: v.optional(v.record(v.string(), v.number())),
     ptBlankSections: v.optional(v.number()),
     heldCount: v.optional(v.number()),

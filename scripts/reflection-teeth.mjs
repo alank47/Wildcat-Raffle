@@ -256,6 +256,39 @@ const CASES = [
     from: "  if (row && (row as any).reflectionList && norm(row.role) !== norm(newRole)) {",
     to: "  if (false) {",
     mustFail: "the grant is cleared on a role change, end date and all" },
+
+  // ---- step 7b: the admin review screen
+  { guard: "let anyone who can read the list resolve review items", file: "convex/reflectionRoom.ts", test: READER_TEST,
+    from: "    if (!canAdminReflection(staff)) return { ok: false as const, reason: ADMIN_REFUSED };\n    const now = new Date().toISOString();\n    const why",
+    to: "    if (false) return { ok: false as const, reason: ADMIN_REFUSED };\n    const now = new Date().toISOString();\n    const why",
+    mustFail: "a resolve by a grant holder is refused, and changes nothing" },
+  { guard: "the reader sends a resolved collision back to review", file: SERVER, test: READER_TEST,
+    from: " && !existing.resolvedAt) {", to: ") {",
+    mustFail: "the reader respects the decision: the resolved collision is not sent back to review" },
+
+  // ---- step 8b: room attendance, slips, print safety, the admin buttons
+  { guard: "let the room tick Not here after the next list has claimed the carries", file: RULES, test: READER_TEST,
+    from: "  if (input.nextListMadeAt) {", to: "  if (false) {",
+    mustFail: "a tick after the next freeze is refused: the next list has claimed the carries" },
+  { guard: "count a 'room did not run' carry toward the carry limit", file: RULES, test: READER_TEST,
+    from: "tag: `Carried over from ${from} (room closed)`, countsTowardLimit: false", to: "tag: `Carried over from ${from} (room closed)`, countsTowardLimit: true",
+    mustFail: "Room did not run carries everything with no carryCount increase" },
+  { guard: "Read PowerSchool now ignores the lease (two readers at once)", file: "convex/reflectionRoom.ts", test: READER_TEST,
+    from: "    if (lease && Date.parse(lease.expiresAt) > now) {", to: "    if (false) {",
+    mustFail: "...a second press while that read holds the lease is refused (never two readers)" },
+  { guard: "enable the slips button before the list is final", file: "script.js", test: PRINT_TEST,
+    from: "if (slips) slips.disabled = !listView || !res || res.frozen !== true || !liveRows.length || _rrPrinting;",
+    to: "if (slips) slips.disabled = !listView || !res || !liveRows.length || _rrPrinting;",
+    mustFail: "slips are disabled while the list is not final: the button is off, and pressing it prints and records nothing" },
+  { guard: "print slips from a list that is not final", file: "script.js", test: PRINT_TEST,
+    from: "                if (answer.frozen !== true) {", to: "                if (false) {",
+    mustFail: "slips are disabled while the list is not final: the button is off, and pressing it prints and records nothing" },
+  { guard: "stop intercepting Ctrl+P on the list", file: "script.js", test: PRINT_TEST,
+    from: "        document.addEventListener('keydown', reflectionPrintKeys, true);\n", to: "",
+    mustFail: "Ctrl+P is intercepted on this screen: it goes through the Print button's fresh read and recorded print" },
+  { guard: "drop the STALE mark from a menu print of an old answer", file: "script.js", test: PRINT_TEST,
+    from: "                if (o.stale) marks.push('STALE: as of ' + o.stale + '. Use the Print button');", to: "",
+    mustFail: "the STALE banner: an answer over 60 s old says 'STALE: as of 11:46:10 AM. Use the Print button' on every page" },
 ];
 
 // A builder's shortcut, never set in npm test: REFLECTION_TEETH_ONLY=<text>

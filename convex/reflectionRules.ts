@@ -1976,6 +1976,52 @@ export function carryVerdict(input: {
 }
 
 /**
+ * The class right before lunch, for a pull slip addressed to it (the
+ * per-division setting slipAddresseeByDivision = "before-lunch"; the owner's
+ * open question for MS, 10/8). It is the student's own class slot that comes
+ * last before Lunch & Power-Up in the day's order and met that day; with no
+ * day's counts, the last one they are enrolled in. Null when there is none.
+ */
+export function beforeLunchClass(snap: RosterSnap | null | undefined, rowCounts: Record<string, number> | null | undefined):
+  { slot: number; label: string; teacher: string | null } | null {
+  if (!snap) return null;
+  const enrolled = new Set(snap.enrolledSlots ?? []);
+  const counts = rowCounts ?? null;
+  const before = SLOT_ORDER.filter((x) => CLASS_SLOTS.includes(x) && orderOf(x) < orderOf(8) && enrolled.has(x)
+    && (!counts || (counts[String(x)] ?? 0) >= MET_MIN_ROWS));
+  const slot = before.pop();
+  if (slot === undefined) return null;
+  return { slot, label: slotLabel(slot), teacher: snap.teacherBySlot?.[String(slot)] ?? null };
+}
+
+/**
+ * WHEN THE ROOM'S OWN ATTENDANCE MAY BE TAKEN for the list of day D (build
+ * spec 3.8, step 8b): a Not here tick and "Attendance done" from Lunch &
+ * Power-Up start on D -- nobody can be not-here before the room has run --
+ * until the next list is made, because that freeze CLAIMS the carries, and
+ * after that a tick would change a list already on paper. "Room did not run
+ * today" may be pressed as soon as D's list is made (the room may be known to
+ * be closed before lunch), until the same next freeze. A day with no list
+ * has nothing to take attendance for.
+ */
+export function roomWindow(input: {
+  nowIso: string; listMadeAt: string | null | undefined; powerUpMs: number | null; nextListMadeAt: string | null | undefined; tz: string;
+}): { tick: boolean; closeRoom: boolean; why: string | null } {
+  if (!input.listMadeAt) return { tick: false, closeRoom: false, why: "No list was made for this day." };
+  if (input.nextListMadeAt) {
+    return {
+      tick: false, closeRoom: false,
+      why: `The next list was made at ${clockText(input.nextListMadeAt, input.tz, true)} and has claimed this day's carries, so its room attendance is closed.`,
+    };
+  }
+  const now = Date.parse(input.nowIso);
+  if (input.powerUpMs !== null && now < input.powerUpMs) {
+    return { tick: false, closeRoom: true, why: `Room attendance opens at Lunch & Power-Up (${clockText(new Date(input.powerUpMs).toISOString(), input.tz, true)}).` };
+  }
+  return { tick: true, closeRoom: true, why: null };
+}
+
+/**
  * In live mode, a day whose carries PowerSchool had to decide (the room
  * recorded nothing) also raises one day-level review item, so somebody
  * notices the room is not taking attendance.

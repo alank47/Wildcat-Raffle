@@ -83,6 +83,7 @@ import type * as referralPingRules from "../referralPingRules.js";
 import type * as reflection from "../reflection.js";
 import type * as reflectionList from "../reflectionList.js";
 import type * as reflectionRead from "../reflectionRead.js";
+import type * as reflectionRoom from "../reflectionRoom.js";
 import type * as reflectionRules from "../reflectionRules.js";
 import type * as restrictedPolicy from "../restrictedPolicy.js";
 import type * as roleChangeRules from "../roleChangeRules.js";
@@ -199,6 +200,7 @@ declare const fullApi: ApiFromModules<{
   reflection: typeof reflection;
   reflectionList: typeof reflectionList;
   reflectionRead: typeof reflectionRead;
+  reflectionRoom: typeof reflectionRoom;
   reflectionRules: typeof reflectionRules;
   restrictedPolicy: typeof restrictedPolicy;
   roleChangeRules: typeof roleChangeRules;

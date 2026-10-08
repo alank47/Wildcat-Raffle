@@ -10140,6 +10140,26 @@ body:has(.wc-preview-bar) .app-content { padding-bottom: 64px; }
 .rr-prints h4 { margin: 0 0 4px; font-size: 14px; }
 .rr-prints ul { margin: 0; padding-left: 18px; }
 .print-table th.rr-watermark { background: #FFF1D6; color: #7A4B00; font-size: 13px; letter-spacing: .06em; text-align: center; }
+.rr-over { font-size: 11.5px; font-weight: 700; padding: 2px 8px; border-radius: 999px; background: #FDECEC; color: #8A1C1C; }
+.rr-room-bar, .rr-admin-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin: 0 0 12px; padding: 8px 12px;
+    border: 1px solid #DCE3EC; border-radius: 8px; background: #F6F8FB; font-size: 14px; color: #334155; }
+.rr-room-buttons { display: inline-flex; gap: 8px; margin-left: auto; }
+.rr-nothere { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; white-space: nowrap; }
+.rr-grants { margin-top: 10px; font-size: 13px; color: #475569; }
+.rr-grants h4 { margin: 0 0 4px; font-size: 14px; }
+.rr-grants ul { margin: 0; padding-left: 18px; }
+.rr-review tr.rr-overdue td { background: #FDF3F2; }
+.rr-review-actions { white-space: nowrap; }
+.rr-review-actions button + button { margin-left: 6px; }
+.rr-slips-page h2 { margin: 0 0 8px; font-size: 16px; }
+.rr-slip-mark { margin: 0 0 6px; font-weight: 700; color: #7A4B00; }
+/* One slip per teacher, a dashed CUT LINE under each; several to a page. */
+.rr-slip { border-bottom: 1px dashed #64748b; padding: 10px 0 12px; break-inside: avoid; page-break-inside: avoid; }
+.rr-slip-out { font-size: 18px; font-weight: 700; padding-bottom: 8px; margin-bottom: 8px; border-bottom: 1px dotted #CBD5E1; }
+.rr-slip-extra { font-size: 13px; font-weight: 600; color: #1F4E79; }
+.rr-slip-in { width: 100%; border-collapse: collapse; font-size: 14px; table-layout: fixed; }
+.rr-slip-in td { padding: 3px 8px 3px 0; }
+.rr-release-list { margin: 4px 0 12px; padding-left: 18px; }
 .rr-print-page { position: relative; }
 .rr-print-page.rr-marked::before {
     content: attr(data-rr-mark);

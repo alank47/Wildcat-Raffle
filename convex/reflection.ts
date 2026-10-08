@@ -206,7 +206,7 @@ export const rosterStatus = internalQuery({
 
 type LeaseValue = { runId: string; kind: string; key: string; date: string; startedAt: string; expiresAt: string };
 
-async function getLease(ctx: Ctx): Promise<LeaseValue | null> {
+export async function getLease(ctx: Ctx): Promise<LeaseValue | null> {
   const value = await readState(ctx, LEASE_KEY);
   return value && typeof value === "object" && typeof value.runId === "string" ? (value as LeaseValue) : null;
 }
@@ -219,7 +219,7 @@ export async function getDay(ctx: Ctx, date: string): Promise<Doc<"reflectionDay
   return ctx.db.query("reflectionDays").withIndex("by_date", (q) => q.eq("date", date)).first();
 }
 
-async function ensureDay(ctx: MutationCtx, date: string, now: string): Promise<Doc<"reflectionDays">> {
+export async function ensureDay(ctx: MutationCtx, date: string, now: string): Promise<Doc<"reflectionDays">> {
   const row = await getDay(ctx, date);
   if (row) return row;
   const id = await ctx.db.insert("reflectionDays", { date, readsDone: [], updatedAt: now });
@@ -293,7 +293,7 @@ const addDays = (iso: string, n: number) =>
   new Date(Date.parse(iso + "T00:00:00Z") + n * 86400000).toISOString().slice(0, 10);
 
 /** Append-only record of a human act (or a command-line one). Never appAuditLog: every browser downloads that. */
-async function audit(ctx: MutationCtx, row: {
+export async function audit(ctx: MutationCtx, row: {
   byEmail: string; action: string; day?: string; unitId?: Id<"reflectionUnits">; tardyId?: Id<"reflectionTardies">; reason?: string;
 }): Promise<void> {
   await ctx.db.insert("reflectionAudit", { at: new Date().toISOString(), ...row });
@@ -442,6 +442,28 @@ async function freezeDay(ctx: MutationCtx, f: {
 // ===========================================================================
 
 /**
+ * BOOK A READ, TOGETHER WITH THE LEASE, in the caller's transaction: the tick,
+ * and "Read PowerSchool now" (reflectionRoom.readNow). Because the lease is
+ * written in the same transaction that schedules the reader, two callers can
+ * never start two readers; applyRead writes only for the run that still
+ * holds it.
+ */
+export async function startRead(ctx: MutationCtx, r: {
+  key: string; kind: string; date: string; nowIso: string; leaseUntil: string; freeze: "closing" | "late" | null;
+  reads: { maps: boolean; roster: boolean; today: boolean; lookback: boolean; sweep: boolean; final: boolean };
+}): Promise<string> {
+  const runId = `rr_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+  await writeState(ctx, LEASE_KEY, {
+    runId, kind: r.kind, key: r.key, date: r.date, startedAt: r.nowIso, expiresAt: r.leaseUntil,
+  } satisfies LeaseValue);
+  await ensureDay(ctx, r.date, r.nowIso);
+  await ctx.scheduler.runAfter(0, internal.reflectionRead.read, {
+    runId, key: r.key, kind: r.kind, date: r.date, startedAt: r.nowIso, reads: r.reads, freeze: r.freeze,
+  });
+  return runId;
+}
+
+/**
  * Every 5 minutes, 14:00-23:55 UTC (crons.ts). It never trusts the hour the
  * cron fired at: it turns NOW into the Los Angeles wall clock and asks
  * reflectionRules.decideTick for the one thing to do.
@@ -479,13 +501,8 @@ export const tick = internalMutation({
       return { do: "retry", why: decision.why };
     }
     if (decision.do === "read") {
-      const runId = `rr_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
-      await writeState(ctx, LEASE_KEY, {
-        runId, kind: decision.kind, key: decision.key, date, startedAt: nowIso, expiresAt: decision.leaseUntil,
-      } satisfies LeaseValue);
-      await ensureDay(ctx, date, nowIso);
-      await ctx.scheduler.runAfter(0, internal.reflectionRead.read, {
-        runId, key: decision.key, kind: decision.kind, date, startedAt: nowIso, reads: decision.reads, freeze: decision.freeze,
+      await startRead(ctx, {
+        key: decision.key, kind: decision.kind, date, nowIso, reads: decision.reads, freeze: decision.freeze, leaseUntil: decision.leaseUntil,
       });
       return { do: "read", key: decision.key };
     }
@@ -711,7 +728,9 @@ async function decideCarries(ctx: MutationCtx, c: {
   });
   await ctx.db.patch(dRow._id, {
     carriesDecidedAt: c.now,
-    fallbackReview: fr ? { reason: fr.reason, at: dRow.fallbackReview?.at ?? c.now } : undefined,
+    // Re-decided on every read of the date; an admin's acknowledgement of the
+    // item (reflectionRoom.resolveReview) is kept with it.
+    fallbackReview: fr ? { ...(dRow.fallbackReview ?? {}), reason: fr.reason, at: dRow.fallbackReview?.at ?? c.now } : undefined,
     updatedAt: c.now,
   });
   return out;
@@ -902,7 +921,9 @@ export const applyRead = internalMutation({
         const reason = "PowerSchool has 2 marks for this period";
         if (existing) {
           handled.add(existing._id);
-          if (existing.state !== "review" && existing.state !== "cleared") {
+          // An admin's review decision stands: a collision already resolved
+          // ("Add to next list") is not sent back to the queue.
+          if (existing.state !== "review" && existing.state !== "cleared" && !existing.resolvedAt) {
             await ctx.db.patch(existing._id, { state: "review", reason, psRowIds: col.psRowIds });
             counts.review++;
           }
@@ -976,6 +997,9 @@ export const applyRead = internalMutation({
         const candByKey = new Map(candidates.map((c) => [c.key, c]));
         for (const t of stored) {
           if (handled.has(t._id)) continue;
+          // Added to a list by an admin's review decision: not re-judged
+          // (a code change above still clears it -- that is new evidence).
+          if (t.resolvedAt) continue;
           const c = candByKey.get(tardyKey(t.studentNumber, t.attDate, t.periodId));
           if (!c) continue;
           if (t.state === "cleared") {

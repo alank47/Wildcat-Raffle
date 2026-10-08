@@ -2274,6 +2274,23 @@
                         <div id="attRebuildHealth" class="filter-showing" style="margin-top: 4px;">Loading&hellip;</div>
                     </div>
 
+                    <!-- THE REFLECTION ROOM LIST (2026-10-08). Read only: whether
+                         today's list was made, how, and from which read; the
+                         review queue's size and age; the roster snapshot; the
+                         last sync's roster guard. Counts and times, never a
+                         student. Nothing to press. -->
+                    <div class="wc-card panel-card" style="margin: 0 0 24px 0;">
+                        <div class="panel-head">
+                            <span class="panel-icon">&#128203;</span>
+                            <h3>Reflection Room list</h3>
+                        </div>
+                        <p class="panel-hint" style="margin: 0 0 14px 0;">
+                            Reads PowerSchool through the morning and makes each school day's lunch detention list
+                            at the close (11:45, or 11:20 on Wednesdays and Minimum days).
+                        </p>
+                        <div id="rrHealth" class="filter-showing" style="margin-top: 4px;">Loading&hellip;</div>
+                    </div>
+
                     <!-- Kickboard Integration Settings -->
                     <div style="margin: 0 0 30px 0; padding: 20px; background: #e8f5e9; border: 2px solid #4CAF50; border-radius: 8px;">
                         <h3 style="color: #2e7d32; margin-bottom: 15px;">📧 Kickboard Email Reports</h3>
@@ -4008,6 +4025,14 @@
                         <div class="wc-att-controls">
                             <h3 style="color: #2F67A7; margin: 0;">Reflection Room</h3>
                             <div class="wc-att-controls-end">
+                                <!-- Changes since YOUR last print, as an amendment
+                                     sheet; shown only when there are some. -->
+                                <button type="button" class="btn-secondary" id="rrChangesBtn" hidden
+                                        onclick="printReflectionChanges()">Print changes only</button>
+                                <!-- An optional extra, never on the main path (owner,
+                                     10/8): enabled only once the list is FINAL. -->
+                                <button type="button" class="btn-secondary" id="rrSlipsBtn" disabled
+                                        onclick="printReflectionSlips()">Print slips</button>
                                 <button type="button" class="btn-primary" id="rrPrintBtn"
                                         onclick="printReflectionList()"><svg class="wc-icon" aria-hidden="true" focusable="false"><use href="#wci-printer"></use></svg> Print list</button>
                             </div>
@@ -4021,6 +4046,9 @@
                                         onclick="setReflectionView('next')">Tomorrow so far</button>
                                 <button type="button" class="analytics-tab" data-rrview="past"
                                         onclick="setReflectionView('past')">Past day</button>
+                                <!-- The roles only (the server refuses everyone else). -->
+                                <button type="button" class="analytics-tab" data-rrview="review" id="rrReviewPill" hidden
+                                        onclick="setReflectionView('review')">Review</button>
                             </div>
                             <div class="wc-att-controls-end">
                                 <label class="rr-past" id="rrPastWrap" hidden>Day
