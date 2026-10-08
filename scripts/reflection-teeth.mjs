@@ -465,6 +465,10 @@ const CASES = [
   { guard: "a carry does not record the age of the detention it carries", file: SERVER, test: "reflection-weeks.test.mjs",
     from: "recordedAt: c.now, originAt: u.originAt ?? u.recordedAt, state:", to: "recordedAt: c.now, state:",
     mustFail: "O Wed 11/18 OW: lines, tags, carry count and what became of it" },
+  { guard: "the day's 'held' banner counts an off division's held tardies", file: SERVER, test: READER_TEST,
+    from: "      .filter((t) => !t.division || settings.modeByDivision[t.division] !== \"off\");",
+    to: "      .filter(() => true);",
+    mustFail: "...a held HS tardy waits as held, and the day's 'held' banner, about the lists being made, does not count it" },
 ];
 
 // A builder's shortcut, never set in npm test: REFLECTION_TEETH_ONLY=<text>

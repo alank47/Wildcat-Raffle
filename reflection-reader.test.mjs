@@ -1551,7 +1551,8 @@ try {
     const MON = "2026-11-16", TUE = "2026-11-17", WED = "2026-11-18";
     const hs = { grade: 10, sections: HS };
     const w = await world({
-      students: { HM: hs, HT: hs, MT: { grade: 7, sections: MS } },
+      // HZ's Promise Time section never takes attendance: held until after school.
+      students: { HM: hs, HT: hs, HZ: { grade: 10, sections: { ...HS, 1: "PT-Z" } }, MT: { grade: 7, sections: MS } },
       days: [{ date: MON, slots: MON_SLOTS }, { date: TUE, slots: TUE_SLOTS }, { date: WED, slots: WED_SLOTS }],
       settings: { modeByDivision: { ms: "shadow", hs: "off" }, countFromDateByDivision: { ms: "2026-10-21", hs: null } },
     });
@@ -1566,13 +1567,15 @@ try {
       [la(TUE, "08:00"), async () => {
         w.rt.signIn({ issuer: STAFF_ISSUER, email: "pbis@school.test" });
         logged = await w.rt.run("uniformViolations.log", { studentNumber: "UH", loanerProvided: false, attemptId: "uh-tue", observedAt: Date.parse(la(TUE, "08:00")) });
-        w.mark(TUE, "HT", 3, "T"); w.mark(TUE, "MT", 3, "T");
+        w.mark(TUE, "HT", 3, "T"); w.mark(TUE, "MT", 3, "T"); w.mark(TUE, "HZ", 3, "T");
       }],
     ]);
     const uh = () => w.store.rows("uniformViolations").find((x) => x.studentNumber === "UH");
     check("HS off: MS's list is made, and leaves HS's tardy and uniform entry waiting, neither listed nor stamped before-start",
       logged?.ok && w.day(TUE).frozenAt && J(w.listed(TUE)) === J(["MT"]) && w.tardies("HT")[0]?.state === "countable" && !w.tardies("HT")[0].unitId
         && !uh().unitId && !uh().reflectionState, J({ listed: w.listed(TUE), ht: w.tardies("HT")[0]?.state, uh: uh()?.reflectionState }));
+    check("...a held HS tardy waits as held, and the day's 'held' banner, about the lists being made, does not count it",
+      w.tardies("HZ")[0]?.state === "held" && w.day(TUE).heldCount === 0, J({ hz: w.tardies("HZ")[0]?.state, heldCount: w.day(TUE).heldCount }));
     const monFull = w.fake.log.slice(logAtTue).filter((l) => l.kind === "table" && l.q === `schoolid==${SCHOOL};yearid==${YEAR};att_date==${MON}`);
     check("...and Monday's HS tardy, waiting while HS is off, costs no full re-read of Monday at Tuesday's reads",
       w.tardies("HM")[0]?.state === "countable" && monFull.length === 0, J({ hm: w.tardies("HM")[0]?.state, fullReads: monFull.length }));
@@ -1589,8 +1592,10 @@ try {
     check("HS switched on at 13:00, counting from today: Monday's HS tardy, from before, is parked by the switch",
       on?.ok && w.tardies("HM")[0]?.state === "before-start", J({ on, hm: w.tardies("HM")[0]?.state }));
     await drive(w, la(WED, "07:30"), la(WED, "11:25"));
-    check("...and today's HS tardy and uniform entry are on Wednesday's list, Monday's is not",
-      J(w.listed(WED)) === J(["HT", "UH"]) && uh().reflectionState === "listed", J({ wed: w.listed(WED), uh: uh()?.reflectionState }));
+    check("...and today's HS tardies and uniform entry are on Wednesday's list, Monday's is not; the hold, released after school, says so",
+      J(w.listed(WED)) === J(["HT", "HZ", "UH"]) && uh().reflectionState === "listed"
+        && J(w.units("HZ").find((u) => u.serveDay === WED)?.tags) === J(["Held for attendance (Tue 11/17 P2)"]),
+      J({ wed: w.listed(WED), uh: uh()?.reflectionState, hz: w.units("HZ").find((u) => u.serveDay === WED)?.tags }));
   }
 
   // ==========================================================================

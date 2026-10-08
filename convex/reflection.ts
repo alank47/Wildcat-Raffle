@@ -1239,9 +1239,12 @@ export const applyRead = internalMutation({
       await decideFor(d);
     }
 
-    // ---- 8. Today's hold count, for the banner.
-    const held = await ctx.db.query("reflectionTardies")
-      .withIndex("by_state_attDate", (q) => q.eq("state", "held").eq("attDate", today)).collect();
+    // ---- 8. Today's hold count, for the banner: a division switched off
+    // keeps its tardies as they read, held ones too, but no list is waiting
+    // on them.
+    const held = (await ctx.db.query("reflectionTardies")
+      .withIndex("by_state_attDate", (q) => q.eq("state", "held").eq("attDate", today)).collect())
+      .filter((t) => !t.division || settings.modeByDivision[t.division] !== "off");
     await ctx.db.patch(day._id, { heldCount: held.length, updatedAt: now });
 
     // Counts only, as attendanceDays logs.
