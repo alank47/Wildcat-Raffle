@@ -461,6 +461,54 @@ export function rosterSnapshotVerdict(input: {
   return { take: true, reason: "" };
 }
 
+/** What the list knows about its roster snapshot (appState "reflection:roster"). */
+export type RosterMeta = {
+  snapAt?: string | null;
+  snapDay?: string | null;
+  rosterSyncedAt?: string | null;
+  studentCount?: number | null;
+  termId?: string | null;
+  termEnd?: string | null;
+  termName?: string | null;
+  lastRefusal?: { at: string; reason: string } | null;
+};
+
+const monthDay = (dateKey: string) => {
+  const d = new Date(dateKey + "T12:00:00Z");
+  return `${d.getUTCMonth() + 1}/${d.getUTCDate()}`;
+};
+
+/**
+ * "Power-Up teachers from the 10/13 roster": shown whenever the list is not
+ * working from today's snapshot (today's could not be taken, so yesterday's or
+ * older is in use). Null when the snapshot is today's.
+ */
+export function rosterAgeBanner(meta: RosterMeta | null | undefined, today: string): string | null {
+  if (!meta || !meta.snapDay) return "No roster snapshot yet, so no Power-Up teacher can be shown.";
+  if (meta.snapDay >= today) return null;
+  return `Power-Up teachers from the ${monthDay(meta.snapDay)} roster.`;
+}
+
+/**
+ * THE SEMESTER CHANGE (go-live requirement). PS_TERM_ID is pinned to one term
+ * (S1, 3601, ends 12/18; S2 starts 1/11). Until somebody switches it, the sync
+ * keeps reading S1's sections after S2 has begun, and every Power-Up teacher on
+ * the list is S1's. So from the day after the snapshot term's last day, for as
+ * long as PS_TERM_ID still names that same term, the list and the admin
+ * dashboard say so. Nothing is shown when the term's end is unknown: the
+ * January runbook step and the developer's calendar reminder cover that.
+ */
+export function termBanner(input: {
+  today: string; termEnd?: string | null; termName?: string | null;
+  snapshotTermId?: string | null; currentTermId?: string | null;
+}): string | null {
+  if (!isDay(input.termEnd) || !(input.today > input.termEnd)) return null;
+  if (!input.snapshotTermId || String(input.currentTermId ?? "") !== String(input.snapshotTermId)) return null;
+  const name = input.termName ? `${input.termName} roster` : "The roster's term";
+  return `${name} ended ${monthDay(input.termEnd)}: Power-Up teachers may be out of date until `
+    + `PS_TERM_ID is switched to the next term.`;
+}
+
 // ===========================================================================
 // 3.2 One day's attendance, summarised
 // ===========================================================================

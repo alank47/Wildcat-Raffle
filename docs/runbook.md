@@ -109,3 +109,141 @@ Never paste a secret into a file, a commit, or a chat. The repo is public.
 | A teacher sees no roster | Their Entra email must match `psRoster.teacherEmail`. Check `npx convex run seed:staffAuthReadiness '{}'`. |
 | A student cannot sign in | Expected. Student email does not exist in the SIS at all. |
 | Balances look wrong | Not the sync. Run `npm run drift`. |
+
+## Reflection Room list (lunch detentions)
+
+Added 2026-10-08 (build spec revision 2, with the owner's answers of
+10/8). The list says who serves a Reflection Room lunch detention each school
+day: unexcused tardies (`T`) between class periods, plus uniform entries. It
+is **switched off** until somebody turns it on from the command line, and a
+missing settings row means off.
+
+### What runs, and when
+
+| | |
+|---|---|
+| Cron | `reflection tick`, every 5 minutes, 14:00-23:55 UTC (`convex/crons.ts`) |
+| What it calls | `reflection:tick`, which books `reflectionRead:read` when a read is due |
+| Local times | Decided by the handler on the Los Angeles clock, never by the UTC hour the cron fired |
+| While off | Both divisions off: the tick reads one settings row and stops. Nothing is read from PowerSchool |
+
+The day's reads (LA time): opening 07:30 (also takes the roster snapshot),
+08:30, 09:30, 10:30, four pre-close reads, then the **closing read** from the
+close (11:45 regular, 11:20 Wednesday and Minimum, 11:50 Stack), after-close
+13:00/14:00/15:00 and after-school 15:45. The list is made by the first closing
+read that is confirmed (two PowerSchool reads in a row that agree on every
+row). If none worked by the ready time (12:00, or 11:30 Wednesday and Minimum)
+it is made from the last good read ("fallback"). From 10 minutes before Lunch
+& Power-Up (12:21 / 11:32 / 12:12) nothing can make it: the day shows "No list
+today" and everything moves to the next school day's list by itself.
+
+### Switching it on, per division
+
+Every command names the deployment, because `.env.local` points at production.
+
+```
+# Shadow pilot: lists are made and watermarked PILOT, nobody is pulled
+npx convex run --prod reflection:setMode '{"division":"ms","mode":"shadow","countFromDate":"2026-10-21"}'
+npx convex run --prod reflection:setMode '{"division":"hs","mode":"shadow","countFromDate":"2026-10-21"}'
+
+# Live, one division at a time (HS stays in shadow as the control)
+npx convex run --prod reflection:setMode '{"division":"ms","mode":"live","countFromDate":"2026-11-09"}'
+
+# Rollback: no deploy needed, the tables stay for review
+npx convex run --prod reflection:setMode '{"division":"ms","mode":"off"}'
+```
+
+`countFromDate` defaults to the next school day. Violations dated before it
+are stored as `before-start` and never listed, so switching on (or back on
+after a pause) never floods the first list. Going from shadow to live sets a
+new date: pending shadow items before it become `before-start`, and shadow
+carries do not move into live. Every mode change is written to
+`reflectionAudit`.
+
+Other settings (close minutes, `lateEntryLists`, `maxCarries`, counting
+ditching or Power-Up tardies, `holdFirstClassOnPtNoRow`, capacity) are changed
+the same way, never from a screen in v1:
+
+```
+npx convex run --prod reflection:saveSettings '{"holdFirstClassOnPtNoRow":true}'
+npx convex run --prod reflection:status '{}'          # today's state: reads done, last good read, list made?
+npx convex run --prod reflection:rosterStatus '{}'    # snapshot age and the term banner
+```
+
+### Deploy rules while it is on
+
+There is one production Convex deployment, so **every** server deploy ships
+the reflection functions.
+
+- No server deploys at 13:25-14:00 or 19:25-20:00 UTC (standing rule).
+- **No Convex deploys of any kind on school days from 20 minutes before the
+  close until Lunch & Power-Up starts** (LA): regular 11:25-12:31, Wednesday
+  and Minimum 11:00-11:42, Stack 11:30-12:22.
+- **During the shadow pilot, the MS live week and the first whole-school
+  week:** no Convex deploys 07:00-12:30 LA and no site pushes 07:30-12:30 LA on
+  school days.
+- From 11/2, 19:25-20:00 UTC is 11:25-12:00 PST, inside the list window anyway.
+- Deploy in the evening, 17:00-21:00 LA. Before each deploy: fetch, read any
+  new commits from Lawrence, confirm `main..origin/main` is empty, deploy, push.
+  Never force.
+
+A read killed by a deploy holds its lease for at most 4 minutes; the next
+tick carries on.
+
+### The roster: snapshot and empty-clear guard
+
+- The list never reads `psRoster` live. The opening read copies it into
+  `reflectionRoster` once a day, and only when the sync that wrote it finished,
+  every row has one `syncedAt`, and the student count is at least 90% of the
+  last snapshot. Otherwise yesterday's stays and the list says "Power-Up
+  teachers from the 10/13 roster". `reflection:rosterStatus` shows the last
+  refusal and why.
+- **The PowerSchool sync no longer empties the roster on a bad read.** When
+  the roster query comes back empty, or with under half the rows already here,
+  the sync keeps the roster it has and records `rosterKept: true` and the
+  reason in its `syncRuns` summary (`syncLog:latest`). That is a signal to
+  investigate (a stale `PS_TERM_ID` is the likeliest cause), not a failure to
+  re-run: re-running gets the same answer until the cause is fixed.
+
+### January term switch (do this the first week of January)
+
+S1 ends 12/18 and S2 starts 1/11; `PS_TERM_ID` is pinned to S1 (3601). From
+12/19 the list and the admin dashboard say "S1 roster ended 12/18: Power-Up
+teachers may be out of date until PS_TERM_ID is switched to the next term".
+
+1. Switch `PS_TERM_ID` (and `PS_YEAR_TERM_ID` if the term changes) to S2 in
+   Convex: `npx convex env set --prod PS_TERM_ID <S2 id>`. Run a sync and
+   check `rosterKept` is false and the roster count is about the same.
+2. Review the Reflection Room grants: who holds one, and their end dates.
+3. Run the period-id check (period id minus 850 must still give the slot):
+   PowerSchool can renumber periods at a term switch.
+
+The developer also keeps a calendar reminder for the first week of January.
+
+### Daily runbook (for the school)
+
+- **Office or admin, ahead of time:** mark special days in Settings > Bell
+  Schedule: Minimum days, Stack / return-from-holiday days, no-school days.
+  Weekends and unmarked holidays need nothing: no PowerSchool attendance means
+  no list.
+- **Teachers:** sweep catches go into PowerSchool as `T`. **Power-Up
+  teachers:** a student pulled to the Reflection Room stays marked present.
+- **At the ready time (12:00, or 11:30 Wednesdays and Minimum days):** the
+  PBIS lead or the room supervisor prints the master list and the slips once
+  the screen says Final. A staff runner, never a student aide, delivers the
+  slips. If the screen says "No list today", nobody is pulled; everything moves
+  to the next list by itself.
+- **The room runs during lunch** (owner, 10/8): MS eats first, so MS serves in
+  the first half of Lunch & Power-Up (pulled at the block start) and HS in the
+  second half (pulled from Power-Up about 5 minutes before the swap). The list
+  prints MS first, then HS.
+- **At each sitting:** the room supervisor checks the screen once (it updates
+  itself: "Since your print: +2 added, release 1"), ticks Not here for anyone
+  missing, then presses Attendance done. A student at school who does not come
+  carries over exactly like an absent one.
+- **Daily, after the list:** the PBIS lead clears the review queue, so nothing
+  is older than 2 school days.
+- **If the room cannot run:** an admin presses "Room did not run today", and
+  everyone carries (it does not count toward the carry limit).
+- **If the app is down:** no detentions are served that day. Everything moves
+  to the next list by itself.

@@ -23,6 +23,7 @@ const RULES = "convex/reflectionRules.ts";
 const RULES_TEST = "convex/reflectionRules.test.mjs";
 const READ = "convex/reflectionRead.ts";
 const READ_TEST = "reflection-read.test.mjs";
+const GUARD_TEST = "roster-empty-guard.test.mjs";
 
 const CASES = [
   // ---- step 1: the rules (spec 6, step 1 table)
@@ -106,17 +107,32 @@ const CASES = [
   { guard: "accept a single steady read (drop the same-ids check)", file: READ, test: READ_TEST,
     from: "      if (steady && previous !== null && sameList(previous, ids)) {", to: "      if (steady) {",
     mustFail: "delete + insert mid-read is not taken" },
+
+  // ---- step 3: the empty-clear guard and the roster snapshot
+  { guard: "remove the empty-clear guard (clear and rewrite whatever was read)", file: "convex/sisAction.ts", test: GUARD_TEST,
+    from: "    if (rosterGuard.replace) {", to: "    if (true) {",
+    mustFail: "an empty roster read keeps the roster" },
+  { guard: "let the snapshot take rows from two different syncs", file: RULES, test: GUARD_TEST,
+    from: "  if (distinct.length !== 1) {", to: "  if (false) {",
+    mustFail: "the snapshot refuses mixed syncedAt (rows from two syncs)" },
+  { guard: "drop the snapshot's 90% check", file: RULES, test: GUARD_TEST,
+    from: "  if (prev > 0 && input.studentCount < 0.9 * prev) {", to: "  if (false) {",
+    mustFail: "the snapshot keeps the old one below 90% of the last snapshot's students" },
+  { guard: "copy a roster whose sync has not finished", file: "convex/reflection.ts", test: GUARD_TEST,
+    from: "    const syncOk = !!rosterSyncedAt && runs.some(", to: "    const syncOk = true || runs.some(",
+    mustFail: "a roster mid-rebuild (its sync has not finished) is never copied" },
 ];
 
 // ------------------------------------------------------------------ the copy
-const COPY_EXT = /\.(mjs|js|ts|json|html|css)$/;
+// .md for docs/runbook.md, which the roster guard's test reads.
+const COPY_EXT = /\.(mjs|js|ts|json|html|css|md)$/;
 function copyTree(from, to, top = true) {
   for (const name of readdirSync(from)) {
     if (name === "node_modules" || name === ".git" || name === ".claude" || name.startsWith(".")) continue;
     const src = join(from, name);
     const st = statSync(src);
     if (st.isDirectory()) {
-      if (top && !["convex", "scripts"].includes(name)) continue;
+      if (top && !["convex", "scripts", "docs"].includes(name)) continue;
       copyTree(src, join(to, name), false);
     } else if (COPY_EXT.test(name)) {
       cpSync(src, join(to, name));

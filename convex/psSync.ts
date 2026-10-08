@@ -1,4 +1,4 @@
-import { internalMutation } from "./_generated/server";
+import { internalMutation, internalQuery } from "./_generated/server";
 import { v } from "convex/values";
 import { normalizeEmail } from "./identityRules";
 
@@ -109,5 +109,19 @@ export const clearRoster = internalMutation({
     // batch means empty. A short batch can also mean a concurrent write.
     const more = await ctx.db.query("psRoster").take(1);
     return { deleted: rows.length, remaining: more.length > 0 ? "some" : "none" };
+  },
+});
+
+/**
+ * How many roster rows are here now, one page at a time: the empty-clear
+ * guard in sisAction.syncFromPowerSchool compares the new read with this
+ * before it clears anything. Paged because the table is bigger than one
+ * execution should read (see clearRoster above); the action adds the pages up.
+ */
+export const rosterCountPage = internalQuery({
+  args: { cursor: v.union(v.string(), v.null()) },
+  handler: async (ctx, { cursor }): Promise<{ n: number; isDone: boolean; continueCursor: string }> => {
+    const page = await ctx.db.query("psRoster").paginate({ numItems: 2000, cursor });
+    return { n: page.page.length, isDone: page.isDone, continueCursor: page.continueCursor };
   },
 });

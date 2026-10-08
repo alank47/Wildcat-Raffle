@@ -4,6 +4,7 @@ import { v } from "convex/values";
 import { primaryEmailByStudentNumber } from "./identityRules";
 import { attachStudentEmail } from "./rosterEmail";
 import { markedMissingButScored } from "./missingWorkRules";
+import { rosterReplaceVerdict } from "./rosterGuardRules";
 
 /**
  * Scheduled PowerSchool sync, run by Convex rather than by a laptop.
@@ -163,24 +164,46 @@ export const syncFromPowerSchool = internalAction({
     // psRoster.by_studentEmail answer anything.
     const rosterRows = attachStudentEmail(rosterRowsWithoutEmail, emailByNumber);
 
-    // Loop: one call deletes a batch, because the whole table no longer fits
-    // in a single execution's read budget. Bounded so a bug here cannot spin.
-    for (let pass = 0; pass < 20; pass++) {
-      const cleared: { deleted: number; remaining: string } =
-        await ctx.runMutation(internal.psSync.clearRoster, {});
-      if (cleared.remaining === "none") break;
+    // THE EMPTY-CLEAR GUARD (2026-10-08). The roster is a full replace, so a
+    // read that came back empty -- or under half the rows already here --
+    // would wipe every class list and schedule in the app, twice a day until
+    // somebody noticed. Count what is here first (paged: the table is bigger
+    // than one execution may read), and keep it unless the new read is
+    // believable. A kept roster is recorded in the run (rosterKept, and why),
+    // never silent. See rosterGuardRules.ts.
+    let rosterRowsBefore = 0;
+    let rosterCursor: string | null = null;
+    for (let page = 0; page < 50; page++) {
+      const counted: { n: number; isDone: boolean; continueCursor: string } =
+        await ctx.runQuery(internal.psSync.rosterCountPage, { cursor: rosterCursor });
+      rosterRowsBefore += counted.n;
+      if (counted.isDone) break;
+      rosterCursor = counted.continueCursor;
     }
+    const rosterGuard = rosterReplaceVerdict({ incomingRows: rosterRows.length, currentRows: rosterRowsBefore });
+    const rosterKept = !rosterGuard.replace;
+    const rosterKeptReason = rosterGuard.replace ? null : rosterGuard.reason;
+
     // upsertRoster already counted the rows it could not key, and the count was
     // thrown away. That is how "no student has a schedule" stayed invisible:
     // the signal existed and nothing carried it out to where anyone looks.
     // rosterMissingStudentEmail equal to rosterRows means the join is dead.
     let rosterMissingStudentEmail = 0;
-    for (let i = 0; i < rosterRows.length; i += 200) {
-      const res: { missingStudentEmail: number } = await ctx.runMutation(
-        internal.psSync.upsertRoster,
-        { syncedAt, rows: rosterRows.slice(i, i + 200) },
-      );
-      rosterMissingStudentEmail += res.missingStudentEmail;
+    if (rosterGuard.replace) {
+      // Loop: one call deletes a batch, because the whole table no longer fits
+      // in a single execution's read budget. Bounded so a bug here cannot spin.
+      for (let pass = 0; pass < 20; pass++) {
+        const cleared: { deleted: number; remaining: string } =
+          await ctx.runMutation(internal.psSync.clearRoster, {});
+        if (cleared.remaining === "none") break;
+      }
+      for (let i = 0; i < rosterRows.length; i += 200) {
+        const res: { missingStudentEmail: number } = await ctx.runMutation(
+          internal.psSync.upsertRoster,
+          { syncedAt, rows: rosterRows.slice(i, i + 200) },
+        );
+        rosterMissingStudentEmail += res.missingStudentEmail;
+      }
     }
 
     // ---- students: identity and enrollment ONLY, never balances ----
@@ -564,6 +587,12 @@ export const syncFromPowerSchool = internalAction({
       reason: reason ?? "scheduled",
       syncedAt,
       rosterRows: rosterRows.length,
+      // The empty-clear guard: true when this run's roster read was empty or
+      // under half of the rows already here, so it was NOT written and the
+      // roster in place was kept. rosterRowsBefore is what was there.
+      rosterKept,
+      rosterKeptReason,
+      rosterRowsBefore,
       // Roster rows nobody can look up by email. Equal to rosterRows means no
       // student can see a schedule at all; a small number is students whose
       // PowerSchool record has no address yet.

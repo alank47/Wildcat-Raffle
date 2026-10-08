@@ -1699,10 +1699,280 @@ export default defineSchema({
     voidedAt: v.optional(v.union(v.string(), v.null())),
     voidedByEmail: v.optional(v.union(v.string(), v.null())),
     voidReason: v.optional(v.union(v.string(), v.null())),
+
+    // THE REFLECTION ROOM (2026-10-08). Written only by the list's freeze (and,
+    // from build step 5, by the log itself), never by a browser.
+    //
+    // `unitId` is the detention this entry was put on, and it is ABSENT until a
+    // list claims the entry. The freeze finds what it may claim by reading
+    // by_unit for "no detention yet", in the same transaction that sets it, so
+    // one entry can never land on two lists or on none. `reflectionState` is
+    // "before-start" or "review" when the entry must not be listed at all.
+    // `observedAt` (epoch ms: when the adult pressed Enter) and `savedAt` arrive
+    // with the Uniform Tracker's send queue in step 5. The table held one voided
+    // test row on 2026-10-08, so there is nothing to migrate.
+    unitId: v.optional(v.id("reflectionUnits")),
+    reflectionState: v.optional(v.string()),
+    observedAt: v.optional(v.number()),
+    savedAt: v.optional(v.string()),
   })
     .index("by_attemptId", ["attemptId"])
     .index("by_student_day", ["studentNumber", "day"])
     .index("by_student", ["studentNumber"])
     .index("by_day", ["day"])
-    .index("by_loanerOutstanding", ["loanerOutstanding"]),
+    .index("by_loanerOutstanding", ["loanerOutstanding"])
+    .index("by_unit", ["unitId", "day"]),
+
+  /*
+   * ===========================================================================
+   * THE DAILY REFLECTION ROOM LIST (build spec revision 2, 2026-10-08)
+   * ===========================================================================
+   *
+   * Who serves a lunch detention, and when. The rules live in
+   * reflectionRules.ts; the reader, the tick and the freeze in reflection.ts and
+   * reflectionRead.ts. Everything below is READ ONLY ON THE SERVER: none of it
+   * reaches a browser through loadData or any other bulk read, and the screen
+   * (a later step) gets only what a direct admin, superadmin or pbis check (or
+   * an unexpired per-person grant) lets it have. Detentions appear ONLY on this
+   * list -- not on Student History, Early Warning, analytics or parent email
+   * (owner, 2026-10-08).
+   *
+   * Unset fields are ABSENT, never null, so "no detention yet" is one index
+   * read (unitId undefined) and a patch to undefined clears a field.
+   */
+
+  /**
+   * One row per tardy the list might care about: code T (K only if counting
+   * ditching is switched on) in class periods 1-6, keyed by
+   * (studentNumber, attDate, periodId). PowerSchool's row id is an ATTRIBUTE
+   * (`psRowIds`), never the key: a mark deleted and entered again gets a new id,
+   * and keying on it would list one tardy twice.
+   *
+   * `state`: countable (may be listed), held (waiting for a section's
+   * attendance), arrival (arrived late to school: never listed), cleared
+   * (changed or removed in PowerSchool), before-start (dated before the switch
+   * was turned on), review (admin decides). `unitId` is ABSENT until a list
+   * claims it. `firstSeenAt` is the START of the read that first saw it, which
+   * the "Entered late" and "Found after" tags compare with the day's closing
+   * read; `listsBeforeSeen` is how many lists were made between its date and
+   * then (a very late entry goes to review, counted in lists, not days).
+   */
+  reflectionTardies: defineTable({
+    studentNumber: v.string(),
+    attDate: v.string(),
+    periodId: v.number(),
+    slot: v.number(),
+    psRowIds: v.array(v.string()),
+    code: v.string(),
+    division: v.optional(v.union(v.literal("ms"), v.literal("hs"))),
+    state: v.union(
+      v.literal("countable"), v.literal("held"), v.literal("arrival"),
+      v.literal("cleared"), v.literal("before-start"), v.literal("review"),
+    ),
+    reason: v.optional(v.string()),
+    holdReason: v.optional(v.string()),
+    wasHeld: v.optional(v.boolean()),
+    firstSeenAt: v.string(),
+    listsBeforeSeen: v.number(),
+    firstCountableAt: v.optional(v.string()),
+    lastSeenAt: v.string(),
+    missingSince: v.optional(v.string()),
+    clearedAt: v.optional(v.string()),
+    classTeacher: v.optional(v.string()),
+    unitId: v.optional(v.id("reflectionUnits")),
+    resolvedBy: v.optional(v.string()),
+    resolvedAt: v.optional(v.string()),
+    resolution: v.optional(v.string()),
+    resolutionReason: v.optional(v.string()),
+  })
+    .index("by_key", ["studentNumber", "attDate", "periodId"])
+    .index("by_state_attDate", ["state", "attDate"])
+    // "Countable and on no list yet, dated on or before D" is one range read.
+    .index("by_unit", ["unitId", "state", "attDate"])
+    .index("by_attDate", ["attDate"]),
+
+  /**
+   * One detention. Everything one list picks up for one student is ONE
+   * detention, with every violation date shown (owner, 2026-10-08).
+   *
+   * kind: new (made by a freeze), carry (the student was not in the room; it
+   * keeps its violations and gains a carry), queued (a second detention owed on
+   * the same list, moved to the next one). state: pending (waiting for the next
+   * list), listed (on serveDay's list), carried (a carry was made from it),
+   * released (every violation cleared), review, expired (a pending carry whose
+   * reason went away), before-start (switched on after it, or a shadow
+   * carry when the division went live). `tardyIds` / `uniformIds` are the
+   * violations; a carry copies them, so clearing a tardy releases the carry too.
+   * `puSnapshot` is the Power-Up class copied when the list is made, so past
+   * lists stay right after the semester changes.
+   */
+  reflectionUnits: defineTable({
+    studentNumber: v.string(),
+    division: v.union(v.literal("ms"), v.literal("hs")),
+    kind: v.union(v.literal("new"), v.literal("carry"), v.literal("queued")),
+    tardyIds: v.array(v.id("reflectionTardies")),
+    uniformIds: v.array(v.id("uniformViolations")),
+    lines: v.array(v.string()),
+    recordedAt: v.string(),
+    state: v.union(
+      v.literal("pending"), v.literal("listed"), v.literal("carried"), v.literal("queued-forward"),
+      v.literal("released"), v.literal("review"), v.literal("expired"), v.literal("before-start"),
+    ),
+    serveDay: v.optional(v.string()),
+    mode: v.union(v.literal("shadow"), v.literal("live")),
+    listedAt: v.optional(v.string()),
+    owes: v.optional(v.number()),
+    carryFromUnitId: v.optional(v.id("reflectionUnits")),
+    carriedFromDay: v.optional(v.string()),
+    carriedToUnitId: v.optional(v.id("reflectionUnits")),
+    carryCount: v.number(),
+    carryBasis: v.optional(v.string()),
+    carryDecidedAt: v.optional(v.string()),
+    carryInputsChangedAt: v.optional(v.string()),
+    tags: v.array(v.string()),
+    puSnapshot: v.optional(v.object({
+      slot: v.optional(v.number()),
+      sectionId: v.optional(v.string()),
+      teacherName: v.optional(v.string()),
+      teacherEmail: v.optional(v.string()),
+      course: v.optional(v.string()),
+      flag: v.optional(v.string()),
+      check: v.boolean(),
+    })),
+    absentMorning: v.optional(v.boolean()),
+    puAbsent: v.optional(v.boolean()),
+    roomNotHere: v.optional(v.boolean()),
+    roomMarkedBy: v.optional(v.string()),
+    roomMarkedAt: v.optional(v.string()),
+    reviewReason: v.optional(v.string()),
+    releasedAt: v.optional(v.string()),
+    releaseReason: v.optional(v.string()),
+    expiredAt: v.optional(v.string()),
+    expireReason: v.optional(v.string()),
+    resolvedBy: v.optional(v.string()),
+    resolvedAt: v.optional(v.string()),
+    resolution: v.optional(v.string()),
+    resolutionReason: v.optional(v.string()),
+  })
+    .index("by_state", ["state"])
+    .index("by_serveDay", ["serveDay"])
+    .index("by_student", ["studentNumber"]),
+
+  /**
+   * One row per Los Angeles date the reader has looked at: whether it is a
+   * school day (and why), its schedule type and list times, which of the day's
+   * fixed reads are done, the last good read, and how its list was made
+   * (closing read, fallback at the ready time, late) or why there was none.
+   * `schoolDay` null means not proved either way yet. The counts feed the
+   * banners; `tHashAtFullRead` is a fingerprint of the date's T row ids at its
+   * last full read, so the lookback re-reads a past date in full only when its
+   * tardies changed.
+   */
+  reflectionDays: defineTable({
+    date: v.string(),
+    modeByDivision: v.optional(v.object({
+      ms: v.union(v.literal("off"), v.literal("shadow"), v.literal("live")),
+      hs: v.union(v.literal("off"), v.literal("shadow"), v.literal("live")),
+    })),
+    schoolDay: v.optional(v.union(v.boolean(), v.null())),
+    schoolDayBasis: v.optional(v.string()),
+    schoolDayReason: v.optional(v.string()),
+    adminMarkedSchoolDay: v.optional(v.boolean()),
+    schoolDayMarkedBy: v.optional(v.string()),
+    kind: v.optional(v.string()),
+    kindSource: v.optional(v.string()),
+    sixPeriodDetected: v.optional(v.boolean()),
+    closeInstant: v.optional(v.string()),
+    readyInstant: v.optional(v.string()),
+    lastFreezeInstant: v.optional(v.string()),
+    readsDone: v.array(v.string()),
+    lastGoodReadAt: v.optional(v.string()),
+    lastReadError: v.optional(v.string()),
+    lastReadErrorAt: v.optional(v.string()),
+    closingReadStartedAt: v.optional(v.string()),
+    frozenAt: v.optional(v.string()),
+    freezeKind: v.optional(v.union(v.literal("closing"), v.literal("fallback"), v.literal("late"))),
+    noList: v.optional(v.object({ reason: v.string(), at: v.string(), lastGoodReadAt: v.optional(v.string()) })),
+    listCount: v.optional(v.object({ ms: v.number(), hs: v.number() })),
+    unplacedStudents: v.optional(v.number()),
+    roomAttendanceDoneAt: v.optional(v.string()),
+    roomAttendanceDoneBy: v.optional(v.string()),
+    roomClosed: v.optional(v.object({ by: v.string(), at: v.string(), reason: v.string() })),
+    fallbackReview: v.optional(v.object({ reason: v.string(), at: v.string() })),
+    rowCounts: v.optional(v.record(v.string(), v.number())),
+    ptBlankSections: v.optional(v.number()),
+    heldCount: v.optional(v.number()),
+    refusedPeriodIds: v.optional(v.array(v.number())),
+    unmappedRows: v.optional(v.number()),
+    unmatchedMarks: v.optional(v.number()),
+    collisions: v.optional(v.number()),
+    tHashAtFullRead: v.optional(v.string()),
+    lastFullReadAt: v.optional(v.string()),
+    carriesDecidedAt: v.optional(v.string()),
+    updatedAt: v.string(),
+  }).index("by_date", ["date"]),
+
+  /**
+   * Each print of a list: master, slips or changes-only, final or not. IDS AND
+   * STUDENT NUMBERS ONLY, never names, so "what changed since your print" can be
+   * worked out per person without keeping a second copy of the list.
+   */
+  reflectionPrints: defineTable({
+    day: v.string(),
+    kind: v.union(v.literal("master"), v.literal("slips"), v.literal("changes")),
+    final: v.boolean(),
+    printedByEmail: v.string(),
+    at: v.string(),
+    mode: v.string(),
+    unitIds: v.array(v.id("reflectionUnits")),
+    studentNumbers: v.array(v.string()),
+    listVersion: v.string(),
+  })
+    .index("by_day", ["day"])
+    .index("by_day_email", ["day", "printedByEmail"]),
+
+  /**
+   * Append-only: every human act on the list (review decisions, room ticks,
+   * Attendance done, Room did not run, the school-day mark, mode changes).
+   * HERE AND NOT IN appAuditLog, because every staff browser downloads
+   * appAuditLog; read only through a direct admin, superadmin or pbis check.
+   */
+  reflectionAudit: defineTable({
+    at: v.string(),
+    byEmail: v.string(),
+    action: v.string(),
+    day: v.optional(v.string()),
+    unitId: v.optional(v.id("reflectionUnits")),
+    tardyId: v.optional(v.id("reflectionTardies")),
+    reason: v.optional(v.string()),
+  })
+    .index("by_at", ["at"])
+    .index("by_day", ["day"]),
+
+  /**
+   * The roster as the list sees it: one row per student, copied from psRoster
+   * once a day by the opening read, and only from a whole, finished sync (see
+   * reflection.ts writeRosterSnapshot). The list never reads psRoster live,
+   * because the 19:00 UTC sync empties and refills it in several writes.
+   * `sectionBySlot` / `teacherBySlot` are keyed by slot ("1".."10"); the
+   * Power-Up row is the one class in slot 8 or 9, whatever its course name.
+   */
+  reflectionRoster: defineTable({
+    studentNumber: v.string(),
+    grade: v.string(),
+    division: v.optional(v.union(v.literal("ms"), v.literal("hs"))),
+    puSlot: v.optional(v.number()),
+    puSectionId: v.optional(v.string()),
+    puTeacherName: v.optional(v.string()),
+    puTeacherEmail: v.optional(v.string()),
+    puCourse: v.optional(v.string()),
+    puFlag: v.optional(v.string()),
+    puCheck: v.boolean(),
+    enrolledSlots: v.array(v.number()),
+    sectionBySlot: v.record(v.string(), v.string()),
+    teacherBySlot: v.record(v.string(), v.string()),
+    snapAt: v.string(),
+    rosterSyncedAt: v.string(),
+    termId: v.optional(v.string()),
+  }).index("by_studentNumber", ["studentNumber"]),
 });
