@@ -684,7 +684,18 @@ export const listForDay = query({
     if (modes.ms === "off" && modes.hs === "off") {
       banners.push({ id: "off", level: "info", text: "The Reflection Room list is switched off for both divisions." });
     }
-    if (view === "no-list") {
+    // NOT COUNTING YET IS NOT AN OUTAGE. The switch went on after this day's
+    // latest freeze (10/8: on at 1:54 PM, counting from Friday), so the day
+    // shows as "no list" -- and noListBanner then blames PowerSchool and
+    // promises the violations to the next list, both false: nothing dated
+    // before countFromDate is ever listed. Say what actually happened.
+    const startsOn = (["ms", "hs"] as Division[])
+      .filter((d) => modes[d] !== "off" && settings.countFromDateByDivision[d])
+      .map((d) => settings.countFromDateByDivision[d] as string)
+      .sort()[0];
+    if (view === "no-list" && countingDivision(settings, date) === null && startsOn && startsOn > date) {
+      banners.push({ id: "not-counting", level: "info", text: `Not counting yet: the Reflection Room list starts ${dayLabel(startsOn)}. Nothing from ${dayLabel(date)} goes on a list.` });
+    } else if (view === "no-list") {
       const text = noListBanner(st, await nextSchoolDay(ctx, date), tz);
       // The same words, about the day shown: a past day is not "today".
       banners.push({

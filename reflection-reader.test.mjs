@@ -876,6 +876,33 @@ try {
       J(later.banners));
   }
 
+  // Switched on after the day's latest freeze, counting from the next day
+  // (what production did on Thu 10/8): the day is "no list", but nothing
+  // from it is ever listed, so the banner must not blame PowerSchool or
+  // promise the violations to the next list.
+  {
+    const THU = "2026-10-15";
+    const w = await world({
+      students: { A: { grade: 7, sections: MS } },
+      days: [{ date: THU, slots: MON_SLOTS }],
+      settings: { modeByDivision: { ms: "off", hs: "off" }, countFromDateByDivision: { ms: null, hs: null } },
+    });
+    await w.store.db.insert("teachers", { name: "Staff", ticketsAwarded: 0, email: "admin@school.test", role: "admin" });
+    w.rt.signIn({ issuer: STAFF_ISSUER, email: "admin@school.test" });
+    w.mark(THU, "A", 2, "T");
+    clock.set(la(THU, "13:54"));
+    await w.rt.run("reflection.setMode", { division: "ms", mode: "shadow", countFromDate: "2026-10-16" });
+    await w.rt.run("reflection.setMode", { division: "hs", mode: "shadow", countFromDate: "2026-10-16" });
+    await drive(w, la(THU, "13:55"), la(THU, "14:05"));
+    clock.set(la(THU, "14:06"));
+    const nc = await w.rt.run("reflectionList.listForDay", { day: "today" });
+    check("switched on after the latest freeze, counting from tomorrow: 'not counting yet', no PowerSchool blame",
+      nc.view === "no-list"
+      && nc.banners.some((b) => b.id === "not-counting" && b.level === "info" && b.text === "Not counting yet: the Reflection Room list starts Fri 10/16. Nothing from Thu 10/15 goes on a list.")
+      && !nc.banners.some((b) => b.id === "no-list"),
+      J(nc.banners));
+  }
+
   // ==========================================================================
   console.log("\n11. THE ROOM'S OWN ATTENDANCE: Not here, Attendance done (reflectionRoom.ts)\n");
   // ==========================================================================
