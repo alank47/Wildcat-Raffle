@@ -611,6 +611,16 @@ export const listForDay = query({
       if (date === today && !frozen && (row?.ptBlankSections ?? 0) > 0) {
         banners.push({ id: "pt-blank", level: "info", text: `Promise Time AM attendance not in yet for ${row!.ptBlankSections} section${row!.ptBlankSections === 1 ? "" : "s"}.` });
       }
+      // ROOM ATTENDANCE NOT RECORDED on the last list (build step 8b): the
+      // room ran without ticking Not here, so its carries were left to
+      // PowerSchool. Until someone acknowledges it in the review queue.
+      if (date === today) {
+        const before = await ctx.db.query("reflectionDays").withIndex("by_date", (q) => q.lt("date", today)).order("desc").take(10);
+        const lastList = before.find((d) => d.frozenAt);
+        if (lastList?.fallbackReview && !lastList.fallbackReview.resolvedAt) {
+          banners.push({ id: "room-not-recorded", level: "warn", text: `${lastList.fallbackReview.reason}. Tick Not here and press Attendance done each day.` });
+        }
+      }
       if (date === today && (row?.heldCount ?? 0) > 0) {
         banners.push({ id: "held", level: "info", text: `${row!.heldCount} tard${row!.heldCount === 1 ? "y is" : "ies are"} held until the class's attendance is in.` });
       }

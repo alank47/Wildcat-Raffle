@@ -1019,12 +1019,18 @@ try {
 
     // A day-level item: room attendance not recorded on a live day.
     const mon = await w.store.db.insert("reflectionDays", { date: "2026-10-09", readsDone: [], updatedAt: "x", schoolDay: true,
+      frozenAt: la("2026-10-09", "11:45"), freezeKind: "closing",
       fallbackReview: { reason: "Room attendance not recorded Fri 10/9 (3 detentions decided from PowerSchool)", at: la("2026-10-09", "15:45") } });
+    const flagged = await as("pbis").run("reflectionList.listForDay", { day: "today" });
+    check("the roles see 'Room attendance not recorded' for the last list until it is acknowledged",
+      flagged.banners.some((b) => b.id === "room-not-recorded" && /^Room attendance not recorded Fri 10\/9 \(3 detentions decided from PowerSchool\)\./.test(b.text)),
+      J(flagged.banners.map((b) => b.id)));
     const addDay = await as("pbis").run("reflectionRoom.resolveReview", { kind: "day", id: mon, action: "add" });
     const okDay = await as("pbis").run("reflectionRoom.resolveReview", { kind: "day", id: mon, action: "dismiss", reason: "Supervisor forgot; told her" });
     check("a day's item can only be dismissed, with a reason, and then leaves the queue",
       addDay.ok === false && okDay.ok && (await as("pbis").run("reflectionRoom.reviewQueue", {})).count === 0
-        && w.store.rows("reflectionDays").find((d) => d._id === mon).fallbackReview.resolvedBy === "pbis@school.test", J({ addDay, okDay }));
+        && w.store.rows("reflectionDays").find((d) => d._id === mon).fallbackReview.resolvedBy === "pbis@school.test"
+        && !(await as("pbis").run("reflectionList.listForDay", { day: "today" })).banners.some((b) => b.id === "room-not-recorded"), J({ addDay, okDay }));
 
     // ---- Read PowerSchool now, at 11:47: a closing read, which makes the list.
     clock.set(la(TUE, "11:41"));
