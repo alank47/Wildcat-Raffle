@@ -22,8 +22,8 @@ import {
  * is read by reflectionRead.ts (an action: it needs the network and Node).
  *
  * NOTHING HERE IS REACHABLE FROM A BROWSER. Every function is internal: the
- * cron, the reader and the command line call them. The screen arrives in a
- * later step, through its own access-checked query.
+ * cron, the reader and the command line call them. The screen reads through
+ * reflectionList.ts, whose every public function checks who is asking first.
  */
 
 /** appState keys. The repo default for the switch is OFF: a missing row is off. */
@@ -215,7 +215,7 @@ export async function loadSettings(ctx: Ctx): Promise<ReflectionSettings> {
   return reflectionSettingsOrDefault(await readState(ctx, SETTINGS_KEY));
 }
 
-async function getDay(ctx: Ctx, date: string): Promise<Doc<"reflectionDays"> | null> {
+export async function getDay(ctx: Ctx, date: string): Promise<Doc<"reflectionDays"> | null> {
   return ctx.db.query("reflectionDays").withIndex("by_date", (q) => q.eq("date", date)).first();
 }
 
@@ -227,14 +227,14 @@ async function ensureDay(ctx: MutationCtx, date: string, now: string): Promise<D
 }
 
 /** What Settings > Bell Schedule says about a date: a schedule, no school, or nothing. */
-async function markedOf(ctx: Ctx, date: string): Promise<Marked> {
+export async function markedOf(ctx: Ctx, date: string): Promise<Marked> {
   const m = await ctx.db.query("bellScheduleDays").withIndex("by_date", (q) => q.eq("date", date)).first();
   if (!m) return null;
   const schedule = m.scheduleId ? await ctx.db.get(m.scheduleId) : null;
   return { scheduleId: m.scheduleId ? String(m.scheduleId) : null, scheduleName: schedule?.name ?? null, noSchool: m.noSchool };
 }
 
-function dayStateOf(date: string, row: Doc<"reflectionDays"> | null, marked: Marked): DayState {
+export function dayStateOf(date: string, row: Doc<"reflectionDays"> | null, marked: Marked): DayState {
   return {
     date,
     marked,
@@ -258,30 +258,30 @@ const rosterSnapOf = (r: Doc<"reflectionRoster">): RosterSnap => ({
   puCheck: r.puCheck, enrolledSlots: r.enrolledSlots, sectionBySlot: r.sectionBySlot, teacherBySlot: r.teacherBySlot,
 });
 
-async function loadRoster(ctx: Ctx): Promise<Record<string, RosterSnap>> {
+export async function loadRoster(ctx: Ctx): Promise<Record<string, RosterSnap>> {
   const rows = await ctx.db.query("reflectionRoster").withIndex("by_studentNumber").collect();
   return Object.fromEntries(rows.map((r) => [r.studentNumber, rosterSnapOf(r)]));
 }
 
-const tardyItemOf = (t: Doc<"reflectionTardies">): TardyItem => ({
+export const tardyItemOf = (t: Doc<"reflectionTardies">): TardyItem => ({
   id: t._id, studentNumber: t.studentNumber, attDate: t.attDate, periodId: t.periodId, slot: t.slot,
   psRowIds: t.psRowIds, state: t.state, reason: t.reason ?? null, unitId: t.unitId ?? null,
   firstSeenAt: t.firstSeenAt, firstCountableAt: t.firstCountableAt ?? null, wasHeld: !!t.wasHeld,
   classTeacher: t.classTeacher ?? null,
 });
 
-const uniformItemOf = (u: Doc<"uniformViolations">): UniformItem => ({
+export const uniformItemOf = (u: Doc<"uniformViolations">): UniformItem => ({
   id: u._id, studentNumber: u.studentNumber, day: u.day, at: u.at, voided: !!u.voidedAt,
   unitId: u.unitId ?? null, reflectionState: u.reflectionState ?? null, loaner: u.loanerProvided,
   savedAt: u.savedAt ?? null, observedAt: u.observedAt ? new Date(u.observedAt).toISOString() : null,
 });
 
-const unitItemOf = (u: Doc<"reflectionUnits">): UnitItem => ({
+export const unitItemOf = (u: Doc<"reflectionUnits">): UnitItem => ({
   id: u._id, studentNumber: u.studentNumber, division: u.division, kind: u.kind, state: u.state,
   serveDay: u.serveDay ?? null, recordedAt: u.recordedAt, carryCount: u.carryCount, tags: u.tags, lines: u.lines,
 });
 
-function puSnapshotOf(snap: RosterSnap | null): Doc<"reflectionUnits">["puSnapshot"] {
+export function puSnapshotOf(snap: RosterSnap | null): Doc<"reflectionUnits">["puSnapshot"] {
   if (!snap) return undefined;
   return {
     slot: or(snap.puSlot), sectionId: or(snap.puSectionId), teacherName: or(snap.puTeacherName),
@@ -304,6 +304,58 @@ async function audit(ctx: MutationCtx, row: {
 // ===========================================================================
 
 /**
+ * EVERYTHING A FREEZE OF ANY DATE UP TO `upTo` COULD CLAIM, as of this
+ * moment: countable tardies on no list yet dated on or before it, live
+ * uniform entries on no list yet, and pending detentions (carries and queued
+ * second detentions), with the day rows their tags are read from and each
+ * student's division. reflectionRules.claimAtFreeze picks from these.
+ *
+ * ONE READ FOR THE FREEZE AND FOR THE SCREEN. The list screen's "so far"
+ * views (reflectionList.ts) run exactly this and exactly claimAtFreeze, read
+ * only, so what the screen says the list will be and what the freeze then
+ * makes cannot drift apart.
+ */
+export async function claimInputs(ctx: Ctx, f: {
+  upTo: string; roster?: Record<string, RosterSnap>; gradeOf: Record<string, string>;
+}): Promise<{
+  tardies: Doc<"reflectionTardies">[]; uniforms: Doc<"uniformViolations">[]; pending: Doc<"reflectionUnits">[];
+  days: Record<string, DayState>; divisionOf: Record<string, Division | null>; roster: Record<string, RosterSnap>;
+}> {
+  const tardies = await ctx.db.query("reflectionTardies")
+    .withIndex("by_unit", (q) => q.eq("unitId", undefined).eq("state", "countable").lte("attDate", f.upTo)).collect();
+  const uniforms = await ctx.db.query("uniformViolations")
+    .withIndex("by_unit", (q) => q.eq("unitId", undefined).lte("day", f.upTo)).collect();
+  const pending = await ctx.db.query("reflectionUnits").withIndex("by_state", (q) => q.eq("state", "pending")).collect();
+  // The freeze has the whole snapshot in hand already; the screen looks up
+  // only the students it is about to show.
+  const roster = f.roster ?? await rosterFor(ctx, [...tardies, ...uniforms, ...pending].map((x) => x.studentNumber));
+
+  const days: Record<string, DayState> = {};
+  for (const d of new Set([...tardies.map((t) => t.attDate), ...uniforms.map((u) => u.day)])) {
+    const row = await getDay(ctx, d);
+    if (row) days[d] = dayStateOf(d, row, null);
+  }
+  const divisionOf: Record<string, Division | null> = {};
+  for (const t of tardies) {
+    divisionOf[t.studentNumber] = t.division ?? roster[t.studentNumber]?.division ?? divisionOfGrade(f.gradeOf[t.studentNumber]);
+  }
+  for (const u of uniforms) {
+    divisionOf[u.studentNumber] ??= roster[u.studentNumber]?.division ?? divisionOfGrade(u.studentGrade);
+  }
+  return { tardies, uniforms, pending, days, divisionOf, roster };
+}
+
+/** The snapshot rows of just these students, one index lookup each. */
+export async function rosterFor(ctx: Ctx, studentNumbers: string[]): Promise<Record<string, RosterSnap>> {
+  const out: Record<string, RosterSnap> = {};
+  for (const sn of [...new Set(studentNumbers)]) {
+    const r = await ctx.db.query("reflectionRoster").withIndex("by_studentNumber", (q) => q.eq("studentNumber", sn)).first();
+    if (r) out[sn] = rosterSnapOf(r);
+  }
+  return out;
+}
+
+/**
  * MAKE D'S LIST, inside the transaction that calls this (the closing read's
  * applyRead, or the tick's fallback).
  *
@@ -324,24 +376,7 @@ async function freezeDay(ctx: MutationCtx, f: {
   gradeOf: Record<string, string>;
 }): Promise<{ rows: number; ms: number; hs: number; unplaced: number }> {
   const { date, nowIso } = f;
-  const tardies = await ctx.db.query("reflectionTardies")
-    .withIndex("by_unit", (q) => q.eq("unitId", undefined).eq("state", "countable").lte("attDate", date)).collect();
-  const uniforms = await ctx.db.query("uniformViolations")
-    .withIndex("by_unit", (q) => q.eq("unitId", undefined).lte("day", date)).collect();
-  const pending = await ctx.db.query("reflectionUnits").withIndex("by_state", (q) => q.eq("state", "pending")).collect();
-
-  const days: Record<string, DayState> = {};
-  for (const d of new Set([...tardies.map((t) => t.attDate), ...uniforms.map((u) => u.day)])) {
-    const row = await getDay(ctx, d);
-    if (row) days[d] = dayStateOf(d, row, null);
-  }
-  const divisionOf: Record<string, Division | null> = {};
-  for (const t of tardies) {
-    divisionOf[t.studentNumber] = t.division ?? f.roster[t.studentNumber]?.division ?? divisionOfGrade(f.gradeOf[t.studentNumber]);
-  }
-  for (const u of uniforms) {
-    divisionOf[u.studentNumber] ??= f.roster[u.studentNumber]?.division ?? divisionOfGrade(u.studentGrade);
-  }
+  const { tardies, uniforms, pending, days, divisionOf } = await claimInputs(ctx, { upTo: date, roster: f.roster, gradeOf: f.gradeOf });
   const claim = claimAtFreeze({
     day: date, tz: f.tz, settings: f.settings, divisionOf,
     tardies: tardies.map(tardyItemOf), uniforms: uniforms.map(uniformItemOf), units: pending.map(unitItemOf), days,

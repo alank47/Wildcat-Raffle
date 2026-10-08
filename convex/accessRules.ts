@@ -85,6 +85,45 @@ export function canReadInsights(row: { role?: unknown; attendanceWatch?: unknown
   return INSIGHT_ROLES.includes(String(row.role ?? "")) || row.attendanceWatch === true;
 }
 
+/**
+ * THE DAILY REFLECTION ROOM LIST: who may READ it (2026-10-08).
+ *
+ * A list of named children owing a lunch detention is a discipline record,
+ * so it follows the same three roles as Attendance Watch -- admin,
+ * superadmin, PBIS -- by a DIRECT role check. It is deliberately NOT built
+ * on canReadInsights (an Attendance Watch grant opens Insights, not this
+ * list) and NOT on Promise Time's role list, which lets every campus aide in.
+ *
+ * Plus a per-person grant WITH AN END DATE: `reflectionList` true, and
+ * either no `reflectionListUntil` or a `reflectionListUntil` on or after
+ * today (school time, "YYYY-MM-DD"). Only a real boolean true grants, as for
+ * attendanceWatch. The grant itself -- the schema fields, the admin
+ * mutation, the Edit Teacher checkbox -- is build step 6; until it lands no
+ * record carries the field, so this is the three roles alone.
+ *
+ * Reading only. Admin review, the settings and the admin buttons stay with
+ * the roles (canAdminReflection below).
+ */
+export const REFLECTION_ROLES = ["admin", "superadmin", "pbis"];
+export function canReadReflection(
+  row: { role?: unknown; reflectionList?: unknown; reflectionListUntil?: unknown } | null | undefined,
+  today: string,
+): boolean {
+  if (!row) return false;
+  if (REFLECTION_ROLES.includes(String(row.role ?? ""))) return true;
+  if (row.reflectionList !== true) return false;
+  const until = row.reflectionListUntil;
+  if (until === undefined || until === null || until === "") return true;
+  // A malformed end date is no grant: fail closed, never open-ended.
+  if (typeof until !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(until)) return false;
+  return /^\d{4}-\d{2}-\d{2}$/.test(String(today)) && today <= until;
+}
+
+/** The list's admin side (review queue, print history, every banner): the three roles only, never a grant. */
+export function canAdminReflection(row: { role?: unknown } | null | undefined): boolean {
+  return !!row && REFLECTION_ROLES.includes(String(row.role ?? ""));
+}
+
 const ADMIN_ROLES = ["admin", "superadmin"];
 
 /**

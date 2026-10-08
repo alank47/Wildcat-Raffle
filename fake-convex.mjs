@@ -18,9 +18,10 @@
 //                       Convex's generated wrappers stubbed (a function is its
 //                       own definition object, so `.handler` is callable) and
 //                       `internal.x.y` a reference that names its path;
-//   runtime()           runQuery / runMutation / runAction by that path, and
-//                       a scheduler that records what was booked, for the test
-//                       to run when it chooses;
+//   runtime()           runQuery / runMutation / runAction by that path, a
+//                       scheduler that records what was booked, for the test
+//                       to run when it chooses, and signIn() for the caller a
+//                       public function's requireStaff sees;
 //   clock               a settable "now" for Date.now() and new Date(), so a
 //                       test of 11:45 on a Tuesday does not depend on today.
 //
@@ -292,8 +293,13 @@ export function runtime(store, mods) {
     },
     async cancel(id) { const i = jobs.findIndex((j) => j.id === id); if (i >= 0) jobs.splice(i, 1); },
   };
-  const qctx = { db: store.db };
-  const mctx = { db: store.db, scheduler };
+  // WHO IS ASKING, for a public query or mutation: the verified token claims
+  // Convex would hand requireStaff ({ issuer, email }), or null for nobody.
+  // Set with signIn(); internal functions never look.
+  let identity = null;
+  const auth = { getUserIdentity: async () => (identity ? structuredClone(identity) : null) };
+  const qctx = { db: store.db, auth };
+  const mctx = { db: store.db, scheduler, auth };
   const run = async (ref, args) => {
     const { f, path } = fnOf(ref);
     const a = structuredClone(args ?? {});
@@ -308,6 +314,8 @@ export function runtime(store, mods) {
   const actx = { runQuery: run, runMutation: run, runAction: run, scheduler };
   return {
     run, jobs, scheduler, qctx, mctx, actx,
+    /** The caller of the public functions run after this: { issuer, email }, or null. */
+    signIn(id) { identity = id ?? null; },
     /** Take (and remove) the booked jobs, optionally only those for one function. */
     take(path) {
       const out = [];

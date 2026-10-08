@@ -27,6 +27,7 @@ const GUARD_TEST = "roster-empty-guard.test.mjs";
 const SERVER = "convex/reflection.ts";
 const READER = "convex/reflectionRead.ts";
 const READER_TEST = "reflection-reader.test.mjs";
+const LIST = "convex/reflectionList.ts";
 
 const CASES = [
   // ---- step 1: the rules (spec 6, step 1 table)
@@ -162,6 +163,30 @@ const CASES = [
   { guard: "never treat marks as final at the after-school read", file: SERVER, test: READER_TEST,
     from: "      const final = d.date < today || a.kind === \"after-school\";", to: "      const final = d.date < today;",
     mustFail: "...a section that never took attendance is taken as present at 15:45: H2's hold is released, for the next list" },
+
+  // ---- step 7a: the list as staff see it and print it (spec 6, step 7a table, plus four more)
+  { guard: "compare with the newest print of the day only, not the viewer's own", file: LIST, test: READER_TEST,
+    from: "    const mine = await ctx.db.query(\"reflectionPrints\").withIndex(\"by_day_email\", (q) => q.eq(\"day\", date).eq(\"printedByEmail\", staff.email)).order(\"desc\").first();",
+    to: "    const mine = await ctx.db.query(\"reflectionPrints\").withIndex(\"by_day\", (q) => q.eq(\"day\", date)).order(\"desc\").first();",
+    mustFail: "each viewer sees their OWN changes, against their own print: PBIS (11:31) +L, release C and Z" },
+  { guard: "add studentNumber to an appAuditLog insert", file: LIST, test: READER_TEST,
+    from: "    return { ok: true as const, id, final, at: nowIso };",
+    to: "    await ctx.db.insert(\"appAuditLog\", { action: \"Reflection Room print\", studentNumber: a.studentNumbers[0] } as any);\n"
+      + "    return { ok: true as const, id, final, at: nowIso };",
+    mustFail: "static: no appAuditLog insert from reflection code carries a student number, name or unit id" },
+  { guard: "drop the access check on the list", file: LIST, test: READER_TEST,
+    from: "    if (!canReadReflection(staff, today)) return { allowed: false as const, reason: REFUSED };",
+    to: "    if (false) return { allowed: false as const, reason: REFUSED };",
+    mustFail: "a teacher is refused, and nothing is read" },
+  { guard: "let slips print before the list is final", file: LIST, test: READER_TEST,
+    from: "    if (a.kind === \"slips\" && !final) {", to: "    if (false) {",
+    mustFail: "slips are refused while the list is not final" },
+  { guard: "tomorrow so far ignores what today's freeze will take", file: LIST, test: READER_TEST,
+    from: "  if (f.first && f.first !== f.target) {", to: "  if (false) {",
+    mustFail: "Tomorrow so far: tonight's P6 (S6), never a student about to serve today for the same thing" },
+  { guard: "show the role-only banners to grant holders too", file: LIST, test: READER_TEST,
+    from: "    if (roles) {\n      const items = await reviewItems(ctx, today, tz);", to: "    if (true) {\n      const items = await reviewItems(ctx, today, tz);",
+    mustFail: "the roles see 'N waiting in review, oldest' on Today; a grant holder never does" },
 ];
 
 // ------------------------------------------------------------------ the copy

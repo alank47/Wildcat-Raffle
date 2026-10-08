@@ -22,12 +22,19 @@
 //   6. The first day back from Thanksgiving, in standard time.
 //   7. HS switched on for Thursday: Wednesday's HS tardy never floods a list.
 //   8. The command-line settings, and the owner's 10/8 pull times.
+//   9. The list as staff see it and print it (reflectionList.ts): who may read
+//      it, today and tomorrow "so far", MS and HS sections, one row per
+//      student with every violation dated, prints recorded with ids and
+//      numbers only, and each viewer's changes since their OWN print.
+//  10. "No list today" and a red last-read banner, on screen.
 //
 // TEETH: scripts/reflection-teeth.mjs breaks the direct id confirmation, the
 // natural key, the lease expiry, the "unconfirmed changes nothing" rule,
-// countFromDate, the fallback's fence and the school-day lookback, one at a
-// time, and requires the check named for each to FAIL.
-import { readFileSync } from "node:fs";
+// countFromDate, the fallback's fence and the school-day lookback -- and, for
+// the list screen, the access check, per-print changes, the slips refusal,
+// "tomorrow so far", the role-only banners and the appAuditLog rule -- one at
+// a time, and requires the check named for each to FAIL.
+import { readdirSync, readFileSync } from "node:fs";
 import { clock, loadConvex, makeDb, runtime } from "./fake-convex.mjs";
 import { fakePowerSchool, REFLECTION_CODES } from "./fake-powerschool.mjs";
 
@@ -44,7 +51,7 @@ const J = (x) => JSON.stringify(x);
 const realLog = console.log;
 console.log = (...a) => { if (!(typeof a[0] === "string" && a[0].startsWith("[reflection]"))) realLog(...a); };
 
-const loaded = await loadConvex(new URL("./", import.meta.url), ["reflection", "reflectionRead", "reflectionRules"], {
+const loaded = await loadConvex(new URL("./", import.meta.url), ["reflection", "reflectionRead", "reflectionRules", "reflectionList"], {
   transform: (name, src) => (name === "attendanceDays" ? src.replace("const RETRY_PAUSE_MS = 1000;", "const RETRY_PAUSE_MS = 1;") : src),
 });
 const { mods } = loaded;
@@ -56,7 +63,10 @@ const CODE = { A: 1, T: 2, D: 3, K: 4, P: 5, S: 6, X: 7 };
 const FIVE = 5 * 60 * 1000;
 Object.assign(process.env, {
   PS_HOST: "ps.test", PS_CLIENT_ID: "id", PS_CLIENT_SECRET: "secret", PS_SCHOOL_ID: SCHOOL, PS_YEAR_ID: YEAR, PS_TERM_ID: "3601",
+  // Who a signed-in caller is, for the list screen's public query and mutation.
+  STAFF_DOMAIN: "school.test", ENTRA_TENANT_ID: "tenant-1",
 });
+const STAFF_ISSUER = "https://login.microsoftonline.com/tenant-1/v2.0";
 const la = (date, hhmm) => {
   const [h, m] = hhmm.split(":").map(Number);
   return R.laWallToUtc(date, h * 60 + m, TZ);
@@ -608,6 +618,217 @@ try {
   }
 
   // ==========================================================================
+  console.log("\n9. THE LIST ON SCREEN AND ON PAPER (listForDay, recordPrint, per-print changes)\n");
+  // ==========================================================================
+  {
+    const TUE = "2026-10-13", MON = "2026-10-12", WED = "2026-10-14";
+    const ms = { grade: 7, sections: MS };
+    const w = await world({
+      students: { A: ms, W: ms, C: ms, L: ms, Z: ms, S6: ms, X: { grade: 10, sections: HS } },
+      days: [{ date: MON, slots: MON_SLOTS }, { date: TUE, slots: TUE_SLOTS }, { date: WED, slots: WED_SLOTS }],
+      settings: { modeByDivision: { ms: "shadow", hs: "live" }, countFromDateByDivision: { ms: MON, hs: MON } },
+    });
+    const staff = {
+      admin: { email: "admin@school.test", role: "admin" },
+      pbis: { email: "pbis@school.test", role: "pbis" },
+      teacher: { email: "teacher@school.test", role: "teacher" },
+      aide: { email: "aide@school.test", role: "campusaide" },
+      granted: { email: "granted@school.test", role: "campusaide", reflectionList: true, reflectionListUntil: "2026-12-18" },
+      expired: { email: "expired@school.test", role: "campusaide", reflectionList: true, reflectionListUntil: "2026-10-12" },
+      openEnded: { email: "open@school.test", role: "teacher", reflectionList: true },
+      truthy: { email: "truthy@school.test", role: "teacher", reflectionList: "true" },
+    };
+    for (const t of Object.values(staff)) await w.store.db.insert("teachers", { name: "Staff", ticketsAwarded: 0, ...t });
+    const as = (who) => { w.rt.signIn({ issuer: STAFF_ISSUER, email: staff[who].email }); return w.rt; };
+    const list = (who, day = "today") => as(who).run("reflectionList.listForDay", { day });
+    const print = (who, res, kind = "master", day = res.date) => as(who).run("reflectionList.recordPrint", {
+      day, kind, unitIds: res.sections.flatMap((s) => s.rows).map((r) => r.unitId).filter(Boolean),
+      studentNumbers: res.sections.flatMap((s) => s.rows).filter((r) => r.state !== "released").map((r) => r.studentNumber),
+      listVersion: res.listVersion,
+    });
+    const rowsOf = (res, division) => res.sections.find((s) => s.division === division).rows;
+    const sns = (res, division) => rowsOf(res, division).map((r) => r.studentNumber).sort();
+
+    w.mark(MON, "W", 6, "T");                                   // Monday P5: on Tuesday's list
+    for (const sn of ["A", "C", "Z"]) w.mark(TUE, sn, 3, "T");   // late to P2
+    w.mark(TUE, "X", 2, "T");                                   // HS, late to P1
+    w.mark(TUE, "S6", 7, "T");                                  // P6: never the same day
+    const zRow = w.find(TUE, "Z", 3), cRow = w.find(TUE, "C", 3);
+    // A uniform entry for A (two violations, one row), and one for a student
+    // PowerSchool's roster does not have.
+    const uni = (sn, grade, hhmm) => w.store.db.insert("uniformViolations", {
+      studentNumber: sn, studentName: "-", studentGrade: grade, day: TUE, at: la(TUE, hhmm), loanerProvided: false,
+      loanerOutstanding: false, loggedByEmail: "pbis@school.test", loggedByName: "-", loggedByRole: "pbis", attemptId: `a-${sn}`,
+    });
+    await uni("A", "7", "07:52");
+    await uni("U9", "8", "08:10");
+
+    // ---- Who may read it: a direct role check, or an unexpired grant.
+    clock.set(la(TUE, "07:00"));
+    const realQuery = w.store.db.query;
+    let listReads = 0;
+    w.store.db.query = (t) => { if (/^reflection|^uniformViolations$/.test(t)) listReads++; return realQuery(t); };
+    const refused = [];
+    for (const who of ["teacher", "aide", "expired", "truthy"]) {
+      listReads = 0;
+      const r = await list(who);
+      refused.push(r.allowed === false && listReads === 0 && !("sections" in r));
+    }
+    w.store.db.query = realQuery;
+    check("a teacher is refused, and nothing is read", refused[0]);
+    check("...and so is a campus aide, an EXPIRED grant, and a grant that is not a real true", refused.slice(1).every(Boolean), J(refused));
+    w.rt.signIn(null);
+    const anon = await w.rt.run("reflectionList.listForDay", { day: "today" }).then(() => "read", (e) => String(e.message || e));
+    check("...and nobody signed in reads nothing", /Not authenticated/.test(anon), anon);
+    const okGrant = await list("granted"), okOpen = await list("openEnded"), okPbis = await list("pbis");
+    check("admin, PBIS and an unexpired (or open-ended) grant may read it",
+      (await list("admin")).allowed && okPbis.allowed && okGrant.allowed && okOpen.allowed);
+    check("...a direct role check, not the Attendance Watch grant",
+      (await list("teacher")).allowed === false
+      && (await (async () => { await w.store.db.insert("teachers", { name: "W", ticketsAwarded: 0, email: "watch@school.test", role: "campusaide", attendanceWatch: true });
+        w.rt.signIn({ issuer: STAFF_ISSUER, email: "watch@school.test" });
+        return w.rt.run("reflectionList.listForDay", { day: "today" }); })()).allowed === false);
+
+    await drive(w, la(TUE, "07:30"), la(TUE, "11:30"));
+
+    // ---- 11:31: the list SO FAR, printed early by PBIS.
+    clock.set(la(TUE, "11:31"));
+    const early = await list("pbis");
+    check("before the close, today is the list SO FAR: not final, never made",
+      early.view === "so-far" && early.frozen === false && early.isToday && early.banners.some((b) => b.id === "not-final" && /^NOT FINAL: do not pull/.test(b.text)), J(early.banners));
+    check("MS and HS sections, MS first (MS serves in the first half of lunch), each with its own count and pull time",
+      J(early.sections.map((s) => [s.division, s.count, s.pullAt])) === J([["ms", 5, "12:31"], ["hs", 1, "12:57"]]), J(early.sections.map((s) => [s.division, s.count, s.pullAt])));
+    check("...exactly the students the freeze would claim: never S6 (P6 today)",
+      J(sns(early, "ms")) === J(["A", "C", "U9", "W", "Z"]) && J(sns(early, "hs")) === J(["X"]), J([sns(early, "ms"), sns(early, "hs")]));
+    const rowA = rowsOf(early, "ms").find((r) => r.studentNumber === "A");
+    check("several violations on one list are ONE row, every violation shown with its date",
+      rowsOf(early, "ms").filter((r) => r.studentNumber === "A").length === 1
+      && J(rowA.lines) === J(["Tue 10/13: Tardy P2 (Ms Ng)", "Tue 10/13: Uniform 7:52 AM"]) && rowA.grade === "7"
+      && rowA.pu.teacher === "Ms Ruiz", J(rowA));
+    const rowW = rowsOf(early, "ms").find((r) => r.studentNumber === "W");
+    check("...a Monday P5 tardy carries its own date and why it is on Tuesday's list",
+      J(rowW.lines) === J(["Mon 10/12: Tardy P5 (Ms Diaz)"]) && rowW.tags.includes("From Mon 10/12 P5 (after Power-Up)"), J(rowW));
+    check("a uniform-only student with no PowerSchool roster row says so",
+      rowsOf(early, "ms").find((r) => r.studentNumber === "U9").notOnRoster === true);
+    check("PILOT banner for the division in shadow (MS), none for the live one (HS)",
+      early.banners.some((b) => b.id === "pilot-ms" && /^PILOT \(MS\): do not assign/.test(b.text)) && !early.banners.some((b) => b.id === "pilot-hs"), J(early.banners.map((b) => b.id)));
+    check("no names leave the server: rows carry student numbers and grades only",
+      !/"(firstName|lastName|studentName|name)"/.test(J(early.sections)));
+    const nextEarly = await list("pbis", "next");
+    check("Tomorrow so far: tonight's P6 (S6), never a student about to serve today for the same thing",
+      nextEarly.date === WED && nextEarly.isNext && nextEarly.view === "so-far" && J(sns(nextEarly, "ms")) === J(["S6"]) && sns(nextEarly, "hs").length === 0,
+      J([nextEarly.date, sns(nextEarly, "ms"), sns(nextEarly, "hs")]));
+    const slipsEarly = await print("pbis", early, "slips");
+    check("slips are refused while the list is not final", slipsEarly.ok === false && /only once the list is final/.test(slipsEarly.reason), J(slipsEarly));
+    const pEarly = await print("pbis", early);
+    check("an early master print is recorded, NOT final (the server decides, not the browser)", pEarly.ok && pEarly.final === false, J(pEarly));
+
+    // ---- L is entered at 11:33; the closing read at 11:45 makes the list.
+    await drive(w, la(TUE, "11:35"), la(TUE, "11:45"), [[la(TUE, "11:33"), () => w.mark(TUE, "L", 3, "T")]]);
+    clock.set(la(TUE, "11:46"));
+    const made = await list("admin");
+    check("after the close, today is the list made at 11:45: final",
+      made.view === "made" && made.frozen && made.freezeKind === "closing" && J(sns(made, "ms")) === J(["A", "C", "L", "U9", "W", "Z"])
+      && !made.banners.some((b) => b.id === "not-final"), J([made.view, sns(made, "ms")]));
+    const pAdmin = await print("admin", made);
+    check("the admin's 11:46 master print is final", pAdmin.ok && pAdmin.final === true);
+    const pbisAfter = await list("pbis");
+    check("PBIS, who printed before the list was made, is told: out of date, +1 added",
+      pbisAfter.myPrintChanges?.outOfDate && J(pbisAfter.myPrintChanges.added) === J(["L"])
+      && pbisAfter.banners.some((b) => b.id === "print-out-of-date" && /The final list was made at 11:45\. Your 11:31 print is out of date \(\+1 added\): print the list again\./.test(b.text)),
+      J([pbisAfter.myPrintChanges, pbisAfter.banners.map((b) => b.text)]));
+
+    // ---- 12:40 Z's mark is deleted (confirmed at 13:00); the aide prints slips at 13:05.
+    await drive(w, la(TUE, "11:50"), la(TUE, "13:00"), [[la(TUE, "12:40"), () => w.unmark(zRow)]]);
+    clock.set(la(TUE, "13:05"));
+    const forAide = await list("granted");
+    const pSlips = await print("granted", forAide, "slips");
+    check("a grant holder may print slips once the list is final", pSlips.ok && pSlips.final === true, J(pSlips));
+    check("...and the released student is shown, but not counted, and not printed",
+      rowsOf(forAide, "ms").find((r) => r.studentNumber === "Z")?.state === "released" && forAide.sections[0].count === 5);
+
+    // ---- 13:30 C's tardy becomes an Excused Tardy (read at 14:00).
+    await drive(w, la(TUE, "13:05"), la(TUE, "14:00"), [[la(TUE, "13:30"), () => w.fake.changeCode(cRow, CODE.D)]]);
+    clock.set(la(TUE, "14:05"));
+    const vPbis = await list("pbis"), vAdmin = await list("admin"), vAide = await list("granted");
+    const rel = (r) => r.myPrintChanges.release.map((x) => x.studentNumber).sort();
+    check("each viewer sees their OWN changes, against their own print: PBIS (11:31) +L, release C and Z",
+      J(vPbis.myPrintChanges.added) === J(["L"]) && J(rel(vPbis)) === J(["C", "Z"]), J(vPbis.myPrintChanges));
+    check("...the admin (11:46): release C and Z",
+      vAdmin.myPrintChanges.added.length === 0 && J(rel(vAdmin)) === J(["C", "Z"]), J(vAdmin.myPrintChanges));
+    check("...the aide (13:05 slips): release C only",
+      vAide.myPrintChanges.added.length === 0 && J(rel(vAide)) === J(["C"])
+      && vAide.banners.some((b) => b.id === "print-out-of-date" && b.text === "Since your 1:05 print: release 1."), J([vAide.myPrintChanges, vAide.banners.map((b) => b.text)]));
+    check("T to D after the list is made: released, and shown in each earlier print's changes as release this student",
+      vPbis.myPrintChanges.release.find((x) => x.studentNumber === "C")?.reason === "now Excused Tardy"
+      && rowsOf(vAdmin, "ms").find((r) => r.studentNumber === "C").released?.reason === "now Excused Tardy");
+    check("the roles see each print of the day with its change counts (staff emails only); a grant holder does not",
+      vAdmin.printsToday?.length === 3 && J(vAdmin.printsToday.map((p) => [p.by, p.kind, p.final, p.changes.release])) === J([
+        ["pbis@school.test", "master", false, 2], ["admin@school.test", "master", true, 2], ["granted@school.test", "slips", true, 1]])
+      && vAide.printsToday === null && vAide.roles === false, J(vAdmin.printsToday));
+
+    const prints = w.store.rows("reflectionPrints");
+    const FIELDS = ["_creationTime", "_id", "at", "day", "final", "kind", "listVersion", "mode", "printedByEmail", "studentNumbers", "unitIds"];
+    check("reflectionPrints holds ids and student numbers only (no name field, in the rows or the schema)",
+      prints.length === 3 && prints.every((p) => J(Object.keys(p).sort()) === J(FIELDS))
+      && !/name/i.test(schemaSrc.slice(schemaSrc.indexOf("reflectionPrints: defineTable("), schemaSrc.indexOf('.index("by_day_email"'))),
+      J(prints.map((p) => Object.keys(p))));
+    check("...with the division modes the list was made under", prints[1].mode === "ms:shadow hs:live", prints[1].mode);
+
+    // ---- Role-only banners: the review queue's size and age.
+    await w.store.db.insert("reflectionTardies", {
+      studentNumber: "W", attDate: MON, periodId: 852, slot: 2, psRowIds: ["1"], code: "T", division: "ms", state: "review",
+      reason: "PowerSchool has 2 marks for this period", firstSeenAt: la(TUE, "07:30"), listsBeforeSeen: 0, lastSeenAt: la(TUE, "07:30"),
+    });
+    const withReview = await list("pbis"), aideReview = await list("granted");
+    check("the roles see 'N waiting in review, oldest' on Today; a grant holder never does",
+      withReview.banners.some((b) => b.id === "review" && b.text === "1 waiting in review, oldest Mon 10/12.")
+      && J(withReview.review) === J({ count: 1, oldest: MON }) && !aideReview.banners.some((b) => b.id === "review") && aideReview.review === null,
+      J(withReview.banners.map((b) => b.text)));
+    const queue = await w.rt.run("reflectionList.adminReview", {});
+    check("the review queue's data, from the command line: the item with its age in school days",
+      queue.count === 1 && queue.items[0].kind === "tardy" && queue.items[0].ageSchoolDays === 1, J(queue));
+
+    const exp = await w.rt.run("reflectionList.verifyExport", { day: TUE });
+    check("verifyExport (command line only) gives the verify script keys and states",
+      exp.dayRow.freezeKind === "closing" && exp.list.length === 7
+      && exp.tardies.some((t) => t.key === `L|${TUE}|853` && t.unitServeDay === TUE) && exp.uniformsOnList.length === 2, J({ n: exp.list.length }));
+    const past = await list("admin", MON);
+    check("a past day with no list made says so", past.view === "not-made" && past.banners.some((b) => b.id === "not-made"), J(past.view));
+    const future = await list("admin", "2026-10-20");
+    check("only today, the next school day and past days can be shown", future.ok === false, J(future));
+  }
+
+  // ==========================================================================
+  console.log("\n10. NO LIST TODAY, ON SCREEN\n");
+  // ==========================================================================
+  {
+    const TUE = "2026-10-13";
+    const w = await world({
+      students: { A: { grade: 7, sections: MS } },
+      days: [{ date: TUE, slots: TUE_SLOTS }],
+      settings: { modeByDivision: { ms: "live", hs: "off" }, countFromDateByDivision: { ms: "2026-10-12", hs: null } },
+    });
+    await w.store.db.insert("teachers", { name: "Staff", ticketsAwarded: 0, email: "admin@school.test", role: "admin" });
+    w.rt.signIn({ issuer: STAFF_ISSUER, email: "admin@school.test" });
+    w.mark(TUE, "A", 3, "T");
+    w.ctl.down = true;
+    await drive(w, la(TUE, "07:30"), la(TUE, "11:00"));
+    clock.set(la(TUE, "11:01"));
+    const stale = await w.rt.run("reflectionList.listForDay", { day: "today" });
+    check("PowerSchool unreadable all morning: the last-read banner is red",
+      stale.banners.some((b) => b.id === "last-read" && b.level === "alert" && b.text === "No PowerSchool read has worked yet today."), J(stale.banners));
+    await drive(w, la(TUE, "11:05"), la(TUE, "12:25"));
+    clock.set(la(TUE, "12:26"));
+    const none = await w.rt.run("reflectionList.listForDay", { day: "today" });
+    check("No list today: the banner says why and where today's violations go",
+      none.view === "no-list" && none.sections.every((s) => s.rows.length === 0)
+      && none.banners.some((b) => b.id === "no-list" && b.text === "No list today: PowerSchool unreachable all morning. Today's violations will be on Wed 10/14's list."),
+      J(none.banners));
+    check("...and a live division has no PILOT banner", !none.banners.some((b) => /^pilot/.test(b.id)));
+  }
+
+  // ==========================================================================
   console.log("\nWIRING\n");
   // ==========================================================================
   {
@@ -623,6 +844,35 @@ try {
     check("every reflection function is internal: nothing here is reachable from a browser",
       !/export const \w+ = (query|mutation|action)\(/.test(src));
     check("no reflection code writes to appAuditLog", !/appAuditLog/.test(src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "")));
+
+    // EVERY convex/reflection*.ts, including the list screen's file. Every
+    // staff browser downloads appAuditLog (auditLog.ts, script.js), so a line
+    // there may say at most "Resolved 1 Reflection Room review item": never
+    // which student, which detention or which tardy (spec 3.9, 4.7).
+    const strip = (x) => x.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+    const files = readdirSync(new URL("./convex/", import.meta.url)).filter((f) => /^reflection\w*\.ts$/.test(f));
+    const inserts = [];
+    for (const f of files) {
+      const code = strip(read(`./convex/${f}`));
+      for (const m of code.matchAll(/insert\(\s*["'`]appAuditLog["'`]/g)) {
+        let depth = 0, k = code.indexOf("(", m.index);
+        const start = k;
+        for (; k < code.length; k++) { if (code[k] === "(") depth++; else if (code[k] === ")" && --depth === 0) break; }
+        inserts.push({ f, text: code.slice(start, k + 1) });
+      }
+    }
+    const IDENT = /\b(studentNumbers?|studentName|studentId|firstName|lastName|name|unitIds?|unitId|tardyIds?|uniformIds?)\b/;
+    check("static: no appAuditLog insert from reflection code carries a student number, name or unit id",
+      files.includes("reflectionList.ts") && inserts.every((x) => !IDENT.test(x.text)),
+      inserts.filter((x) => IDENT.test(x.text)).map((x) => `${x.f}: ${x.text.slice(0, 120)}`).join(" | "));
+    const listSrc = strip(read("./convex/reflectionList.ts"));
+    const publicFns = [...listSrc.matchAll(/export const (\w+) = (query|mutation|action)\(/g)].map((m) => m[1]);
+    check("the list's only public functions are listForDay and recordPrint, and each checks canReadReflection first",
+      J(publicFns) === J(["listForDay", "recordPrint"]) && publicFns.every((n) => {
+        const body = listSrc.slice(listSrc.indexOf(`export const ${n} =`));
+        const gate = body.indexOf("canReadReflection(staff, today)");
+        return gate > 0 && gate < body.indexOf("requireStaff(ctx)") + 200 && gate < body.search(/ctx\.db\.|getDay\(|loadSettings\(/);
+      }), J(publicFns));
     const pkg = JSON.parse(read("./package.json"));
     check("this test runs in npm test", /&& node reflection-reader\.test\.mjs\b/.test(pkg.scripts.test));
   }

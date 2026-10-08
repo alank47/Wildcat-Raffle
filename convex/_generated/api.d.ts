@@ -81,6 +81,7 @@ import type * as referralMailRules from "../referralMailRules.js";
 import type * as referralPing from "../referralPing.js";
 import type * as referralPingRules from "../referralPingRules.js";
 import type * as reflection from "../reflection.js";
+import type * as reflectionList from "../reflectionList.js";
 import type * as reflectionRead from "../reflectionRead.js";
 import type * as reflectionRules from "../reflectionRules.js";
 import type * as restrictedPolicy from "../restrictedPolicy.js";
@@ -196,6 +197,7 @@ declare const fullApi: ApiFromModules<{
   referralPing: typeof referralPing;
   referralPingRules: typeof referralPingRules;
   reflection: typeof reflection;
+  reflectionList: typeof reflectionList;
   reflectionRead: typeof reflectionRead;
   reflectionRules: typeof reflectionRules;
   restrictedPolicy: typeof restrictedPolicy;
