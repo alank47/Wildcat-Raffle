@@ -457,7 +457,7 @@ const CASES = [
     to: "    const units = got.units.slice().sort((a, b) => a.recordedAt.localeCompare(b.recordedAt));",
     mustFail: "owes 2 with a carry and a queued detention: the carry, standing for the older detention, is served first" },
   { guard: "re-deciding a waiting carry drops its 'Queued: 2nd detention' tag", file: SERVER, test: READER_TEST,
-    from: "          tags: [...(fresh.tags ?? []), ...(carry!.tags.includes(QUEUED_TAG) ? [QUEUED_TAG] : [])],",
+    from: "          tags: [...(fresh.tags ?? []), ...(same.tags.includes(QUEUED_TAG) ? [QUEUED_TAG] : [])],",
     to: "          tags: fresh.tags ?? [],",
     mustFail: "...and Tuesday's, waiting, keeps 'Queued: 2nd detention' through Wednesday's afternoon re-reads" },
   { guard: "'Uniform logged after the list closed' is judged by when the entry was seen, not saved", file: RULES, test: RULES_TEST,
@@ -488,6 +488,13 @@ const CASES = [
     from: "        if (u.voidedAt || u.reflectionState !== \"before-start\" || divisionOfGrade(u.studentGrade) !== a.division) continue;",
     to: "        continue;",
     mustFail: "M1 Mon 11/9: the students on the list" },
+  { guard: "a tardy counting again is judged by its first detention's pull, not the carry it was released from", file: SERVER, test: READER_TEST,
+    from: "    if (next.serveDay) last = next;", to: "    if (false) last = next;",
+    mustFail: "shadow: the mark counting again, Monday's detention stands as it was, and its carry, released before its own pull, waits for the next list" },
+  { guard: "a carry withdrawn by a re-read is replaced by a fresh one when it carries again", file: SERVER, test: READER_TEST,
+    from: "        .filter((x) => x.kind === \"carry\" && x.carryFromUnitId === u._id && x.state === \"expired\")",
+    to: "        .filter(() => false)",
+    mustFail: "...carried again at 14:00, that same carry waits again, still 'Queued: 2nd detention'" },
 ];
 
 // A builder's shortcut, never set in npm test: REFLECTION_TEETH_ONLY=<text>

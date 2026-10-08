@@ -707,12 +707,43 @@ async function rejoinDetention(ctx: MutationCtx, unitId: Id<"reflectionUnits"> |
   if (!u) return "none";
   if (u.state !== "released") return "kept";
   if (!u.serveDay || !u.releasedAt) return "none";
-  const dRow = await getDay(ctx, u.serveDay);
+  // JUDGED BY THE DETENTION THE STUDENT WAS RELEASED FROM (fourth review,
+  // 2026-10-08). A tardy points at its first detention, never at the carry
+  // a later list claimed; released with it, that carry is the one the
+  // student was told not to come to. The last one released at the same
+  // moment that is on a list is the one whose pull counts. Judged by the
+  // first detention's (always earlier) pull, a carry released before its
+  // own pull was put back on its list, and the after-school read called it
+  // served.
+  let last: Doc<"reflectionUnits"> = u;
+  const seen = new Set<string>([u._id]);
+  for (let next = u.carriedToUnitId ? await ctx.db.get(u.carriedToUnitId) : null;
+    next && !seen.has(next._id) && next.state === "released" && next.releasedAt === u.releasedAt;
+    next = next.carriedToUnitId ? await ctx.db.get(next.carriedToUnitId) : null) {
+    seen.add(next._id);
+    if (next.serveDay) last = next;
+  }
+  const serveDay = last.serveDay!;
+  const dRow = await getDay(ctx, serveDay);
   const kind = (SCHEDULE_KINDS as string[]).includes(String(dRow?.kind)) ? dRow!.kind as ScheduleKind
-    : scheduleKindFor({ date: u.serveDay, marked: await markedOf(ctx, u.serveDay), scheduleKinds: settings.scheduleKinds, rowCounts: dRow?.rowCounts ?? null }).kind;
-  const pullAt = pullInstant(u.serveDay, kind, u.division, settings, tz);
-  if (!rejoinsReleasedDetention({ releasedAt: u.releasedAt, pullAt })) return "none";
+    : scheduleKindFor({ date: serveDay, marked: await markedOf(ctx, serveDay), scheduleKinds: settings.scheduleKinds, rowCounts: dRow?.rowCounts ?? null }).kind;
+  const pullAt = pullInstant(serveDay, kind, last.division, settings, tz);
+  if (rejoinsReleasedDetention({ releasedAt: u.releasedAt, pullAt })) {
+    await unrelease(ctx, u._id, u.releasedAt);
+    return "restored";
+  }
+  // Released before the pull of its own first list: none, and the next list
+  // claims the tardy.
+  if (last._id === u._id) return "none";
+  // Released before the pull of a LATER list's carry: the detentions before
+  // it stand as they were (the room ran with the student on them), and the
+  // carry, never served, waits again for the next list -- without that
+  // list's row details.
   await unrelease(ctx, u._id, u.releasedAt);
+  await ctx.db.patch(last._id, {
+    state: "pending", serveDay: undefined, listedAt: undefined, owes: undefined, puSnapshot: undefined, absentMorning: undefined,
+    tags: last.tags.filter((tag) => !/^Owes \d+$/.test(tag)),
+  });
   return "restored";
 }
 
@@ -782,15 +813,28 @@ async function decideCarries(ctx: MutationCtx, c: {
       // freeze (beforeStartAtClaim) park it if it is from before the start.
       const nowMode = c.settings.modeByDivision[u.division];
       const otherMode = nowMode !== "off" && u.mode !== nowMode;
-      if (carryId) {
-        const fresh = carriedUnit(unitItemOf(u), verdict, carry!.recordedAt);
-        await ctx.db.patch(carryId, {
+      // A CARRY WITHDRAWN BY AN EARLIER RE-READ COMES BACK (fourth review,
+      // 2026-10-08). A re-read that said "served" expired it; when a later
+      // one says "carry" again, a fresh carry lost the "Queued: 2nd
+      // detention" an earlier list had put on it -- the list that printed
+      // "Owes 2". The withdrawn carry waits again instead, with its tags,
+      // recordedAt and originAt.
+      const withdrawn = carryId ? null : (await ctx.db.query("reflectionUnits")
+        .withIndex("by_student", (q) => q.eq("studentNumber", u.studentNumber)).collect())
+        .filter((x) => x.kind === "carry" && x.carryFromUnitId === u._id && x.state === "expired")
+        .sort((x, y) => y.recordedAt.localeCompare(x.recordedAt))[0] ?? null;
+      const same = carryId ? carry! : withdrawn;
+      if (same) {
+        const fresh = carriedUnit(unitItemOf(u), verdict, same.recordedAt);
+        carryId = same._id;
+        await ctx.db.patch(same._id, {
           // The carry tag is decided again; "Queued: 2nd detention", put on
           // by a list that served an older detention first, stays (third
           // review, 2026-10-08: every read re-reads this date while the
           // carry waits, and dropped it).
-          tags: [...(fresh.tags ?? []), ...(carry!.tags.includes(QUEUED_TAG) ? [QUEUED_TAG] : [])],
+          tags: [...(fresh.tags ?? []), ...(same.tags.includes(QUEUED_TAG) ? [QUEUED_TAG] : [])],
           carryCount: fresh.carryCount, carryBasis: verdict.basis,
+          ...(withdrawn ? { state: "pending" as const, expiredAt: undefined, expireReason: undefined } : {}),
           ...(otherMode ? { state: "before-start" as const, reviewReason: CARRY_OTHER_MODE } : {}),
         });
       } else {

@@ -53,6 +53,9 @@
 //      entry are on the next list; an earlier day's is parked by the switch.
 //  24. Two carries owed on one list: the older is served, and the other keeps
 //      "Queued: 2nd detention" through every re-read until its own list.
+//  25. A carry released after its list was made, before its pull, whose
+//      mark counts again: still owed, on the next list.
+//  26. A queued carry withdrawn by a re-read and carried again keeps its tag.
 //
 // TEETH: scripts/reflection-teeth.mjs breaks the direct id confirmation, the
 // natural key, the lease expiry, the "unconfirmed changes nothing" rule,
@@ -1631,6 +1634,101 @@ try {
     await drive(w, la(THU, "07:30"), la(THU, "11:45"));
     const onThu = w.units("OW").find((u) => u.serveDay === THU);
     check("Thursday serves it with both tags",
+      onThu?.carriedFromDay === TUE && J(onThu.tags) === J(["Carried over from Tue 11/17 (absent)", "Queued: 2nd detention"]), J(onThu));
+  }
+
+  // ==========================================================================
+  console.log("\n25. A CARRY RELEASED AFTER ITS LIST WAS MADE, BEFORE ITS PULL, AND THE MARK COUNTS AGAIN: STILL OWED\n");
+  // ==========================================================================
+  // (fourth review, 2026-10-08) A tardy points at its first detention, never
+  // at the carry a later list claimed. Monday's detention carries and
+  // Tuesday's list claims the carry; the mark is changed to D and read at
+  // 12:00, before MS is pulled at 12:31, so both are released and the
+  // student is told not to come. The mark goes back to T: judged by Monday's
+  // (always earlier) pull, the whole chain was put back, the carry on
+  // Tuesday's list, and the after-school read called it served.
+  for (const mode of ["shadow", "live"]) {
+    const MON = "2026-10-12", TUE = "2026-10-13", WED = "2026-10-14";
+    const w = await world({
+      students: { RJ: { grade: 7, sections: MS } },
+      days: [{ date: MON, slots: MON_SLOTS }, { date: TUE, slots: TUE_SLOTS }, { date: WED, slots: WED_SLOTS }],
+      settings: { modeByDivision: { ms: mode, hs: "off" }, countFromDateByDivision: { ms: MON, hs: null } },
+    });
+    await w.store.db.insert("teachers", { name: "Staff", ticketsAwarded: 0, email: "admin@school.test", role: "admin" });
+    const p1 = w.mark(MON, "RJ", 2, "T");
+    const recode = (c) => { w.fake.tables.attendance.find((r) => r.id === p1).attendance_codeid = CODE[c]; };
+    await drive(w, la(MON, "07:30"), la(MON, "15:45"), [
+      [la(MON, "13:30"), () => { w.mark(MON, "RJ", 9, "A"); w.mark(MON, "RJ", 6, "A"); }],   // absent at Power-Up and P5: carries
+    ]);
+    await drive(w, la(TUE, "07:30"), la(TUE, "11:45"));
+    const first = () => w.units("RJ").find((u) => u.serveDay === MON);
+    const carry = () => w.units("RJ").find((u) => u.kind === "carry");
+    check(`${mode}: Tuesday's list claims Monday's carry`,
+      first()?.state === "carried" && carry()?.state === "listed" && carry()?.serveDay === TUE, J(w.units("RJ")));
+    clock.set(Date.parse(la(TUE, "11:55")));
+    recode("D");
+    clock.set(Date.parse(la(TUE, "12:00")));
+    w.rt.signIn({ issuer: STAFF_ISSUER, email: "admin@school.test" });
+    const now = await w.rt.run("reflectionRoom.readNow", {});
+    await runJobs(w, Date.parse(la(TUE, "12:01")));
+    check(`${mode}: changed to D and read at 12:00, before the 12:31 pull: Monday's detention and its carry are released`,
+      now.ok && first()?.state === "released" && carry()?.state === "released" && carry()?.releasedAt === la(TUE, "12:00"),
+      J({ now, units: w.units("RJ").map((u) => [u.kind, u.state, u.releasedAt]) }));
+    await drive(w, la(TUE, "12:05"), la(TUE, "15:45"), [[la(TUE, "12:50"), () => recode("T")]]);
+    const t = w.tardies("RJ")[0];
+    check(`${mode}: the mark counting again, Monday's detention stands as it was, and its carry, released before its own pull, waits for the next list`,
+      t.state === "countable" && t.unitId === first()?._id && first()?.state === "carried"
+        && carry()?.state === "pending" && !carry()?.serveDay && w.units("RJ").length === 2,
+      J({ t: [t.state, t.unitId], units: w.units("RJ").map((u) => [u.kind, u.state, u.serveDay]) }));
+    await drive(w, la(WED, "07:30"), la(WED, "11:20"));
+    check(`${mode}: ...so Wednesday's list holds RJ, serving that carry, and the mark is on no second list`,
+      J(w.listed(WED)) === J(["RJ"]) && carry()?.serveDay === WED && carry()?.state === "listed"
+        && w.units("RJ").filter((u) => u.tardyIds.includes(t._id)).length === 2,
+      J({ wed: w.listed(WED), units: w.units("RJ").map((u) => [u.kind, u.state, u.serveDay]) }));
+  }
+
+  // ==========================================================================
+  console.log("\n26. A QUEUED CARRY WITHDRAWN BY A RE-READ AND CARRIED AGAIN KEEPS ITS TAG\n");
+  // ==========================================================================
+  // World 24, then Tuesday's Power-Up absence is changed to present at 12:50
+  // on Wednesday (the 13:00 re-read withdraws the queued carry) and back to
+  // absent at 13:50 (the 14:00 re-read carries again). A fresh carry lost
+  // "Queued: 2nd detention", though Wednesday's list printed "Owes 2" for
+  // the student (fourth review, 2026-10-08).
+  {
+    const MON = "2026-11-16", TUE = "2026-11-17", WED = "2026-11-18", THU = "2026-11-19";
+    const w = await world({
+      students: { OW: { grade: 7, sections: MS } },
+      days: [{ date: MON, slots: MON_SLOTS }, { date: TUE, slots: TUE_SLOTS }, { date: WED, slots: WED_SLOTS }, { date: THU, slots: MON_SLOTS }],
+      settings: { modeByDivision: { ms: "shadow", hs: "shadow" }, countFromDateByDivision: { ms: "2026-10-21", hs: "2026-10-21" } },
+    });
+    w.mark(MON, "OW", 2, "T");
+    await drive(w, la(MON, "07:30"), la(MON, "15:45"));
+    let pu;
+    await drive(w, la(TUE, "07:30"), la(TUE, "15:45"), [
+      [la(TUE, "08:30"), () => w.mark(TUE, "OW", 3, "T")],
+      [la(TUE, "12:40"), () => { w.mark(MON, "OW", 9, "A"); w.mark(MON, "OW", 6, "A"); }],
+      [la(TUE, "13:50"), () => { pu = w.mark(TUE, "OW", 9, "A"); w.mark(TUE, "OW", 7, "A"); }],
+    ]);
+    const recode = (c) => { w.fake.tables.attendance.find((r) => r.id === pu).attendance_codeid = CODE[c]; };
+    const tueCarries = () => w.units("OW").filter((u) => u.kind === "carry" && u.carriedFromDay === TUE);
+    let withdrawn;
+    await drive(w, la(WED, "07:30"), la(WED, "15:45"), [
+      [la(WED, "12:50"), () => recode("P")],
+      [la(WED, "13:05"), () => { withdrawn = tueCarries().map((u) => ({ ...u })); }],
+      [la(WED, "13:50"), () => recode("A")],
+    ]);
+    check("Wednesday owes 2, and the 13:00 re-read, seeing Tuesday's Power-Up absence taken back, withdraws the queued carry",
+      w.units("OW").find((u) => u.serveDay === WED)?.tags.includes("Owes 2")
+        && withdrawn?.length === 1 && withdrawn[0].state === "expired" && withdrawn[0].tags.includes("Queued: 2nd detention"),
+      J(withdrawn));
+    check("...carried again at 14:00, that same carry waits again, still 'Queued: 2nd detention'",
+      tueCarries().length === 1 && tueCarries()[0]._id === withdrawn?.[0]?._id && tueCarries()[0].state === "pending"
+        && J(tueCarries()[0].tags) === J(["Carried over from Tue 11/17 (absent)", "Queued: 2nd detention"]),
+      J(tueCarries()));
+    await drive(w, la(THU, "07:30"), la(THU, "11:45"));
+    const onThu = w.units("OW").find((u) => u.serveDay === THU);
+    check("...and Thursday serves it with both tags",
       onThu?.carriedFromDay === TUE && J(onThu.tags) === J(["Carried over from Tue 11/17 (absent)", "Queued: 2nd detention"]), J(onThu));
   }
 
