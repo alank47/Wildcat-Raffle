@@ -254,8 +254,17 @@ export const log = mutation({
     // Friday; if the student's division only counts from Monday (switched on,
     // or gone from the pilot to live, over the weekend), it is stored
     // before-start, exactly as a Friday tardy first seen on Monday is, and no
-    // list ever claims it. Likewise for a division switched off.
-    const beforeStart = admitState(day, divisionOfGrade(student.grade), await loadSettings(ctx));
+    // list ever claims it.
+    // NOT WHILE THE DIVISION IS OFF (second review, 2026-10-08). Switched on
+    // later that same morning, counting from today, the division must take
+    // that morning's entries, as it takes that day's tardies (first seen
+    // after the switch); a stamp made while it was off was never lifted. An
+    // entry is left unstamped then: setMode parks it if it is dated before
+    // the day counting starts, and each freeze asks again as it claims
+    // (reflectionRules.beforeStartAtClaim).
+    const division = divisionOfGrade(student.grade);
+    const settings = await loadSettings(ctx);
+    const beforeStart = division && settings.modeByDivision[division] === "off" ? null : admitState(day, division, settings);
     const loaner = args.loanerProvided === true;
     const id = await ctx.db.insert("uniformViolations", {
       studentId: student._id,

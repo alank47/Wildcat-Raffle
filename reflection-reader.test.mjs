@@ -43,6 +43,8 @@
 //      run and Not here decide the live division's carries only.
 //  20. Tardies that count only after their own list was made are tagged
 //      "Entered late in PowerSchool" on the next one.
+//  21. Switched on the morning of its first day: uniform entries logged
+//      while the division was off count from that day, never before it.
 //
 // TEETH: scripts/reflection-teeth.mjs breaks the direct id confirmation, the
 // natural key, the lease expiry, the "unconfirmed changes nothing" rule,
@@ -1441,6 +1443,38 @@ try {
       J(tagsOf("MDT")) === J(["Entered late in PowerSchool (Mon 12/7 P1)"]), J(tagsOf("MDT")));
     check("...and so is a tardy counted, re-judged an arrival before the close, and counted again after it",
       J(tagsOf("MBACK")) === J(["Entered late in PowerSchool (Mon 12/7 P1)"]), J(tagsOf("MBACK")));
+  }
+
+  // ==========================================================================
+  console.log("\n21. SWITCHED ON THE MORNING OF ITS FIRST DAY: THAT MORNING'S UNIFORM ENTRIES COUNT\n");
+  // ==========================================================================
+  // Both divisions off at 07:50, when a uniform entry is logged; MS switched
+  // on at 08:30, counting from today. The day's tardies are first seen after
+  // the switch and count; the uniform entry was stamped before-start when it
+  // was saved and never un-parked (second review, 2026-10-08).
+  {
+    const WED = "2026-10-21";
+    const ms = { grade: 7, sections: MS };
+    const w = await world({ students: { T7: ms }, days: [{ date: WED, slots: WED_SLOTS }] });
+    await w.store.db.insert("teachers", { name: "Pat PBIS", ticketsAwarded: 0, email: "pbis@school.test", role: "pbis" });
+    await w.store.db.insert("students", { studentNumber: "U7", firstName: "Una", lastName: "Test", grade: "7" });
+    await w.store.db.insert("students", { studentNumber: "U8", firstName: "Ugo", lastName: "Test", grade: "8" });
+    w.mark(WED, "T7", 3, "T");
+    w.rt.signIn({ issuer: STAFF_ISSUER, email: "pbis@school.test" });
+    clock.set(la("2026-10-20", "13:00"));                       // the day before counting starts
+    const before = await w.rt.run("uniformViolations.log", { studentNumber: "U8", loanerProvided: false, attemptId: "u8-tue", observedAt: Date.parse(la("2026-10-20", "13:00")) });
+    clock.set(la(WED, "07:50"));
+    const logged = await w.rt.run("uniformViolations.log", { studentNumber: "U7", loanerProvided: false, attemptId: "u7-wed", observedAt: Date.parse(la(WED, "07:50")) });
+    clock.set(la(WED, "08:30"));
+    const on = await w.rt.run("reflection.setMode", { division: "ms", mode: "shadow", countFromDate: WED });
+    await drive(w, la(WED, "08:30"), la(WED, "11:20"));
+    const uRow = w.store.rows("uniformViolations").find((x) => x.studentNumber === "U7");
+    const u8 = w.store.rows("uniformViolations").find((x) => x.studentNumber === "U8");
+    check("a uniform entry logged while its division was off, on the day it starts counting, is on that day's first list with the day's tardies",
+      logged.ok && on.ok && w.day(WED)?.frozenAt && w.listed(WED).includes("T7") && w.listed(WED).includes("U7") && uRow.reflectionState === "listed",
+      J({ listed: w.listed(WED), state: uRow?.reflectionState, made: w.day(WED)?.freezeKind }));
+    check("...while one logged while off the day BEFORE counting starts is parked by the switch, never listed",
+      before.ok && u8.reflectionState === "before-start" && !u8.unitId && !w.listed(WED).includes("U8"), J(u8));
   }
 
   // ==========================================================================
