@@ -19,7 +19,8 @@
 // away work the server never received, or leave the "not saved yet" bar naming
 // a child on the login screen: unsent work is set aside for its author alone
 // and comes back at that person's next sign-in. A read or a save still out at
-// sign-out installs nothing, and Student History is emptied with the rest.
+// sign-out installs nothing, a demotion and a closed tab take the device copy
+// down, and Student History is emptied with the rest.
 //
 // THE SHIPPED CODE RUNS. Each function is lifted out of script.js and run in a
 // small world with the real wildcat-discipline.js; the two install steps
@@ -844,6 +845,32 @@ console.log("\n-- an answer that comes back after sign-out is dropped (review) -
   check("clearSession moves the generation on first", /function clearSession\(\) \{\s*(\/\/[^\n]*\n\s*)*_signInGeneration\+\+;/.test(script));
 }
 
+console.log("\n-- a role lowered mid-session takes the device copy down too (review) --");
+{
+  const G = world(ADMIN, { detentions: DETS1() });
+  const a = loadApp(script, G);
+  a.cacheLocally({ behaviorReferrals: REFS(), detentions: DETS1(), auditLog: [] });
+  check("before: the admin's cache holds the school", blobIn(G).behaviorReferrals.length === 4 && blobIn(G).detentions.length === 1);
+  a.currentUser = { ...ADMIN, role: "teacher" };
+  check("moved down to teacher: shed", (await a.rescopeDisciplineForRole("admin")) === "shed");
+  check("...and the device cache holds no referrals or detentions", !("behaviorReferrals" in blobIn(G)) && !("detentions" in blobIn(G)));
+  const r = loadApp(script, world(null, { auth: { getSession: () => ({ me: { kind: "staff", email: "admin@x.org" } }) } }));
+  r.runLocalRestore(blobIn(G));
+  check("...so a reload before their next save restores nothing", r.referrals.length === 0 && r.detentions.length === 0);
+}
+
+console.log("\n-- closing the tab takes the discipline cache with it (review) --");
+{
+  const G = world(ADMIN, { localStorage: makeStorage({ raffleData: adminCache() }) });
+  loadApp(script, G);
+  check("the page listens for pagehide", typeof (G.listeners || {}).pagehide === "function");
+  await G.listeners.pagehide();
+  check("pagehide flushes saves, as before", (G.flushes || []).length === 1);
+  check("...and strips the referrals, the detentions and the stamp",
+    !("behaviorReferrals" in blobIn(G)) && !("detentions" in blobIn(G)) && !("referralsOwner" in blobIn(G)));
+  check("...keeping the rest (unsaved cash is recovered from it)", blobIn(G).cashTransactions.length === 1);
+}
+
 console.log("\n-- a teacher view ends with the session --");
 {
   const G = world({ ...TEACHER }, { realUser: ADMIN, detentions: DETS1() });
@@ -1243,6 +1270,21 @@ console.log("\n-- TEETH: the sign-out review fixes, each removed, are caught --"
   open(); await pending;
   check("TEETH: a pull that does not check who is signed in puts the school back after sign-out", lp.referrals.length === 4);
 
+  const shedOnly = breakOnce(script, "                    stripDisciplineFromLocalCache();\n                    return 'shed';",
+    "                    return 'shed';", "shed strips cache");
+  const S = world(ADMIN, { detentions: DETS1() });
+  const so = loadApp(shedOnly, S);
+  so.cacheLocally({ behaviorReferrals: REFS(), detentions: DETS1(), auditLog: [] });
+  so.currentUser = { ...ADMIN, role: "teacher" };
+  await so.rescopeDisciplineForRole("admin");
+  check("TEETH: a demotion that only trims memory leaves the school in the device cache", blobIn(S).behaviorReferrals.length === 4);
+
+  const keepsOnClose = breakOnce(script, "window.addEventListener('pagehide', function () { flushSaves(); stripDisciplineFromLocalCache(); });",
+    "window.addEventListener('pagehide', function () { flushSaves(); });", "pagehide strip");
+  const C = world(ADMIN, { localStorage: makeStorage({ raffleData: adminCache() }) });
+  loadApp(keepsOnClose, C);
+  await C.listeners.pagehide();
+  check("TEETH: a pagehide that only flushes leaves the school's referrals in localStorage", blobIn(C).behaviorReferrals.length === 4);
 }
 
 console.log("\n-- the page these run in --");

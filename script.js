@@ -42618,7 +42618,17 @@
         document.addEventListener('visibilitychange', function () {
             if (document.visibilityState === 'hidden') flushSaves();
         });
-        window.addEventListener('pagehide', function () { flushSaves(); });
+        //
+        // AND THE DISCIPLINE PART OF THE DEVICE CACHE GOES WITH THE PAGE
+        // (review, 2026-10-07). An admin who closed the tab without logging
+        // out left the whole school's referrals and detentions in
+        // localStorage until index.html next started in that browser, and
+        // /hub/, /tap/ and /app/ share the origin but never run that start-up.
+        // The cache is only a fallback for a failed server load, so losing it
+        // costs this person a re-read on their own reload, and nothing else.
+        // A page kept in the back-forward cache keeps its memory, and its
+        // next save writes the cache again.
+        window.addEventListener('pagehide', function () { flushSaves(); stripDisciplineFromLocalCache(); });
 
         // ================================================================
         // TEACHER VIEW — admins only, read-only, and honest about its limits.
@@ -43654,7 +43664,17 @@
         async function rescopeDisciplineForRole(beforeRole) {
             try {
                 if (!currentUser || isPreviewingTeacher()) return 'unchanged';
-                if (referralsScopedToViewer()) { shedReferralsNotMine(); return 'shed'; }
+                if (referralsScopedToViewer()) {
+                    shedReferralsNotMine();
+                    // AND THE DEVICE COPY (review, 2026-10-07). Memory was cut
+                    // and localStorage still held the whole school and every
+                    // detention, stamped with this person's email, until their
+                    // next save. A reload in between restores it before anyone
+                    // is signed in, when nothing is cut. The next save writes
+                    // the cache again, cut to what they may now hold.
+                    stripDisciplineFromLocalCache();
+                    return 'shed';
+                }
                 if (window.WildcatDiscipline.seesAllReferrals(beforeRole)) return 'unchanged';
                 // A sign-out while the read is out ends this: what comes back
                 // was for the person who has gone (pullReferralsOnce, the same).
