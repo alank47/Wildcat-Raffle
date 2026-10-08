@@ -244,7 +244,7 @@ export const resolveReview = mutation({
         const carryId = await ctx.db.insert("reflectionUnits", {
           studentNumber: u.studentNumber, division: u.division, kind: "carry",
           tardyIds: u.tardyIds, uniformIds: u.uniformIds, lines: fresh.lines ?? u.lines,
-          recordedAt: now, state: "pending", mode: u.mode,
+          recordedAt: now, originAt: u.originAt ?? u.recordedAt, state: "pending", mode: u.mode,
           carryFromUnitId: u._id, carriedFromDay: u.serveDay, carryCount: fresh.carryCount, carryBasis: "review",
           tags: fresh.tags ?? [],
         });

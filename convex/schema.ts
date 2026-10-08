@@ -1840,6 +1840,10 @@ export default defineSchema({
     uniformIds: v.array(v.id("uniformViolations")),
     lines: v.array(v.string()),
     recordedAt: v.string(),
+    // For a carry: when the detention it stands for was first made (its
+    // source's originAt, else its source's recordedAt). "Owes 2" serves the
+    // OLDEST detention (spec 2.4), and a carry is as old as what it carries.
+    originAt: v.optional(v.string()),
     state: v.union(
       v.literal("pending"), v.literal("listed"), v.literal("carried"), v.literal("queued-forward"),
       v.literal("released"), v.literal("review"), v.literal("expired"), v.literal("before-start"),

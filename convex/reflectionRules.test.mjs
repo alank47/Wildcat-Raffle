@@ -518,6 +518,16 @@ const claim = (dayKey, { tardies = [], uniforms = [], units = [], days = {}, set
   check("...the row shows the served detention's violations and its carry tag",
     J(o.lines) === J(carry.lines) && o.tags.includes("Carried over from Fri 10/9 (absent)"));
   check("...and the new detention is handed back to queue for the next list", o.newUnit && J(o.newUnit.tardyIds) === J(["n1"]) && R.QUEUED_TAG === "Queued: 2nd detention");
+  // Owes 2 again the next day: Tuesday's list served Monday's carry and
+  // queued Tuesday's detention (made 11:45); Monday's carried again, decided
+  // at 15:45. The carry stands for the OLDER detention.
+  const queuedTue = { id: "Q2", studentNumber: S, division: "ms", kind: "queued", state: "pending", recordedAt: at(TUE, "11:45"), carryCount: 0,
+    tags: [R.QUEUED_TAG], lines: ["Tue 10/13: Tardy P2 (Ng)"] };
+  const carriedAgain = { id: "C1b", studentNumber: S, division: "ms", kind: "carry", state: "pending", recordedAt: at(TUE, "15:45"),
+    originAt: at(MON, "11:45"), carryCount: 2, tags: ["Carried over from Tue 10/13 (absent)"], lines: ["Mon 10/12: Tardy P1 (Lee)"] };
+  const twice = claim(WED, { units: [queuedTue, carriedAgain] }).rows[0];
+  check("owes 2 with a carry and a queued detention: the carry, standing for the older detention, is served first",
+    twice?.serve === "C1b" && J(twice.queued) === J(["Q2"]) && twice.tags.includes("Owes 2"), J(twice));
 
   const days = {
     "2026-10-09": { date: "2026-10-09", frozenAt: at("2026-10-09", "11:46"), freezeKind: "closing", closingReadStartedAt: at("2026-10-09", "11:45") },

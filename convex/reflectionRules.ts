@@ -1684,6 +1684,8 @@ export type UnitItem = {
   mode?: Mode;
   /** For a carry: the day of the list it carries from. */
   carriedFromDay?: string | null;
+  /** For a carry: when the detention it carries was first made. Absent: recordedAt. */
+  originAt?: string | null;
 };
 
 export type ListRow = {
@@ -1902,7 +1904,13 @@ export function claimAtFreeze(input: {
     const when = (t: TardyItem) => t.attDate + String(orderOf(t.slot)).padStart(2, "0");
     const tardies = got.tardies.slice().sort((a, b) => when(a).localeCompare(when(b)));
     const uniforms = got.uniforms.slice().sort((a, b) => a.at.localeCompare(b.at));
-    const units = got.units.slice().sort((a, b) => a.recordedAt.localeCompare(b.recordedAt));
+    // THE OLDEST IS SERVED (spec 2.4) -- by the age of the detention each
+    // stands for (third review, 2026-10-08). A carry is recorded when it is
+    // decided, after the queued detention the same day's list made, though
+    // it carries an older one: ordered by recordedAt, the queued one was
+    // served first and the older carry pushed back again.
+    const age = (u: UnitItem) => u.originAt ?? u.recordedAt;
+    const units = got.units.slice().sort((a, b) => age(a).localeCompare(age(b)) || a.recordedAt.localeCompare(b.recordedAt));
     const hasNew = tardies.length > 0 || uniforms.length > 0;
     const owed = [...units.map((u) => u.id), ...(hasNew ? ["new"] : [])];
     if (!owed.length) continue;

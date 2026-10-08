@@ -279,7 +279,7 @@ export const uniformItemOf = (u: Doc<"uniformViolations">): UniformItem => ({
 export const unitItemOf = (u: Doc<"reflectionUnits">): UnitItem => ({
   id: u._id, studentNumber: u.studentNumber, division: u.division, kind: u.kind, state: u.state,
   serveDay: u.serveDay ?? null, recordedAt: u.recordedAt, carryCount: u.carryCount, tags: u.tags, lines: u.lines,
-  mode: u.mode, carriedFromDay: u.carriedFromDay ?? null,
+  mode: u.mode, carriedFromDay: u.carriedFromDay ?? null, originAt: u.originAt ?? null,
 });
 
 export function puSnapshotOf(snap: RosterSnap | null): Doc<"reflectionUnits">["puSnapshot"] {
@@ -777,7 +777,12 @@ async function decideCarries(ctx: MutationCtx, c: {
       if (carryId) {
         const fresh = carriedUnit(unitItemOf(u), verdict, carry!.recordedAt);
         await ctx.db.patch(carryId, {
-          tags: fresh.tags ?? [], carryCount: fresh.carryCount, carryBasis: verdict.basis,
+          // The carry tag is decided again; "Queued: 2nd detention", put on
+          // by a list that served an older detention first, stays (third
+          // review, 2026-10-08: every read re-reads this date while the
+          // carry waits, and dropped it).
+          tags: [...(fresh.tags ?? []), ...(carry!.tags.includes(QUEUED_TAG) ? [QUEUED_TAG] : [])],
+          carryCount: fresh.carryCount, carryBasis: verdict.basis,
           ...(otherMode ? { state: "before-start" as const, reviewReason: CARRY_OTHER_MODE } : {}),
         });
       } else {
@@ -785,7 +790,7 @@ async function decideCarries(ctx: MutationCtx, c: {
         carryId = await ctx.db.insert("reflectionUnits", {
           studentNumber: u.studentNumber, division: u.division, kind: "carry",
           tardyIds: u.tardyIds, uniformIds: u.uniformIds, lines: fresh.lines ?? u.lines,
-          recordedAt: c.now, state: otherMode ? "before-start" : "pending", mode: u.mode,
+          recordedAt: c.now, originAt: u.originAt ?? u.recordedAt, state: otherMode ? "before-start" : "pending", mode: u.mode,
           ...(otherMode ? { reviewReason: CARRY_OTHER_MODE } : {}),
           carryFromUnitId: u._id, carriedFromDay: c.d, carryCount: fresh.carryCount, carryBasis: verdict.basis,
           tags: fresh.tags ?? [],

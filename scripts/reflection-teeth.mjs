@@ -448,6 +448,14 @@ const CASES = [
     from: "    const counts = (t: Doc<\"reflectionTardies\">) => !t.division || settings.modeByDivision[t.division] !== \"off\";",
     to: "    const counts = (t: Doc<\"reflectionTardies\">) => true;",
     mustFail: "...and Monday's HS tardy, waiting while HS is off, costs no full re-read of Monday at Tuesday's reads" },
+  { guard: "owes 2 serves whichever detention was recorded first, not the oldest", file: RULES, test: RULES_TEST,
+    from: "    const units = got.units.slice().sort((a, b) => age(a).localeCompare(age(b)) || a.recordedAt.localeCompare(b.recordedAt));",
+    to: "    const units = got.units.slice().sort((a, b) => a.recordedAt.localeCompare(b.recordedAt));",
+    mustFail: "owes 2 with a carry and a queued detention: the carry, standing for the older detention, is served first" },
+  { guard: "re-deciding a waiting carry drops its 'Queued: 2nd detention' tag", file: SERVER, test: READER_TEST,
+    from: "          tags: [...(fresh.tags ?? []), ...(carry!.tags.includes(QUEUED_TAG) ? [QUEUED_TAG] : [])],",
+    to: "          tags: fresh.tags ?? [],",
+    mustFail: "...and Tuesday's, waiting, keeps 'Queued: 2nd detention' through Wednesday's afternoon re-reads" },
 ];
 
 // A builder's shortcut, never set in npm test: REFLECTION_TEETH_ONLY=<text>
