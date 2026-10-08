@@ -163,8 +163,13 @@ the same morning, counting from today, takes that morning's tardies and
 uniform entries (the evening before is still the quiet time to run it).
 Going from shadow to live sets a
 new date: pending shadow items before it become `before-start`, and shadow
-carries do not move into live. Every mode change is written to
-`reflectionAudit`.
+carries do not move into live. Only what is from before the start is parked:
+a rollback switched back on the same afternoon, counting from that day, keeps
+that day's queued second detentions and carries (a carry decided while the
+division was off waits for the switch too). A date corrected to an earlier
+one (a morning `setMode` with no date counts from tomorrow; run it again with
+today's date) gives back the tardies and uniform entries the later date had
+parked. Every mode change is written to `reflectionAudit`.
 
 Other settings (close minutes, `lateEntryLists`, `maxCarries`, counting
 ditching or Power-Up tardies, `holdFirstClassOnPtNoRow`, capacity, the swap

@@ -774,7 +774,14 @@ async function decideCarries(ctx: MutationCtx, c: {
       // shadow list whose Power-Up absences are entered on Monday, once MS
       // is live -- the carry is recorded, as the pilot's own record, but
       // made before-start: nothing from the pilot is pulled.
-      const otherMode = u.mode !== c.settings.modeByDivision[u.division];
+      // A DIVISION SWITCHED OFF DECIDES NOTHING HERE EITHER (fourth review,
+      // 2026-10-08), as in admitState: decided by the after-school read while
+      // the division was rolled back, the carry was made before-start for
+      // good, and switching back on counting from that day never brought it
+      // back. It waits with its list's mode; switching on (setMode) and the
+      // freeze (beforeStartAtClaim) park it if it is from before the start.
+      const nowMode = c.settings.modeByDivision[u.division];
+      const otherMode = nowMode !== "off" && u.mode !== nowMode;
       if (carryId) {
         const fresh = carriedUnit(unitItemOf(u), verdict, carry!.recordedAt);
         await ctx.db.patch(carryId, {
@@ -1268,8 +1275,10 @@ const DAY_KEY = /^\d{4}-\d{2}-\d{2}$/;
  * earlier is stored as before-start and never listed. A change of mode -- on
  * after off, or shadow to live -- also parks what is still waiting from
  * before: that division's tardies, uniform entries and detentions on no list
- * yet, dated before the new date, become before-start. So a paused week is
- * never served on the first day back, and shadow carries never move into live.
+ * yet, dated before the new date, become before-start, and so does a waiting
+ * detention made under another mode. So a paused week is never served on the
+ * first day back, and shadow carries never move into live. What a later date
+ * parked and the new one admits (dated on or after it) waits again.
  * Switching off clears the date, so switching on again sets a fresh one.
  */
 export const setMode = internalMutation({
@@ -1309,7 +1318,7 @@ export const setMode = internalMutation({
       countFromDateByDivision: { ...s.countFromDateByDivision, [a.division]: from },
     });
 
-    let parked = 0;
+    let parked = 0, revived = 0;
     if (a.mode !== "off" && from && (prev !== a.mode || prevFrom !== from)) {
       const why = `Dated before the list started counting for ${a.division.toUpperCase()} (${from})`;
       for (const state of ["countable", "held"] as const) {
@@ -1321,9 +1330,19 @@ export const setMode = internalMutation({
           parked++;
         }
       }
+      // A WAITING DETENTION IS PARKED ONLY IF IT IS FROM BEFORE THE START
+      // (fourth review, 2026-10-08), the same test the freeze asks
+      // (beforeStartAtClaim): made under another mode, or dated before the
+      // new date -- a carry by the list it carries from, a queued detention
+      // by the list that queued it. Parked whatever its date, a rollback
+      // switched back on that afternoon counting from today lost today's
+      // queued second detentions and carries.
       const units = await ctx.db.query("reflectionUnits").withIndex("by_state", (q) => q.eq("state", "pending")).collect();
       for (const u of units) {
         if (u.division !== a.division) continue;
+        const made = wallClock(u.recordedAt, tz);
+        const listDay = u.carriedFromDay ?? (made.ok ? made.dateKey : u.recordedAt.slice(0, 10));
+        if (u.mode === a.mode && listDay >= from) continue;
         await ctx.db.patch(u._id, { state: "before-start", reviewReason: why });
         parked++;
       }
@@ -1334,12 +1353,36 @@ export const setMode = internalMutation({
         await ctx.db.patch(u._id, { reflectionState: "before-start" });
         parked++;
       }
+      // A DATE MOVED EARLIER GIVES BACK WHAT THE LATER ONE PARKED (fourth
+      // review, 2026-10-08). Only what is dated before countFromDate is
+      // before-start. Switched on in the morning with no date (counting from
+      // tomorrow), then corrected to today, the tardies and uniform entries
+      // seen in between were stamped before-start for good -- and staff could
+      // not log the entry again (one per student per day). Each one of this
+      // division's, dated on or after the new date and on no detention, waits
+      // again: a uniform entry as it was logged, a tardy as countable, which
+      // the next full read of its date (today: every read) re-judges.
+      // Detentions parked for being from another mode stay parked.
+      const stamped = await ctx.db.query("reflectionTardies")
+        .withIndex("by_state_attDate", (q) => q.eq("state", "before-start").gte("attDate", from!)).collect();
+      for (const t of stamped) {
+        if (t.unitId || (t.division ?? null) !== a.division) continue;
+        await ctx.db.patch(t._id, { state: "countable", reason: undefined });
+        revived++;
+      }
+      const stampedU = await ctx.db.query("uniformViolations")
+        .withIndex("by_unit", (q) => q.eq("unitId", undefined).gte("day", from!)).collect();
+      for (const u of stampedU) {
+        if (u.voidedAt || u.reflectionState !== "before-start" || divisionOfGrade(u.studentGrade) !== a.division) continue;
+        await ctx.db.patch(u._id, { reflectionState: undefined });
+        revived++;
+      }
     }
     await audit(ctx, {
       byEmail: "command line", action: "set-mode",
-      reason: `${a.division.toUpperCase()}: ${prev} -> ${a.mode}${from ? `, counting from ${from}` : ""}${parked ? ` (${parked} parked)` : ""}`,
+      reason: `${a.division.toUpperCase()}: ${prev} -> ${a.mode}${from ? `, counting from ${from}` : ""}${parked ? ` (${parked} parked)` : ""}${revived ? ` (${revived} counting again)` : ""}`,
     });
-    return { ok: true, division: a.division, mode: a.mode, previous: prev, countFromDate: from, parked };
+    return { ok: true, division: a.division, mode: a.mode, previous: prev, countFromDate: from, parked, revived };
   },
 });
 

@@ -38,6 +38,9 @@
 //   O. "Owes 2" twice in a row: a carried and a queued detention together.
 //   H. Uniform entries (and tardies) logged while a division is off, then the
 //      division switched on counting from that same day.
+//   M. A switch corrected the same morning (counting from tomorrow, then
+//      today); a rollback after the list, switched back on that afternoon
+//      counting from that day, before and after the after-school read.
 //   T. Tags on tardies that missed their list: a hold released before the
 //      list, then an arrival at the close, counted again after it; on a
 //      fallback day, a late entry and an arrival re-judged after the list.
@@ -556,7 +559,11 @@ function oracle(w, endMs) {
   const uniUnit = new Map();
   const lists = {};
   const listDays = [];
-  const parkedBetween = (div, a, b) => parkingEvents.some((e) => e.division === div && e.at > a && e.at <= b);
+  // Spec 3.9: switching on parks what is waiting from BEFORE the start -- made under another mode ("shadow
+  // carries do not move into live"), or dated before the new countFromDate: a carry by the list it carries
+  // from, a queued detention by the list that queued it. One from the new date's own list waits on.
+  const parkedBetween = (U, a, b) => parkingEvents.some((e) => e.division === U.div && e.at > a && e.at <= b
+    && (e.mode !== U.mode || (U.fromDay ?? U.listDay) < e.from));
 
   /** A tardy whose detention was released BEFORE its pull and that counts again is owed on the next list. */
   function clearedAt(K, U, untilMs) {
@@ -648,7 +655,7 @@ function oracle(w, endMs) {
     });
     for (const U of units) {
       if (U.state !== "pending") continue;
-      if (s.modeByDivision[U.div] !== U.mode || parkedBetween(U.div, U.createdAt, F)
+      if (s.modeByDivision[U.div] !== U.mode || parkedBetween(U, U.createdAt, F)
         || (U.fromDay && (!s.countFromDateByDivision[U.div] || U.fromDay < s.countFromDateByDivision[U.div]))) {
         U.state = "parked";
         continue;
@@ -669,7 +676,7 @@ function oracle(w, endMs) {
           id: ++unitSeq, sn, div, mode: s.modeByDivision[div], kind: "new", keys: keys.map((x) => x.K.k), uniforms: got.unis.map((u) => u.i),
           lines: [...keys.map((x) => tardyLine(x.K)), ...got.unis.map(uniformLine)],
           tags: [...new Set([...keys.flatMap((x) => tardyTags(x.K, D, x.since)), ...got.unis.flatMap((u) => uniformTags(u, D))])],
-          carryCount: 0, createdAt: F, origin: F, state: "pending",
+          carryCount: 0, createdAt: F, origin: F, listDay: D, state: "pending",
         };
         units.push(fresh);
         for (const x of keys) keyUnit.set(x.K.k, fresh.id);
@@ -1210,6 +1217,61 @@ try {
     const ht1 = w.store.rows("reflectionTardies").find((t) => t.studentNumber === "HT1");
     const uh2 = w.store.rows("uniformViolations").find((u) => u.studentNumber === "UH2");
     realLog(`        (HT1 is stored ${ht1?.state}; UH2 is stored ${uh2?.reflectionState ?? "unstamped"})`);
+  }
+
+  // ==========================================================================
+  realLog("\nM. A SWITCH CORRECTED THE SAME DAY: COUNTING FROM TOMORROW, THEN TODAY; A ROLLBACK SWITCHED BACK ON THAT AFTERNOON\n");
+  // ==========================================================================
+  {
+    // M1 (fourth review, 2026-10-08): MS switched to live at 07:00 with no
+    // date (so counting from Tuesday), corrected at 09:00 to count from
+    // Monday. What was logged and seen in between counts from Monday too.
+    const MON = "2026-11-09", TUE = "2026-11-10";
+    const w = await makeWorld({
+      calendar: { [MON]: school("regular", SLOTS.mon), [TUE]: school("regular", SLOTS.tue) },
+      students: { TM: "ms", UM: "ms", TN: "ms", UN: "ms" },
+      settings: { modeByDivision: { ms: "shadow", hs: "shadow" }, countFromDateByDivision: { ms: "2026-10-21", hs: "2026-10-21" } },
+    });
+    const at = (d, t, fn) => [LA(d, t), fn];
+    let first, fixed;
+    await drive(w, MON, TUE, [
+      ...calendarHooks(w),
+      at(MON, "07:00", async () => { first = await w.setMode("ms", "live"); }),         // no date: counting from Tuesday
+      at(MON, "07:50", () => w.uniform("UM")),
+      at(MON, "08:10", () => w.mark(MON, "TM", 2, "T")),                             // seen at 08:30
+      at(MON, "09:00", async () => { fixed = await w.setMode("ms", "live", MON); }),   // corrected: counting from today
+      at(MON, "09:10", () => w.mark(MON, "TN", 2, "T")),
+      at(MON, "09:15", () => w.uniform("UN")),
+    ]);
+    check("M1: switched on with no date, MS counts from Tuesday; corrected, from Monday",
+      first?.countFromDate === TUE && fixed?.countFromDate === MON, J({ first, fixed }));
+    compare("M1", w, Date.parse("2026-11-10T23:55:00Z"));
+  }
+  for (const backAt of ["14:00", "16:30"]) {
+    // M2 (fourth review, 2026-10-08): MS live, HS in shadow. Tuesday's list
+    // serves OW's carry and queues Tuesday's detention ("Owes 2"); MS is
+    // rolled back after the list and switched on again that afternoon,
+    // counting from Tuesday -- before the after-school read (14:00), or after
+    // it (16:30), once the read has decided CA's carry while MS was off. NX
+    // (a P6 tardy after the rollback) is the control.
+    const MON = "2026-11-09", TUE = "2026-11-10", WED = "2026-11-11", THU = "2026-11-12";
+    const w = await makeWorld({
+      calendar: { [MON]: school("regular", SLOTS.mon), [TUE]: school("regular", SLOTS.tue), [WED]: school("wed", SLOTS.all), [THU]: school("regular", SLOTS.mon) },
+      students: { OW: "ms", CA: "ms", NX: "ms" },
+      settings: { modeByDivision: { ms: "live", hs: "shadow" }, countFromDateByDivision: { ms: MON, hs: "2026-10-21" } },
+    });
+    const at = (d, t, fn) => [LA(d, t), fn];
+    await drive(w, MON, THU, [
+      ...calendarHooks(w),
+      at(MON, "08:10", () => w.mark(MON, "OW", 2, "T")),
+      at(MON, "13:50", () => { w.mark(MON, "OW", 9, "A"); w.mark(MON, "OW", 6, "A"); }),    // OW carries to Tuesday
+      at(TUE, "08:30", () => { w.mark(TUE, "OW", 3, "T"); w.mark(TUE, "CA", 3, "T"); }),   // OW owes 2: Tuesday's is queued
+      at(TUE, "12:45", () => w.setMode("ms", "off")),                                       // the rollback, after the list
+      at(TUE, "13:50", () => { w.mark(TUE, "CA", 9, "A"); w.mark(TUE, "CA", 7, "A"); }),    // CA carries
+      at(TUE, "14:10", () => w.mark(TUE, "NX", 7, "T")),
+      at(TUE, backAt, () => w.setMode("ms", "live", TUE)),
+    ]);
+    compare(`M2@${backAt}`, w, Date.parse("2026-11-12T23:55:00Z"));
   }
 
   // ==========================================================================

@@ -295,16 +295,20 @@ const CASES = [
     from: "  if (item.mode && item.mode !== mode) return true;", to: "  return false;",
     mustFail: "at the moment of claiming: a tardy or uniform entry dated before countFromDate, a pilot carry, and a carry from before the start are parked, never listed" },
   { guard: "a pilot detention's carry decided after going live waits as an ordinary pending carry", file: SERVER, test: READER_TEST,
-    from: "      const otherMode = u.mode !== c.settings.modeByDivision[u.division];", to: "      const otherMode = false;",
+    from: "      const otherMode = nowMode !== \"off\" && u.mode !== nowMode;", to: "      const otherMode = false;",
     mustFail: "a Friday pilot detention whose carry is decided on Monday, once MS is live, carries as before-start, never pending" },
   { guard: "a tardy re-judged into counting skips the countFromDate check", file: SERVER, test: READER_TEST,
     from: "          if (rides === \"none\" && (r.state === \"countable\" || r.state === \"held\")\n            && admitState(",
     to: "          if (false\n            && admitState(",
     mustFail: "a Friday arrival that Monday's re-read of Friday counts is before-start, never countable" },
-  { guard: "an item logged or first seen while its division is off is stamped before-start for good", file: RULES, test: READER_TEST,
+  // Judged by what is STORED while the division is off (fourth review,
+  // 2026-10-08): switching on counting from that day now also gives back what
+  // was stamped before-start on or after the new date, so the first list
+  // (world 21) comes out right even with this break.
+  { guard: "an item logged or first seen while its division is off is stamped before-start", file: RULES, test: READER_TEST,
     from: "  if (settings.modeByDivision[division] === \"off\") return null;",
     to: "  if (settings.modeByDivision[division] === \"off\") return \"before-start\";",
-    mustFail: "a uniform entry logged while its division was off, on the day it starts counting, is on that day's first list with the day's tardies" },
+    mustFail: "HS off: MS's list is made, and leaves HS's tardy and uniform entry waiting, neither listed nor stamped before-start" },
   { guard: "a uniform entry dated before countFromDate is stored as if it counted", file: UNIFORM, test: READER_TEST,
     from: "      ...(beforeStart ? { reflectionState: beforeStart } : {}),\n", to: "",
     mustFail: "a queued Friday uniform entry that reaches the server on Monday, once MS counts from Monday, is stored before-start" },
@@ -469,6 +473,21 @@ const CASES = [
     from: "      .filter((t) => !t.division || settings.modeByDivision[t.division] !== \"off\");",
     to: "      .filter(() => true);",
     mustFail: "...a held HS tardy waits as held, and the day's 'held' banner, about the lists being made, does not count it" },
+
+  // ---- the fourth review of 2026-10-08
+  { guard: "switching on parks every waiting detention, whatever its date", file: SERVER, test: "reflection-weeks.test.mjs",
+    from: "        if (u.mode === a.mode && listDay >= from) continue;\n", to: "",
+    mustFail: "M2@14:00 Wed 11/11: the students on the list" },
+  { guard: "a carry decided while its division is off is made before-start for good", file: SERVER, test: "reflection-weeks.test.mjs",
+    from: "      const otherMode = nowMode !== \"off\" && u.mode !== nowMode;", to: "      const otherMode = u.mode !== nowMode;",
+    mustFail: "M2@16:30 Wed 11/11: the students on the list" },
+  { guard: "a countFromDate moved earlier gives back no tardy the later date parked", file: SERVER, test: "reflection-weeks.test.mjs",
+    from: "        if (t.unitId || (t.division ?? null) !== a.division) continue;", to: "        continue;",
+    mustFail: "M1 Mon 11/9: the students on the list" },
+  { guard: "a countFromDate moved earlier gives back no uniform entry the later date parked", file: SERVER, test: "reflection-weeks.test.mjs",
+    from: "        if (u.voidedAt || u.reflectionState !== \"before-start\" || divisionOfGrade(u.studentGrade) !== a.division) continue;",
+    to: "        continue;",
+    mustFail: "M1 Mon 11/9: the students on the list" },
 ];
 
 // A builder's shortcut, never set in npm test: REFLECTION_TEETH_ONLY=<text>
