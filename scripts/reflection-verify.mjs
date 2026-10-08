@@ -460,8 +460,13 @@ export function judge({ day, days, sch, exp, snap, salt }) {
     sysByKey.set(t.key, t);
   }
   const onDay = (t) => t.unitServeDay === day;
-  const seenAfterClose = (t) => closeStart !== null
-    && Math.max(Date.parse(t.firstSeenAt), t.firstCountableAt ? Date.parse(t.firstCountableAt) : 0) > closeStart;
+  // What the list was cut at: the closing read's start, or, on a day the
+  // fallback made the list (no closing read), the fallback's own time (third
+  // review, 2026-10-08). Without it, everything found after a fallback list
+  // read as "dropped by the reader".
+  const listCut = closeStart ?? (row.freezeKind === "fallback" && row.frozenAt ? Date.parse(row.frozenAt) : null);
+  const seenAfterClose = (t) => listCut !== null
+    && Math.max(Date.parse(t.firstSeenAt), t.firstCountableAt ? Date.parse(t.firstCountableAt) : 0) > listCut;
   const psT = new Set();
 
   // ---- 1. Every class T PowerSchool has, judged by the verify's own rule (marks final after school).

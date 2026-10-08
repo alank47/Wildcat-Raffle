@@ -534,6 +534,9 @@ const claim = (dayKey, { tardies = [], uniforms = [], units = [], days = {}, set
       firstCountableAt: at("2026-10-08", "13:00") }))) === J(["Entered late in PowerSchool (Thu 10/8 P3)"]));
   check("tag: Found after the list was made, on a date the fallback made",
     tags(tardy({ attDate: TUE, slot: 2, firstSeenAt: at(TUE, "13:00") })).includes("Found after the list was made (PowerSchool unreadable at close, Tue 10/13)"));
+  check("...and on an arrival seen before that list, counting only after it",
+    J(tags(tardy({ attDate: TUE, slot: 2, firstSeenAt: at(TUE, "08:30"), firstCountableAt: at(TUE, "13:00") })))
+      === J(["Found after the list was made (PowerSchool unreadable at close, Tue 10/13)"]));
   check("tag: List not made, on a date with no list", tags(tardy({ attDate: MON, slot: 2 })).includes("List not made Mon 10/12"));
   check("tag: Uniform logged after the list closed",
     R.uniformTags(uni({ day: "2026-10-09", at: at("2026-10-09", "11:52") }), MON, days, TZ).includes("Uniform logged after the list closed (Fri 10/9 11:52)"));

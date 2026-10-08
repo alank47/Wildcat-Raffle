@@ -45,6 +45,9 @@
 //      "Entered late in PowerSchool" on the next one.
 //  21. Switched on the morning of its first day: uniform entries logged
 //      while the division was off count from that day, never before it.
+//  22. A fallback list: a tardy entered after it, and an arrival re-judged
+//      after it, are both "Found after the list was made", and the verify
+//      calls them entered late, never dropped.
 //
 // TEETH: scripts/reflection-teeth.mjs breaks the direct id confirmation, the
 // natural key, the lease expiry, the "unconfirmed changes nothing" rule,
@@ -1485,6 +1488,49 @@ try {
       J({ listed: w.listed(WED), state: uRow?.reflectionState, made: w.day(WED)?.freezeKind }));
     check("...while one logged while off the day BEFORE counting starts is parked by the switch, never listed",
       before.ok && u8.reflectionState === "before-start" && !u8.unitId && !w.listed(WED).includes("U8"), J(u8));
+  }
+
+  // ==========================================================================
+  console.log("\n22. A FALLBACK LIST: WHAT IS FOUND AFTER IT, AND WHAT THE VERIFY MAKES OF IT\n");
+  // ==========================================================================
+  // PowerSchool is down 11:41-12:02, so Tuesday's closing reads all fail and
+  // the fallback makes the list at 12:00 (third review, 2026-10-08).
+  {
+    const TUE = "2026-10-13", WED = "2026-10-14";
+    const ms = { grade: 7, sections: MS };
+    const w = await world({
+      students: { MREJ: ms, MLATE: ms, MON1: ms },
+      days: [{ date: TUE, slots: TUE_SLOTS }, { date: WED, slots: WED_SLOTS }],
+      settings: { modeByDivision: { ms: "shadow", hs: "off" }, countFromDateByDivision: { ms: "2026-10-12", hs: null } },
+    });
+    const recode = (id, code) => { w.fake.tables.attendance.find((r) => r.id === id).attendance_codeid = CODE[code]; };
+    let pt;
+    w.mark(TUE, "MON1", 3, "T");
+    await drive(w, la(TUE, "07:30"), la(TUE, "15:45"), [
+      [la(TUE, "08:40"), () => { pt = w.mark(TUE, "MREJ", 1, "A"); }],   // absent at Promise Time ...
+      [la(TUE, "09:20"), () => w.mark(TUE, "MREJ", 3, "T")],             // ... so late to P2 is an arrival
+      [la(TUE, "11:41"), () => { w.ctl.down = true; }],
+      [la(TUE, "12:02"), () => { w.ctl.down = false; }],
+      [la(TUE, "12:10"), () => w.mark(TUE, "MLATE", 3, "T")],            // entered after the fallback list
+      [la(TUE, "12:30"), () => recode(pt, "P")],                         // MREJ's absence corrected: counts from 13:00
+    ]);
+    check("Tuesday's list is the fallback's, at 12:00, with MON1 only",
+      w.day(TUE).freezeKind === "fallback" && w.day(TUE).frozenAt === la(TUE, "12:00") && J(w.listed(TUE)) === J(["MON1"]),
+      J({ kind: w.day(TUE).freezeKind, at: w.day(TUE).frozenAt, listed: w.listed(TUE) }));
+    const V = await import(new URL("./scripts/reflection-verify.mjs", import.meta.url).href);
+    const exp = await w.rt.run("reflectionList.verifyExport", { day: TUE });
+    const sch = V.school({ codes: w.fake.tables.attendance_code, students: w.fake.tables.students, cc: [] });
+    const judged = V.judge({ day: TUE, days: { [TUE]: V.dayOf(TUE, w.fake.tables.attendance, sch) }, sch, exp, snap: null, salt: null });
+    check("the verify on a fallback day: both, counting only after the list was made, are entered late, never dropped by the reader",
+      judged.counts.enteredLate === 2 && judged.counts.dropped === 0 && judged.controls.dropped === 0 && judged.counts.onList === 1,
+      J({ c: judged.counts, dropped: judged.controls.dropped }));
+    await drive(w, la(WED, "07:30"), la(WED, "11:25"));
+    const tagsOf = (sn) => w.units(sn).find((u) => u.serveDay === WED)?.tags;
+    const FOUND = ["Found after the list was made (PowerSchool unreadable at close, Tue 10/13)"];
+    check("a tardy entered after a fallback list is on the next list, tagged 'Found after the list was made'",
+      J(tagsOf("MLATE")) === J(FOUND), J(tagsOf("MLATE")));
+    check("...and so is an arrival re-judged as counted after it: seen before the list, counting only after it",
+      J(tagsOf("MREJ")) === J(FOUND), J(tagsOf("MREJ")));
   }
 
   // ==========================================================================

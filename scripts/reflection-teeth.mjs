@@ -430,6 +430,13 @@ const CASES = [
     from: "    } else if (own.frozenAt && t.heldReleasedAt && Date.parse(t.heldReleasedAt) > Date.parse(own.frozenAt)) {",
     to: "    } else if (t.wasHeld && own.frozenAt && t.firstCountableAt && Date.parse(t.firstCountableAt) > Date.parse(own.frozenAt)) {",
     mustFail: "...and one once HELD, whose hold was released before the list: Entered late, never 'Held for attendance'" },
+  { guard: "a fallback day's tag looks only at when a tardy was first seen", file: RULES, test: READER_TEST,
+    from: "    } else if (fallbackAt !== null && countsSince(t) > fallbackAt) {", to: "    } else if (false) {",
+    mustFail: "...and so is an arrival re-judged as counted after it: seen before the list, counting only after it" },
+  { guard: "the verify has no list cut on a fallback day (everything found after it is 'dropped')", file: VERIFY, test: READER_TEST,
+    from: "  const listCut = closeStart ?? (row.freezeKind === \"fallback\" && row.frozenAt ? Date.parse(row.frozenAt) : null);",
+    to: "  const listCut = closeStart;",
+    mustFail: "the verify on a fallback day: both, counting only after the list was made, are entered late, never dropped by the reader" },
 ];
 
 // A builder's shortcut, never set in npm test: REFLECTION_TEETH_ONLY=<text>

@@ -1798,15 +1798,22 @@ export function tardyTags(t: TardyItem, serveDay: string, days: Record<string, D
   const when = `${dayLabel(t.attDate)} ${slotLabel(t.slot)}`;
   if (!servesSameDay(t.slot) && t.attDate < serveDay) tags.push(`From ${when} (after Power-Up)`);
   if (servesSameDay(t.slot) && t.attDate < serveDay && own) {
+    const fallbackAt = own.freezeKind === "fallback" && own.frozenAt ? Date.parse(own.frozenAt) : null;
+    const found = `Found after the list was made (PowerSchool unreadable at close, ${dayLabel(t.attDate)})`;
     if (own.noList) tags.push(`List not made ${dayLabel(t.attDate)}`);
-    else if (own.freezeKind === "fallback" && own.frozenAt && Date.parse(t.firstSeenAt) > Date.parse(own.frozenAt)) {
-      tags.push(`Found after the list was made (PowerSchool unreadable at close, ${dayLabel(t.attDate)})`);
+    else if (fallbackAt !== null && Date.parse(t.firstSeenAt) > fallbackAt) {
+      tags.push(found);
     } else if (own.frozenAt && t.heldReleasedAt && Date.parse(t.heldReleasedAt) > Date.parse(own.frozenAt)) {
       // HELD is judged by when the HOLD was released, never by "was ever
       // held" (third review, 2026-10-08): a hold released before the list,
       // then an arrival at the close and counted again after it, missed the
       // list as an arrival -- "Entered late", below.
       tags.push(`Held for attendance (${when})`);
+    } else if (fallbackAt !== null && countsSince(t) > fallbackAt) {
+      // A FALLBACK DAY has no closing read to be late for (third review,
+      // 2026-10-08): seen before the list but counting only after it (an
+      // arrival re-judged), it was found after the list all the same.
+      tags.push(found);
     } else if (own.closingReadStartedAt && countsSince(t) > Date.parse(own.closingReadStartedAt)) {
       // ENTERED LATE is judged by when it began to COUNT, not when it was
       // first seen (second review, 2026-10-08): an arrival re-judged as

@@ -39,7 +39,8 @@
 //   H. Uniform entries (and tardies) logged while a division is off, then the
 //      division switched on counting from that same day.
 //   T. Tags on tardies that missed their list: a hold released before the
-//      list, then an arrival at the close, counted again after it.
+//      list, then an arrival at the close, counted again after it; on a
+//      fallback day, a late entry and an arrival re-judged after the list.
 //
 // DUMP=1 prints the oracle's lists, day by day.
 // Synthetic student numbers only; nothing here talks to a real deployment.
@@ -499,6 +500,8 @@ function oracle(w, endMs) {
     if (own.noList) return [`List not made ${lbl(A)}`];
     if (own.kind === "fallback" && firstSeen(K) > own.F) return [`Found after the list was made (PowerSchool unreadable at close, ${lbl(A)})`];
     if (since !== null && (holdReleasedAt(K, since) ?? -Infinity) > own.F) return [`Held for attendance (${lbl(A)} ${slotName(K.slot)})`];
+    // Spec 3.9: a fallback day's list had no final read; what began to count after it was "found after".
+    if (own.kind === "fallback" && since !== null && since > own.F) return [`Found after the list was made (PowerSchool unreadable at close, ${lbl(A)})`];
     if (own.kind === "closing" && since !== null && since > own.F) return [`Entered late in PowerSchool (${lbl(A)} ${slotName(K.slot)})`];
     return [];
   }
@@ -1216,19 +1219,25 @@ try {
     const MON = "2026-12-07", TUE = "2026-12-08", WED = "2026-12-09";
     const w = await makeWorld({
       calendar: { [MON]: school("regular", SLOTS.mon), [TUE]: school("regular", SLOTS.tue), [WED]: school("wed", SLOTS.all) },
-      students: { MH: "ms", CB: "ms" },
+      students: { MH: "ms", CB: "ms", RJ: "hs", LT: "ms" },
       // MH's Promise Time section has no marks until CB's absence at 09:40.
       sections: { MH: { 1: "PT-B" }, CB: { 1: "PT-B" } },
       settings: { modeByDivision: { ms: "shadow", hs: "shadow" }, countFromDateByDivision: { ms: "2026-10-21", hs: "2026-10-21" } },
+      // Tuesday's closing reads all fail: the fallback makes the list at 12:00.
+      down: [[TUE, "11:41", "12:02"]],
     });
     const at = (d, t, fn) => [LA(d, t), fn];
-    let mhPt;
+    let mhPt, rjPt;
     await drive(w, MON, WED, [
       ...calendarHooks(w),
       at(MON, "09:00", () => w.mark(MON, "MH", 2, "T")),                 // held: PT-B has no marks yet
       at(MON, "09:40", () => w.mark(MON, "CB", 1, "A")),                 // PT-B's marks: released at 10:30, before the list
       at(MON, "10:40", () => { mhPt = w.mark(MON, "MH", 1, "A"); }),     // absent at Promise Time: an arrival at the close
       at(MON, "12:30", () => w.recode(mhPt, "P")),                       // corrected after the list: counts from 13:00
+      at(TUE, "08:40", () => { rjPt = w.mark(TUE, "RJ", 1, "A"); }),      // absent at Promise Time ...
+      at(TUE, "09:20", () => w.mark(TUE, "RJ", 3, "T")),                 // ... so late to P2 is an arrival
+      at(TUE, "12:10", () => w.mark(TUE, "LT", 3, "T")),                 // entered after the fallback list
+      at(TUE, "12:30", () => w.recode(rjPt, "P")),                       // RJ's absence corrected: counts from 13:00
     ]);
     compare("T", w, Date.parse("2026-12-09T23:55:00Z"));
   }
