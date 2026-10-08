@@ -426,6 +426,10 @@ const CASES = [
   { guard: "the verify skips its PowerSchool carry control on any day a room pressed Attendance done", file: VERIFY, test: VERIFY_TEST,
     from: "  const d = days[day];\n  if (d) {", to: "  const d = days[day];\n  if (d && !row.roomAttendanceDone && !row.roomClosed) {",
     mustFail: "a PowerSchool carry of a student in class before and after Power-Up is a control on a day the OTHER division's room pressed Attendance done" },
+  { guard: "the Held tag goes back to 'was ever held, counts since the list'", file: RULES, test: READER_TEST,
+    from: "    } else if (own.frozenAt && t.heldReleasedAt && Date.parse(t.heldReleasedAt) > Date.parse(own.frozenAt)) {",
+    to: "    } else if (t.wasHeld && own.frozenAt && t.firstCountableAt && Date.parse(t.firstCountableAt) > Date.parse(own.frozenAt)) {",
+    mustFail: "...and one once HELD, whose hold was released before the list: Entered late, never 'Held for attendance'" },
 ];
 
 // A builder's shortcut, never set in npm test: REFLECTION_TEETH_ONLY=<text>

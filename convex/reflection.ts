@@ -267,7 +267,7 @@ export const tardyItemOf = (t: Doc<"reflectionTardies">): TardyItem => ({
   id: t._id, studentNumber: t.studentNumber, attDate: t.attDate, periodId: t.periodId, slot: t.slot,
   psRowIds: t.psRowIds, state: t.state, reason: t.reason ?? null, unitId: t.unitId ?? null,
   firstSeenAt: t.firstSeenAt, firstCountableAt: t.firstCountableAt ?? null, wasHeld: !!t.wasHeld,
-  classTeacher: t.classTeacher ?? null,
+  heldReleasedAt: t.heldReleasedAt ?? null, classTeacher: t.classTeacher ?? null,
 });
 
 export const uniformItemOf = (u: Doc<"uniformViolations">): UniformItem => ({
@@ -1141,6 +1141,8 @@ export const applyRead = internalMutation({
           // When it began to count (again): an arrival or a hold that counts
           // only after its list was made is tagged as such (tardyTags).
           if (r.state === "countable") next.firstCountableAt = a.startedAt;
+          // A hold released: the "Held for attendance" tag's own time.
+          if (r.state === "countable" && t.state === "held") next.heldReleasedAt = a.startedAt;
           // Its detention was released while it did not count: back on it if
           // the room had already run with the student on it, otherwise off it
           // and on to the next list (rejoinDetention).

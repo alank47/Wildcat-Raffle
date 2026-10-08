@@ -527,8 +527,11 @@ const claim = (dayKey, { tardies = [], uniforms = [], units = [], days = {}, set
   check("...but not for a tardy the closing read itself saw",
     tags(tardy({ attDate: "2026-10-09", slot: 2, firstSeenAt: at("2026-10-09", "11:45") })).length === 0);
   check("tag: Held for attendance, when the hold was released after its list was made",
-    tags(tardy({ attDate: "2026-10-08", slot: 4, wasHeld: true, firstSeenAt: at("2026-10-08", "10:30"), firstCountableAt: at("2026-10-08", "15:45") }))
-      .includes("Held for attendance (Thu 10/8 P3)"));
+    tags(tardy({ attDate: "2026-10-08", slot: 4, wasHeld: true, firstSeenAt: at("2026-10-08", "10:30"), firstCountableAt: at("2026-10-08", "15:45"),
+      heldReleasedAt: at("2026-10-08", "15:45") })).includes("Held for attendance (Thu 10/8 P3)"));
+  check("...but a hold released BEFORE its list, then an arrival at the close and counted after it, is Entered late, never Held",
+    J(tags(tardy({ attDate: "2026-10-08", slot: 4, wasHeld: true, firstSeenAt: at("2026-10-08", "09:30"), heldReleasedAt: at("2026-10-08", "10:30"),
+      firstCountableAt: at("2026-10-08", "13:00") }))) === J(["Entered late in PowerSchool (Thu 10/8 P3)"]));
   check("tag: Found after the list was made, on a date the fallback made",
     tags(tardy({ attDate: TUE, slot: 2, firstSeenAt: at(TUE, "13:00") })).includes("Found after the list was made (PowerSchool unreadable at close, Tue 10/13)"));
   check("tag: List not made, on a date with no list", tags(tardy({ attDate: MON, slot: 2 })).includes("List not made Mon 10/12"));
@@ -608,7 +611,7 @@ console.log("\n3.9 SWITCHING ON, AND LATENESS COUNTED IN LISTS\n");
   // A pending T is never late: held on 10/13 (seen with 0 lists), released after 6 lists.
   const heldItem = tardy({ id: "h", attDate: TUE, slot: 2, state: "held", wasHeld: true, firstSeenAt: at(TUE, "10:30") });
   const rel = R.reclassify(heldItem, { verdict: "counted", reason: "", unknownSlots: [] }, { confirmedFull: true });
-  const released = { ...heldItem, state: rel.state, firstCountableAt: at("2026-10-21", "07:30") };
+  const released = { ...heldItem, state: rel.state, firstCountableAt: at("2026-10-21", "07:30"), heldReleasedAt: at("2026-10-21", "07:30") };
   const c = claim("2026-10-21", { tardies: [released], days: { [TUE]: { date: TUE, frozenAt: at(TUE, "11:46"), freezeKind: "closing", closingReadStartedAt: at(TUE, "11:45") } } });
   check("a pending T is never late: a hold released after 6 lists is listed, tagged Held for attendance",
     rel.state === "countable" && c.claimedTardyIds.includes("h") && c.rows[0].tags.includes("Held for attendance (Tue 10/13 P1)"), J(c.rows[0]?.tags));

@@ -1788,10 +1788,15 @@ export default defineSchema({
     reason: v.optional(v.string()),
     holdReason: v.optional(v.string()),
     wasHeld: v.optional(v.boolean()),
+    // When a HOLD was released into counting (held -> countable). The "Held
+    // for attendance" tag is judged by this: a tardy whose hold was released
+    // before its list, and that missed the list for another reason (an
+    // arrival at the close, counted again after), is "Entered late" instead.
+    heldReleasedAt: v.optional(v.string()),
     firstSeenAt: v.string(),
     listsBeforeSeen: v.number(),
     // When it last BECAME countable (first seen, or re-judged from an
-    // arrival, a hold or cleared): the "entered late" and "held" tags.
+    // arrival, a hold or cleared): the "entered late" tag.
     firstCountableAt: v.optional(v.string()),
     lastSeenAt: v.string(),
     missingSince: v.optional(v.string()),

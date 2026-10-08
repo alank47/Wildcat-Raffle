@@ -38,6 +38,8 @@
 //   O. "Owes 2" twice in a row: a carried and a queued detention together.
 //   H. Uniform entries (and tardies) logged while a division is off, then the
 //      division switched on counting from that same day.
+//   T. Tags on tardies that missed their list: a hold released before the
+//      list, then an arrival at the close, counted again after it.
 //
 // DUMP=1 prints the oracle's lists, day by day.
 // Synthetic student numbers only; nothing here talks to a real deployment.
@@ -443,7 +445,23 @@ function oracle(w, endMs) {
     }
     return since;
   };
-  const everHeld = (K, untilMs) => history(K, untilMs).some((h) => h.present && h.verdict === "held");
+  /**
+   * When a HOLD was last released into counting (a held reading, then a
+   * counted one), up to `untilMs`. Spec 3.3: "A tardy released after its
+   * date's list was made lands on the next list, tagged Held for attendance"
+   * -- released after the list, not merely held at some point (third review,
+   * 2026-10-08: a hold released before the list, then an arrival at the
+   * close, missed the list as an arrival).
+   */
+  const holdReleasedAt = (K, untilMs) => {
+    let at = null, prev = null;
+    for (const h of history(K, untilMs)) {
+      const v = h.present ? h.verdict : null;
+      if (v === "counted" && prev === "held") at = h.t;
+      prev = v;
+    }
+    return at;
+  };
 
   // Spec 3.4: the server believes observedAt inside [now - 72 h, now + 5 min], else it files the entry now.
   for (const u of L.uniform) {
@@ -480,7 +498,7 @@ function oracle(w, endMs) {
     if (!own || own.off) return [];
     if (own.noList) return [`List not made ${lbl(A)}`];
     if (own.kind === "fallback" && firstSeen(K) > own.F) return [`Found after the list was made (PowerSchool unreadable at close, ${lbl(A)})`];
-    if (since !== null && since > own.F && everHeld(K, since)) return [`Held for attendance (${lbl(A)} ${slotName(K.slot)})`];
+    if (since !== null && (holdReleasedAt(K, since) ?? -Infinity) > own.F) return [`Held for attendance (${lbl(A)} ${slotName(K.slot)})`];
     if (own.kind === "closing" && since !== null && since > own.F) return [`Entered late in PowerSchool (${lbl(A)} ${slotName(K.slot)})`];
     return [];
   }
@@ -1189,6 +1207,30 @@ try {
     const ht1 = w.store.rows("reflectionTardies").find((t) => t.studentNumber === "HT1");
     const uh2 = w.store.rows("uniformViolations").find((u) => u.studentNumber === "UH2");
     realLog(`        (HT1 is stored ${ht1?.state}; UH2 is stored ${uh2?.reflectionState ?? "unstamped"})`);
+  }
+
+  // ==========================================================================
+  realLog("\nT. WHY A TARDY MISSED ITS LIST: THE TAG NAMES THE REASON\n");
+  // ==========================================================================
+  {
+    const MON = "2026-12-07", TUE = "2026-12-08", WED = "2026-12-09";
+    const w = await makeWorld({
+      calendar: { [MON]: school("regular", SLOTS.mon), [TUE]: school("regular", SLOTS.tue), [WED]: school("wed", SLOTS.all) },
+      students: { MH: "ms", CB: "ms" },
+      // MH's Promise Time section has no marks until CB's absence at 09:40.
+      sections: { MH: { 1: "PT-B" }, CB: { 1: "PT-B" } },
+      settings: { modeByDivision: { ms: "shadow", hs: "shadow" }, countFromDateByDivision: { ms: "2026-10-21", hs: "2026-10-21" } },
+    });
+    const at = (d, t, fn) => [LA(d, t), fn];
+    let mhPt;
+    await drive(w, MON, WED, [
+      ...calendarHooks(w),
+      at(MON, "09:00", () => w.mark(MON, "MH", 2, "T")),                 // held: PT-B has no marks yet
+      at(MON, "09:40", () => w.mark(MON, "CB", 1, "A")),                 // PT-B's marks: released at 10:30, before the list
+      at(MON, "10:40", () => { mhPt = w.mark(MON, "MH", 1, "A"); }),     // absent at Promise Time: an arrival at the close
+      at(MON, "12:30", () => w.recode(mhPt, "P")),                       // corrected after the list: counts from 13:00
+    ]);
+    compare("T", w, Date.parse("2026-12-09T23:55:00Z"));
   }
 
   // ==========================================================================

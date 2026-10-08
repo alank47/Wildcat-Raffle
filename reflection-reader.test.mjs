@@ -1418,20 +1418,28 @@ try {
     const MON = "2026-12-07", TUE = "2026-12-08";
     const ms = { grade: 7, sections: MS };
     const w = await world({
-      students: { MREJ: ms, MDT: ms, MBACK: ms },
+      // MH's Promise Time section (PT-B) has no marks until CB's at 09:40.
+      students: { MREJ: ms, MDT: ms, MBACK: ms, MH: { grade: 7, sections: { ...MS, 1: "PT-B" } }, CB: { grade: 7, sections: { 1: "PT-B" } } },
       days: [{ date: MON, slots: MON_SLOTS }, { date: TUE, slots: TUE_SLOTS }],
       settings: { modeByDivision: { ms: "shadow", hs: "off" }, countFromDateByDivision: { ms: MON, hs: null } },
     });
     const recode = (id, code) => { w.fake.tables.attendance.find((r) => r.id === id).attendance_codeid = CODE[code]; };
-    let pt, dt, bt;
+    let pt, dt, bt, ht;
     await drive(w, la(MON, "07:30"), la(MON, "15:45"), [
       [la(MON, "08:40"), () => { pt = w.mark(MON, "MREJ", 1, "A"); }],   // absent at Promise Time ...
       [la(MON, "09:20"), () => w.mark(MON, "MREJ", 2, "T")],             // ... so a T in P1 is an arrival
       [la(MON, "09:21"), () => { dt = w.mark(MON, "MDT", 2, "T"); }],
       [la(MON, "09:22"), () => w.mark(MON, "MBACK", 2, "T")],            // counted at 09:30 ...
       [la(MON, "10:00"), () => { recode(dt, "D"); bt = w.mark(MON, "MBACK", 1, "A"); }],   // excused; an arrival ...
-      [la(MON, "12:30"), () => { recode(pt, "P"); recode(dt, "T"); recode(bt, "P"); }],     // ... all corrected after the close
+      [la(MON, "09:00"), () => w.mark(MON, "MH", 2, "T")],               // PT-B has no marks yet: held ...
+      [la(MON, "09:40"), () => w.mark(MON, "CB", 1, "A")],               // ... released at 10:30, before the list ...
+      [la(MON, "10:40"), () => { ht = w.mark(MON, "MH", 1, "A"); }],     // ... then an arrival at the close
+      [la(MON, "12:30"), () => { recode(pt, "P"); recode(dt, "T"); recode(bt, "P"); recode(ht, "P"); }],     // ... all corrected after the close
     ]);
+    const mh = w.tardies("MH")[0];
+    check("MH: held, released before the list, an arrival at the close, counted again after it",
+      !w.listed(MON).includes("MH") && mh.state === "countable" && mh.wasHeld && mh.heldReleasedAt === la(MON, "10:30") && mh.firstCountableAt === la(MON, "13:00"),
+      J({ mon: w.listed(MON), mh }));
     check("neither is on Monday's list: one was an arrival, the other excused, when it was made",
       w.day(MON).freezeKind === "closing" && ["MREJ", "MDT", "MBACK"].every((sn) => !w.listed(MON).includes(sn) && w.tardies(sn)[0].state === "countable"),
       J({ mon: w.listed(MON), t: w.tardies().filter((t) => ["MREJ", "MDT", "MBACK"].includes(t.studentNumber)).map((t) => [t.studentNumber, t.state]) }));
@@ -1443,6 +1451,8 @@ try {
       J(tagsOf("MDT")) === J(["Entered late in PowerSchool (Mon 12/7 P1)"]), J(tagsOf("MDT")));
     check("...and so is a tardy counted, re-judged an arrival before the close, and counted again after it",
       J(tagsOf("MBACK")) === J(["Entered late in PowerSchool (Mon 12/7 P1)"]), J(tagsOf("MBACK")));
+    check("...and one once HELD, whose hold was released before the list: Entered late, never 'Held for attendance'",
+      J(tagsOf("MH")) === J(["Entered late in PowerSchool (Mon 12/7 P1)"]), J(tagsOf("MH")));
   }
 
   // ==========================================================================
