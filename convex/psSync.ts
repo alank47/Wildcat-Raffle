@@ -117,11 +117,15 @@ export const clearRoster = internalMutation({
  * guard in sisAction.syncFromPowerSchool compares the new read with this
  * before it clears anything. Paged because the table is bigger than one
  * execution should read (see clearRoster above); the action adds the pages up.
+ * Counted per sync (syncedAt), as [syncedAt, rows] pairs, so the guard can
+ * tell one roster from two overlapping syncs' rows.
  */
 export const rosterCountPage = internalQuery({
   args: { cursor: v.union(v.string(), v.null()) },
-  handler: async (ctx, { cursor }): Promise<{ n: number; isDone: boolean; continueCursor: string }> => {
+  handler: async (ctx, { cursor }): Promise<{ n: number; bySync: Array<[string, number]>; isDone: boolean; continueCursor: string }> => {
     const page = await ctx.db.query("psRoster").paginate({ numItems: 2000, cursor });
-    return { n: page.page.length, isDone: page.isDone, continueCursor: page.continueCursor };
+    const bySync = new Map<string, number>();
+    for (const r of page.page) bySync.set(r.syncedAt, (bySync.get(r.syncedAt) ?? 0) + 1);
+    return { n: page.page.length, bySync: [...bySync.entries()], isDone: page.isDone, continueCursor: page.continueCursor };
   },
 });

@@ -116,6 +116,29 @@ try {
     const big = await syncWith(4500, 4400);
     check("the count of what is here is paged, so a roster bigger than one page is counted whole",
       big.summary.rosterRowsBefore === 4500 && big.roster.length === 4400, J({ before: big.summary.rosterRowsBefore }));
+    // TWO SYNCS THAT OVERLAPPED (the cron and a "Sync now") leave every row
+    // twice, under two syncedAts. The guard measures the newest sync's rows,
+    // so the next believable read still replaces the doubled roster (review,
+    // 2026-10-08); measured against all of them it was kept for good.
+    {
+      const store = makeDb(schemaSrc);
+      for (const at of ["2026-10-07T19:00:00.000Z", "2026-10-07T19:00:30.000Z"]) {
+        for (let i = 0; i < 100; i++) {
+          const r = rosterRow(i);
+          await store.db.insert("psRoster", {
+            studentNumber: r.student_number, firstName: "F", lastName: "L", gradeLevel: "7", sectionId: r.section_id,
+            period: r.section_expression, syncedAt: at,
+          });
+        }
+      }
+      const rt = runtime(store, { ...mods, ...stubs });
+      globalThis.fetch = namedQueryServer(95);
+      clock.set("2026-10-08T13:00:00.000Z");
+      const summary = await rt.run("sisAction.syncFromPowerSchool", { reason: "test" });
+      const roster = store.rows("psRoster");
+      check("a roster doubled by two overlapping syncs is replaced by the next believable read, not kept for good",
+        roster.length === 95 && summary.rosterKept === false && summary.rosterRowsBefore === 200, J({ rows: roster.length, kept: summary.rosterKeptReason }));
+    }
     const src = read("./convex/sisAction.ts");
     check("the guard sits before the clear: nothing is deleted until the new read is believed",
       src.indexOf("rosterReplaceVerdict(") > 0 && src.indexOf("rosterReplaceVerdict(") < src.indexOf("internal.psSync.clearRoster"));

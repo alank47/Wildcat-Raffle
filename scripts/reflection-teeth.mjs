@@ -289,6 +289,11 @@ const CASES = [
   { guard: "drop the STALE mark from a menu print of an old answer", file: "script.js", test: PRINT_TEST,
     from: "                if (o.stale) marks.push('STALE: as of ' + o.stale + '. Use the Print button');", to: "",
     mustFail: "the STALE banner: an answer over 60 s old says 'STALE: as of 11:46:10 AM. Use the Print button' on every page" },
+  // ---- the review of 2026-10-08: each fix's guard, broken back to what it was
+  { guard: "the roster guard measures a doubled roster as a whole one", file: "convex/sisAction.ts", test: GUARD_TEST,
+    from: "rosterReplaceVerdict({ incomingRows: rosterRows.length, currentRows: rosterRowsCurrent });",
+    to: "rosterReplaceVerdict({ incomingRows: rosterRows.length, currentRows: rosterRowsBefore });",
+    mustFail: "a roster doubled by two overlapping syncs is replaced by the next believable read, not kept for good" },
 ];
 
 // A builder's shortcut, never set in npm test: REFLECTION_TEETH_ONLY=<text>
