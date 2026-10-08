@@ -41858,7 +41858,10 @@
             }
             if (!day) { _rrData = null; _rrWhy = 'Pick a day.'; renderReflectionRoom(); return null; }
             try {
-                const res = await auth.convexQuery('reflectionList:listForDay', { day: day }, session.idToken);
+                // demoOk: this screen marks a TEST list as TEST, on screen and on
+                // every printed page. The server sends a TEST list's rows only to
+                // a screen that says so; one from before is told in words.
+                const res = await auth.convexQuery('reflectionList:listForDay', { day: day, demoOk: true }, session.idToken);
                 if (seq !== _rrSeq) return res;
                 if (res && res.allowed === false) { _rrData = null; _rrWhy = res.reason || 'Not available to your access level.'; }
                 else if (res && res.ok === false) { _rrData = null; _rrWhy = res.reason || 'The list could not be read.'; }

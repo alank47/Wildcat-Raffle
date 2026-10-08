@@ -273,6 +273,14 @@ or before that day), a day whose real list is made, and a future day. If the
 switch is moved after it was built so that its day counts, the real list is
 shown and printed instead, as if the TEST list were not there.
 
+Only a screen that marks it as TEST is sent its rows (`listForDay` with
+`demoOk`, from the 2026-10-08 build on). A tab still running an older screen
+shows "This day has only a TEST list. It shows, marked TEST, once the Hub
+updates itself." and has nothing to print; nobody needs to do anything. So
+it is safe to build at any point after the Convex deploy. Deploy Convex
+before pushing the site, as always: an older server refuses the new
+screen's `demoOk`.
+
 Building it again replaces it. Clear it once it has been shown:
 
 ```

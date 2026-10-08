@@ -45,6 +45,17 @@ const PRINT_MAX = 600;
 const REFUSED = "The Reflection Room list is limited to administrators, the PBIS team and staff an administrator has "
   + "given access to it.";
 
+/**
+ * What a tab that has not said it can mark a TEST list as TEST is told on a
+ * day that has only a TEST list (listForDay, without `demoOk`). That is every
+ * tab still running a screen from before the TEST list existed: it would
+ * draw the rows as an ordinary pilot list, names and all, with no TEST
+ * anywhere on screen or on paper. So it is sent no row at all. Nobody is
+ * asked to do anything: the tab updates itself and then shows the TEST list,
+ * marked TEST.
+ */
+export const DEMO_NEEDS_UPDATE = "This day has only a TEST list. It shows, marked TEST, once the Hub updates itself.";
+
 /** Why a print of a TEST list is never recorded (recordPrint). */
 export const DEMO_PRINT_REFUSED = "This is a TEST list, not a real one, so no print of it is recorded and no slips or "
   + "changes-only sheet are printed from it. Print on the Reflection Room screen prints the TEST copy, marked "
@@ -509,11 +520,18 @@ function demoAnswer(f: {
  *
  * A TEST LIST (reflectionDemo.ts) is answered for a day ONLY when that day
  * has no real list made and the real list does not count it, and only after
- * the same check of who is asking: real data always wins.
+ * the same check of who is asking: real data always wins. And only to a
+ * screen that says it marks it as TEST (`demoOk`); any other is told so in
+ * words, with no row (DEMO_NEEDS_UPDATE).
  */
 export const listForDay = query({
-  args: { day: v.string() },
-  handler: async (ctx, { day }) => {
+  args: {
+    day: v.string(),
+    // Sent by the screen from 2026-10-08 on, which says TEST ONLY over a TEST
+    // list and on every page of it. A screen from before never sends it.
+    demoOk: v.optional(v.boolean()),
+  },
+  handler: async (ctx, { day, demoOk }) => {
     const staff = await requireStaff(ctx);
     const { tz, nowIso, today } = await schoolNow(ctx);
     // THE CHECK COMES FIRST: nothing below is read for someone refused.
@@ -536,6 +554,7 @@ export const listForDay = query({
     const row = await getDay(ctx, date);
     if (!row?.frozenAt) {
       const demo = await demoListOf(ctx, date, settings);
+      if (demo && demoOk !== true) return { allowed: true as const, ok: false as const, reason: DEMO_NEEDS_UPDATE };
       if (demo) return demoAnswer({ demo, date, today, next, nowIso, roles, settings });
     }
     const marked = await markedOf(ctx, date);

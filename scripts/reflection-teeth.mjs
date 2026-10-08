@@ -535,7 +535,13 @@ const CASES = [
     from: "                if (res.demo === true) {\n                    openReflectionSheet(res, null);",
     to: "                if (false) {\n                    openReflectionSheet(res, null);",
     mustFail: "Print prints the TEST copy from a fresh read, and records nothing (the server refuses a TEST list's print)" },
-  // The review of the TEST list (2026-10-08): the switch moved after a build.
+  // The review of the TEST list (2026-10-08): an open tab from before, and the switch moved after a build.
+  { guard: "the TEST rows go to a screen that never said it marks them as TEST", file: LIST, test: DEMO_TEST,
+    from: "      if (demo && demoOk !== true) return { allowed: true as const, ok: false as const, reason: DEMO_NEEDS_UPDATE };\n", to: "",
+    mustFail: "a screen that does not say it marks a TEST list as TEST (every screen from before this build) is sent no TEST row: words only, asking nobody to refresh" },
+  { guard: "this build's screen never says it marks a TEST list (so it is never shown one)", file: SCREEN, test: DEMO_TEST,
+    from: "{ day: day, demoOk: true }", to: "{ day: day }",
+    mustFail: "this build's screen asks with demoOk and, through the shipped server, draws the TEST list under its red TEST ONLY banner" },
   { guard: "a TEST list is shown, and stops prints, on a day the switch was later moved to count", file: LIST, test: DEMO_TEST,
     from: "  if (countingDivision(settings, day)) return null;\n", to: "",
     mustFail: "a TEST list built before the switch was moved to count its day never hides the real list: the real NOT FINAL list is shown, and its print is recorded" },

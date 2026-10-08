@@ -24,6 +24,12 @@
 //      audit line, setting, lease or uniform entry.
 //   4. IT IS SEEN BY SOMEONE THE REAL LIST REFUSES. The same check first.
 //   5. SOMETHING ELSE READS IT. Only listForDay and recordPrint ever do.
+//   6. AN OPEN TAB FROM BEFORE SHOWS IT UNMARKED. A tab still running an
+//      older screen knows nothing of `demo`: handed the rows, it draws them
+//      as an ordinary pilot list, names and all, and prints them from the
+//      browser's menu with no TEST anywhere. The server sends the rows only
+//      to a screen that says it marks them (demoOk); the older screen, run
+//      for real against the shipped server, is shown words and no row.
 //
 // The screen and the printed sheet (TEST banner, watermark, title, slips
 // and changes off) are checked in reflection-print.test.mjs, section 11.
@@ -33,8 +39,11 @@
 // "as if it closed now" judgment, one at a time, and requires the check
 // named for each to FAIL.
 import { readdirSync, readFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 import { clock, loadConvex, makeDb, runtime } from "./fake-convex.mjs";
 import { fakePowerSchool, reflectionDay } from "./fake-powerschool.mjs";
+import { makeWorld } from "./fake-reflection-screen.mjs";
 
 const read = (p) => readFileSync(new URL(p, import.meta.url), "utf8");
 const schemaSrc = read("./convex/schema.ts");
@@ -202,7 +211,7 @@ try {
   check("reflectionDemo:build reads Thursday and Wednesday from PowerSchool and stores a TEST list, answering in counts only",
     built.ok === true && built.previousDay === WED && built.rosterFrom === "snapshot" && built.counts.total === 6
       && !/"(M\d|R1|H\d)"/.test(J(built)) && !NAME_RE.test(J(built)), J(built));
-  const shown = await demo.tryRun("admin", "reflectionList.listForDay", { day: "today" });
+  const shown = await demo.tryRun("admin", "reflectionList.listForDay", { day: "today", demoOk: true });
   check("demo rows identical to the real list the shipped rules make for the same day: every row, line, tag, Power-Up and section",
     shown.demo === true && J(shape(shown)) === J(shape(realList)), J({ demo: shape(shown), real: shape(realList) }));
   const row = (res, sn) => res.sections.flatMap((s) => s.rows).find((r) => r.studentNumber === sn);
@@ -239,7 +248,7 @@ try {
       && demo.store.rows("reflectionDemoLists")[0].builtByEmail === "admin@school.test" && !("builtByEmail" in doc[0]), J(again));
   const bare = await school({ modeByDivision: { ms: "shadow", hs: "shadow" }, countFromDateByDivision: { ms: FRI, hs: FRI } });
   const bareBuilt = await bare.tryRun(null, "reflectionDemo.build", { day: THU });
-  const bareShown = await bare.tryRun("admin", "reflectionList.listForDay", { day: THU });
+  const bareShown = await bare.tryRun("admin", "reflectionList.listForDay", { day: THU, demoOk: true });
   check("no roster snapshot yet: the Power-Up classes come from psRoster, made the way the snapshot is made, and nothing is written but the TEST list",
     bareBuilt.ok && bareBuilt.rosterFrom === "psRoster" && J(shape(bareShown)) === J(shape(realList))
       && bare.store.rows("reflectionRoster").length === 0 && bare.store.rows("appState").length === 1, J(bareBuilt));
@@ -267,7 +276,7 @@ try {
     // with Thursday's TEST list still stored.
     const beforeMove = demo.store.snapshot();
     await demo.store.db.patch(s._id, { value: { modeByDivision: { ms: "shadow", hs: "shadow" }, countFromDateByDivision: { ms: FRI, hs: THU } } });
-    const moved = await demo.tryRun("admin", "reflectionList.listForDay", { day: THU });
+    const moved = await demo.tryRun("admin", "reflectionList.listForDay", { day: THU, demoOk: true });
     const movedPrint = await demo.tryRun("admin", "reflectionList.recordPrint", { day: THU, kind: "master", unitIds: [], studentNumbers: [], listVersion: "x" });
     const storedTest = demo.store.rows("reflectionDemoLists").length;
     demo.store.restore(beforeMove);
@@ -281,7 +290,7 @@ try {
       kind: "regular", schoolDay: true, modeByDivision: { ms: "shadow", hs: "shadow" }, updatedAt: la(THU, "11:45") });
     await demo.store.db.insert("reflectionUnits", { studentNumber: "M1", division: "ms", kind: "new", tardyIds: [], uniformIds: [],
       lines: ["Thu 10/8: Tardy P1 (Ms Lee)"], recordedAt: la(THU, "11:45"), state: "listed", serveDay: THU, mode: "shadow", carryCount: 0, tags: [] });
-    const wins = await demo.tryRun("admin", "reflectionList.listForDay", { day: THU });
+    const wins = await demo.tryRun("admin", "reflectionList.listForDay", { day: THU, demoOk: true });
     check("a real frozen list for the same day hides the demo: the real list is shown, and nothing of the TEST list",
       wins.demo === false && wins.view === "made" && J(numbers(wins)) === J(["M1"]) && !("demoBuiltAt" in wins && wins.demoBuiltAt), J({ view: wins.view, n: numbers(wins) }));
     const printReal = await demo.tryRun("admin", "reflectionList.recordPrint", { day: THU, kind: "master", unitIds: [], studentNumbers: ["M1"], listVersion: "x" });
@@ -310,14 +319,14 @@ try {
   {
     const out = {};
     for (const who of ["teacher", "aide", "expired"]) {
-      const r = await demo.tryRun(who, "reflectionList.listForDay", { day: THU });
+      const r = await demo.tryRun(who, "reflectionList.listForDay", { day: THU, demoOk: true });
       const p = await demo.tryRun(who, "reflectionList.recordPrint", { day: THU, kind: "master", unitIds: [], studentNumbers: [], listVersion: "x" });
       out[who] = r.allowed === false && !/M1|M9|demo/i.test(J(r)) && p.ok === false && /limited to administrators/.test(p.reason) ? "refused" : J([r, p]);
     }
     check("access refused for a teacher and a campus aide without the grant, and for an expired grant: no TEST list, no TEST row",
       Object.values(out).every((x) => x === "refused"), J(out));
-    const g = await demo.tryRun("granted", "reflectionList.listForDay", { day: THU });
-    const p = await demo.tryRun("pbis", "reflectionList.listForDay", { day: "today" });
+    const g = await demo.tryRun("granted", "reflectionList.listForDay", { day: THU, demoOk: true });
+    const p = await demo.tryRun("pbis", "reflectionList.listForDay", { day: "today", demoOk: true });
     check("...while PBIS, and a staff member an admin gave the list to, see it as they would see the real one",
       g.demo === true && g.roles === false && J(numbers(g)) === J(numbers(shown)) && p.demo === true && p.roles === true, J({ g: g.view, p: p.view }));
   }
@@ -328,7 +337,7 @@ try {
   {
     const beforeClear = demo.store.snapshot();
     const cleared = await demo.tryRun(null, "reflectionDemo.clear", { day: THU });
-    const after = await demo.tryRun("admin", "reflectionList.listForDay", { day: THU });
+    const after = await demo.tryRun("admin", "reflectionList.listForDay", { day: THU, demoOk: true });
     check("reflectionDemo:clear takes the TEST list away, and the day shows what the real list says (no list was made)",
       cleared.ok && cleared.removed === 1 && demo.store.rows("reflectionDemoLists").length === 0 && after.demo === false
         && after.view !== "demo" && numbers(after).length === 0, J({ cleared, view: after.view }));
@@ -398,6 +407,74 @@ try {
       (() => { const body = list.slice(list.indexOf("export const listForDay =")); return body.indexOf("canReadReflection(staff, today)") < body.indexOf("demoListOf(ctx"); })());
     const pkg = JSON.parse(read("./package.json"));
     check("this test runs in npm test", /&& node reflection-demo\.test\.mjs\b/.test(pkg.scripts.test));
+  }
+
+  // ==========================================================================
+  console.log("\n9. AN OPEN TAB FROM BEFORE THIS BUILD\n");
+  // ==========================================================================
+  // An open tab updates itself only at a free moment, after the site's cache,
+  // and is held for up to a day by unsent work; on a Convex deploy before the
+  // site push, every open tab is one. Its screen knows nothing of `demo`.
+  // Each screen below is the SHIPPED screen code, run (fake-reflection-screen)
+  // against the SHIPPED server with exactly the arguments it sends, signed in
+  // as an administrator. `bare` holds Thursday's TEST list.
+  {
+    const BROWSER = Object.entries(NAMES).map(([studentNumber, [firstName, lastName]]) => ({ studentNumber, firstName, lastName }));
+    const server = (send = (a) => a) => ({
+      query: (args, path) => bare.as("admin").run(path.replace(":", "."), send(args)),
+      mutation: (args, path) => bare.as("admin").run(path.replace(":", "."), args),
+    });
+    const screenText = (w) => w.fixed.rrDayNote.textContent + w.fixed.rrBanners.innerHTML + w.fixed.rrList.innerHTML;
+
+    const oldAsk = await bare.tryRun("admin", "reflectionList.listForDay", { day: "today" });
+    const oldNo = await bare.tryRun("admin", "reflectionList.listForDay", { day: THU, demoOk: false });
+    const told = { allowed: true, ok: false, reason: mods.reflectionList.DEMO_NEEDS_UPDATE };
+    check("a screen that does not say it marks a TEST list as TEST (every screen from before this build) is sent no TEST row: words only, asking nobody to refresh",
+      J(oldAsk) === J(told) && J(oldNo) === J(told) && /TEST/.test(told.reason) && !/refresh|reload/i.test(told.reason),
+      J([oldAsk, oldNo].map((r) => ({ ok: r.ok, view: r.view, reason: r.reason, rows: (r.sections || []).reduce((n, x) => n + x.rows.length, 0) }))));
+
+    const now = makeWorld(read("./script.js"), server(), BROWSER);
+    await now.app.loadReflectionList();
+    check("this build's screen asks with demoOk and, through the shipped server, draws the TEST list under its red TEST ONLY banner",
+      now.calls[0]?.args?.demoOk === true && now.app.data?.demo === true && /data-rr-banner="demo"/.test(now.fixed.rrBanners.innerHTML)
+        && NAME_RE.test(now.fixed.rrList.innerHTML) && /rr-test-chip/.test(now.fixed.rrList.innerHTML) && !/rr-pilot/.test(now.fixed.rrList.innerHTML),
+      J({ args: now.calls[0]?.args, why: now.app.why }));
+
+    // The screen that is on production today (61309f3), from git. Skipped
+    // where git or that commit is not available (the teeth script's copy has
+    // no history), because a check that cannot run must not fail a build.
+    let oldSrc = null;
+    try {
+      oldSrc = execFileSync("git", ["show", "61309f3:script.js"],
+        { cwd: fileURLToPath(new URL("./", import.meta.url)), stdio: ["ignore", "pipe", "ignore"], maxBuffer: 256 << 20 }).toString();
+    } catch { /* no git here */ }
+    if (oldSrc) {
+      const old = makeWorld(oldSrc, server(), BROWSER);
+      await old.app.loadReflectionList();
+      const onScreen = screenText(old);
+      check("the 61309f3 screen, against this server on a day with only a TEST list: no row, no name, no PILOT chip -- the server's words about the TEST list instead",
+        !("demoOk" in (old.calls[0]?.args ?? {})) && old.app.data === null && !NAME_RE.test(onScreen) && !/rr-pilot/.test(onScreen)
+          && onScreen.includes(mods.reflectionList.DEMO_NEEDS_UPDATE), onScreen.slice(0, 300));
+      await old.app.printReflectionList();
+      old.fire("beforeprint");
+      old.fire("afterprint");
+      check("...and nothing to print: its Print button prints nothing, the browser's own print menu draws no list, and no print is recorded",
+        old.prints.length === 0 && !old.sheet() && !old.calls.some((c) => c.kind === "mutation") && bare.store.rows("reflectionPrints").length === 0,
+        J({ prints: old.prints.length, calls: old.calls.map((c) => c.path) }));
+
+      // THE CONTROL: the same old screen handed the TEST rows, as it was
+      // before demoOk. It shows what the gate keeps from it.
+      const leak = makeWorld(oldSrc, server((a) => ({ ...a, demoOk: true })), BROWSER);
+      await leak.app.loadReflectionList();
+      leak.fire("beforeprint");
+      const leakSheet = leak.sheet()?.innerHTML || "";
+      check("...the control: handed the TEST rows, the 61309f3 screen draws names under PILOT chips with no TEST anywhere, on screen or on its menu print",
+        NAME_RE.test(screenText(leak)) && /rr-pilot/.test(screenText(leak)) && !/TEST/.test(screenText(leak))
+          && NAME_RE.test(leakSheet) && !/TEST/.test(leakSheet), screenText(leak).slice(0, 300));
+      leak.fire("afterprint");
+    } else {
+      console.log("  SKIP  the 61309f3 screen against this server (git or that commit not available here)");
+    }
   }
 } finally {
   clock.real();
