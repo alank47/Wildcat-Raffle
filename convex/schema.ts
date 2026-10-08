@@ -2017,4 +2017,52 @@ export default defineSchema({
     rosterSyncedAt: v.string(),
     termId: v.optional(v.string()),
   }).index("by_studentNumber", ["studentNumber"]),
+
+  /**
+   * A TEST LIST, for showing staff what the list looks like before it counts
+   * (owner, 2026-10-08): built on the command line from one day's real
+   * PowerSchool marks (reflectionDemo.ts), shown under a red TEST ONLY banner
+   * ONLY on a day with no real list made (reflectionList.listForDay), never
+   * printed as a record, and cleared once shown. Nothing the real list runs
+   * on reads it.
+   *
+   * `rows` have the shape listForDay returns for a row of a list already made
+   * -- student numbers and grades, never a name -- and this validator admits
+   * no other field. `counts`: numbers only (on the list per division, held,
+   * arrivals, reads).
+   */
+  reflectionDemoLists: defineTable({
+    day: v.string(),
+    builtAt: v.string(),
+    builtByEmail: v.optional(v.string()),
+    previousDay: v.optional(v.string()),
+    kind: v.optional(v.union(v.literal("regular"), v.literal("wed"), v.literal("minimum"), v.literal("stack"))),
+    rows: v.array(v.object({
+      key: v.string(),
+      unitId: v.null(),
+      studentNumber: v.string(),
+      grade: v.string(),
+      division: v.union(v.literal("ms"), v.literal("hs")),
+      mode: v.literal("shadow"),
+      state: v.literal("listed"),
+      pu: v.union(v.null(), v.object({
+        teacher: v.union(v.string(), v.null()),
+        course: v.union(v.string(), v.null()),
+        flag: v.union(v.string(), v.null()),
+        check: v.boolean(),
+      })),
+      notOnRoster: v.boolean(),
+      lines: v.array(v.string()),
+      tags: v.array(v.string()),
+      owes: v.number(),
+      absentMorning: v.boolean(),
+      released: v.null(),
+      cleared: v.array(v.object({ line: v.string(), reason: v.string(), at: v.union(v.string(), v.null()) })),
+      voided: v.array(v.object({ line: v.string(), at: v.string() })),
+      after: v.null(),
+      notHere: v.boolean(),
+      slipTo: v.null(),
+    })),
+    counts: v.record(v.string(), v.number()),
+  }).index("by_day", ["day"]),
 });

@@ -199,8 +199,10 @@ async function readStudentEntries(host: string, tok: string, schoolid: string, d
  * THE CODES ARE READ, NEVER TYPED IN: which id is T, which mean Absent
  * (presence status, not a letter: Ditching is coded Present, Suspended
  * Absent). This year's codes only, so the T-only reads ask for this year's T.
+ * Exported for the TEST list's build (reflectionDemo.ts), which reads them
+ * fresh rather than trusting what the reader last stored.
  */
-async function readMaps(host: string, tok: string, schoolid: string, yearid: string, deadline: number) {
+export async function readMaps(host: string, tok: string, schoolid: string, yearid: string, deadline: number) {
   const codes = await tableRows(host, tok, "attendance_code", `schoolid==${schoolid};yearid==${yearid}`,
     "id,att_code,description,presence_status_cd", deadline);
   return {

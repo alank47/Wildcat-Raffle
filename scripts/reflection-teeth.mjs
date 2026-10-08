@@ -35,6 +35,8 @@ const UNIFORM = "convex/uniformViolations.ts";
 const UNIFORM_TEST = "uniform-violations.test.mjs";
 const ACCESS = "convex/accessRules.ts";
 const ACCESS_TEST = "reflection-access.test.mjs";
+const DEMO_RULES = "convex/reflectionDemoRules.ts";
+const DEMO_TEST = "reflection-demo.test.mjs";
 
 const CASES = [
   // ---- step 1: the rules (spec 6, step 1 table)
@@ -495,6 +497,30 @@ const CASES = [
     from: "        .filter((x) => x.kind === \"carry\" && x.carryFromUnitId === u._id && x.state === \"expired\")",
     to: "        .filter(() => false)",
     mustFail: "...carried again at 14:00, that same carry waits again, still 'Queued: 2nd detention'" },
+
+  // ---- the TEST list (owner, 2026-10-08: show admins the list in the Hub before it counts)
+  { guard: "the TEST list is shown even on a day whose real list is made", file: LIST, test: DEMO_TEST,
+    from: "    if (!row?.frozenAt) {\n      const demo = await demoListOf(ctx, date);",
+    to: "    if (true) {\n      const demo = await demoListOf(ctx, date);",
+    mustFail: "a real frozen list for the same day hides the demo: the real list is shown, and nothing of the TEST list" },
+  { guard: "a print of a TEST list is recorded", file: LIST, test: DEMO_TEST,
+    from: "    if (!final && await demoListOf(ctx, a.day)) return { ok: false as const, reason: DEMO_PRINT_REFUSED };\n", to: "",
+    mustFail: "recordPrint refused on demo: a master, slips or changes print of a TEST list is never recorded, and says why" },
+  { guard: "the TEST list is answered before the check of who is asking", file: LIST, test: DEMO_TEST,
+    from: "    // THE CHECK COMES FIRST: nothing below is read for someone refused.\n",
+    to: "    { const early = await demoListOf(ctx, day === \"today\" ? today : day);\n"
+      + "      if (early) return demoAnswer({ demo: early, date: early.day, today, next: today, nowIso, roles: false, settings: await loadSettings(ctx) }); }\n",
+    mustFail: "access refused for a teacher and a campus aide without the grant, and for an expired grant: no TEST list, no TEST row" },
+  { guard: "the TEST list carries the previous day's morning tardies too (as if its own list was never made)", file: DEMO_RULES, test: DEMO_TEST,
+    from: "    const ours = (slot: number) => r.date === day || !servesSameDay(slot);", to: "    const ours = (slot: number) => true;",
+    mustFail: "demo rows identical to the real list the shipped rules make for the same day: every row, line, tag, Power-Up and section" },
+  { guard: "the TEST list judges the day's marks as final (after school), not as the closing read does", file: DEMO_RULES, test: DEMO_TEST,
+    from: "    { date: day, rows: input.dayRows, final: false },", to: "    { date: day, rows: input.dayRows, final: true },",
+    mustFail: "demo rows identical to the real list the shipped rules make for the same day: every row, line, tag, Power-Up and section" },
+  { guard: "the tick's status reads the TEST list", file: SERVER, test: DEMO_TEST,
+    from: "    const pendingUnits = await ctx.db.query(\"reflectionUnits\")",
+    to: "    const demos = await ctx.db.query(\"reflectionDemoLists\").collect();\n    const pendingUnits = await ctx.db.query(\"reflectionUnits\")",
+    mustFail: "no other module references reflectionDemoLists: only the schema, the file that writes it, and the list's reader" },
 ];
 
 // A builder's shortcut, never set in npm test: REFLECTION_TEETH_ONLY=<text>

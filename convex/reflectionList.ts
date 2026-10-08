@@ -44,6 +44,11 @@ const PRINT_MAX = 600;
 const REFUSED = "The Reflection Room list is limited to administrators, the PBIS team and staff an administrator has "
   + "given access to it.";
 
+/** Why a print of a TEST list is never recorded (recordPrint). */
+export const DEMO_PRINT_REFUSED = "This is a TEST list, not a real one, so no print of it is recorded and no slips or "
+  + "changes-only sheet are printed from it. Print on the Reflection Room screen prints the TEST copy, marked "
+  + "\u201cTEST \u2014 not for assignment\u201d on every page.";
+
 type Ctx = QueryCtx;
 
 const addDays = (iso: string, n: number) =>
@@ -379,6 +384,108 @@ function modeWords(m: Record<Division, Mode>): string {
   return `ms:${m.ms} hs:${m.hs}`;
 }
 
+const hhmm = (m: number) => `${Math.floor(m / 60) % 12 || 12}:${String(m % 60).padStart(2, "0")}`;
+
+/** Power-Up teacher, then student number: the order every list starts in (the screen may re-sort it). */
+function sortRows(rows: ListRowOut[]): void {
+  rows.sort((a, b) => (a.pu?.teacher ?? "\uffff").localeCompare(b.pu?.teacher ?? "\uffff") || a.studentNumber.localeCompare(b.studentNumber));
+}
+
+/** A fingerprint of what the list says now: a print records it, and a later read tells it apart. */
+function versionOf(rows: ListRowOut[]): string {
+  return idSetHash(rows.map((r) => [
+    r.key, r.state, r.lines.join(";"), r.tags.join(";"), r.cleared.length, r.voided.length, r.after ?? "",
+  ].join("|")));
+}
+
+/**
+ * The sections: MS first (pulled at the block start), then HS, each with its
+ * count against the room's capacity for that sitting and its pull time.
+ */
+function sectionsOf(rows: ListRowOut[], modes: Record<Division, Mode>, settings: ReflectionSettings,
+  pull: { msMinute: number; hsMinute: number }) {
+  const capacity = settings.capacity;
+  return (["ms", "hs"] as Division[]).map((division) => {
+    const mine = rows.filter((r) => r.division === division);
+    const count = mine.filter((r) => r.state !== "released").length;
+    const pullMinute = division === "ms" ? pull.msMinute : pull.hsMinute;
+    return {
+      division,
+      label: division === "ms" ? "Middle school (grades 6-8)" : "High school (grades 9-12)",
+      mode: modes[division],
+      pullAt: hhmm(pullMinute),
+      count,
+      capacity: capacity[division],
+      // More students than the room holds at this division's sitting: shown,
+      // never decided here (an over-capacity rule is the owner's, later).
+      overCapacity: capacity[division] !== null && count > (capacity[division] as number),
+      slipTo: settings.slipAddresseeByDivision[division],
+      rows: mine,
+    };
+  });
+}
+
+/**
+ * THE TEST LIST FOR A DAY, if one was built (reflectionDemo.ts, owner
+ * 2026-10-08). THE ONLY READ OF reflectionDemoLists outside the file that
+ * writes it, and it is called from two places only: listForDay, which shows
+ * it on a day with no real list, and recordPrint, which refuses to record a
+ * print of it. Nothing that makes, carries, reviews, verifies or reports on
+ * the real list reads it.
+ */
+async function demoListOf(ctx: Ctx, day: string): Promise<Doc<"reflectionDemoLists"> | null> {
+  return ctx.db.query("reflectionDemoLists").withIndex("by_day", (q) => q.eq("day", day)).first();
+}
+
+/**
+ * THE TEST LIST, AS listForDay ANSWERS WITH IT: the rows as built (the shape
+ * of a list already made), MS then HS, and `demo: true` with the time it was
+ * built, which the screen turns into its red TEST ONLY banner and every
+ * printed page into "TEST — not for assignment". Nothing else of the real
+ * list rides along: no PILOT or NOT FINAL banner, no room attendance, no
+ * prints, no review count, no buttons -- nobody acts on a TEST list.
+ */
+function demoAnswer(f: {
+  demo: Doc<"reflectionDemoLists">; date: string; today: string; next: string; nowIso: string; roles: boolean;
+  settings: ReflectionSettings;
+}) {
+  const rows: ListRowOut[] = f.demo.rows.map((r) => ({ ...r, pu: r.pu ? { ...r.pu } : null }));
+  sortRows(rows);
+  const modes: Record<Division, Mode> = { ms: "shadow", hs: "shadow" };
+  const kind: ScheduleKind = f.demo.kind ?? "regular";
+  return {
+    allowed: true as const,
+    ok: true as const,
+    roles: f.roles,
+    date: f.date,
+    dayLabel: dayLabel(f.date),
+    isToday: f.date === f.today,
+    isNext: f.date === f.next && f.date !== f.today,
+    today: f.today,
+    asOf: f.nowIso,
+    view: "demo" as const,
+    frozen: false,
+    frozenAt: null,
+    freezeKind: null,
+    noList: null,
+    lastGoodReadAt: null,
+    kind,
+    times: null,
+    mode: modes,
+    sections: sectionsOf(rows, modes, f.settings, pullTimes(kind, f.settings)),
+    listVersion: versionOf(rows),
+    banners: [] as Banner[],
+    review: null,
+    myPrintChanges: null,
+    printsToday: null,
+    grants: null,
+    room: null,
+    controls: null,
+    demo: true as const,
+    demoBuiltAt: f.demo.builtAt,
+  };
+}
+
 /**
  * THE LIST FOR ONE DAY, for Discipline > Reflection Room.
  *
@@ -392,6 +499,10 @@ function modeWords(m: Record<Division, Mode>): string {
  * the viewer's own changes since their own last print of this day, and for
  * the roles each print of the day with its change counts (staff emails
  * only). Student numbers and grades only: names are the browser's.
+ *
+ * A TEST LIST (reflectionDemo.ts) is answered for a day ONLY when that day
+ * has no real list made, and only after the same check of who is asking:
+ * real data always wins, the moment a list is made.
  */
 export const listForDay = query({
   args: { day: v.string() },
@@ -416,13 +527,16 @@ export const listForDay = query({
     const maps = await readState(ctx, MAPS_KEY);
     const gradeOf = studentMap(maps?.students).gradeOf;
     const row = await getDay(ctx, date);
+    if (!row?.frozenAt) {
+      const demo = await demoListOf(ctx, date);
+      if (demo) return demoAnswer({ demo, date, today, next, nowIso, roles, settings });
+    }
     const marked = await markedOf(ctx, date);
     const st = dayStateOf(date, row, marked);
     const kind = (row?.kind as ScheduleKind | undefined)
       ?? scheduleKindFor({ date, marked, scheduleKinds: settings.scheduleKinds, rowCounts: row?.rowCounts ?? null }).kind;
     const times = dayTimes(date, kind, settings, tz);
     const pull = pullTimes(kind, settings);
-    const hhmm = (m: number) => `${Math.floor(m / 60) % 12 || 12}:${String(m % 60).padStart(2, "0")}`;
 
     // Is today's list still to be made? Not if made, given up, not a school
     // day, or past the latest time a list may be made.
@@ -461,31 +575,11 @@ export const listForDay = query({
     }
     const frozen = view === "made";
     const modes: Record<Division, Mode> = frozen && row?.modeByDivision ? row.modeByDivision : settings.modeByDivision;
-    rows.sort((a, b) => (a.pu?.teacher ?? "￿").localeCompare(b.pu?.teacher ?? "￿") || a.studentNumber.localeCompare(b.studentNumber));
-    const listVersion = idSetHash(rows.map((r) => [
-      r.key, r.state, r.lines.join(";"), r.tags.join(";"), r.cleared.length, r.voided.length, r.after ?? "",
-    ].join("|")));
+    sortRows(rows);
+    const listVersion = versionOf(rows);
 
     // ---- The sections: MS first (pulled at the block start), then HS.
-    const capacity = settings.capacity;
-    const sections = (["ms", "hs"] as Division[]).map((division) => {
-      const mine = rows.filter((r) => r.division === division);
-      const count = mine.filter((r) => r.state !== "released").length;
-      const pullMinute = division === "ms" ? pull.msMinute : pull.hsMinute;
-      return {
-        division,
-        label: division === "ms" ? "Middle school (grades 6-8)" : "High school (grades 9-12)",
-        mode: modes[division],
-        pullAt: hhmm(pullMinute),
-        count,
-        capacity: capacity[division],
-        // More students than the room holds at this division's sitting: shown,
-        // never decided here (an over-capacity rule is the owner's, later).
-        overCapacity: capacity[division] !== null && count > (capacity[division] as number),
-        slipTo: settings.slipAddresseeByDivision[division],
-        rows: mine,
-      };
-    });
+    const sections = sectionsOf(rows, modes, settings, pull);
 
     // ---- The room's own attendance for this day (build step 8b): Not here
     // and Attendance done from Lunch & Power-Up start until the next list is
@@ -689,6 +783,8 @@ export const listForDay = query({
       grants,
       room,
       controls,
+      demo: false as const,
+      demoBuiltAt: null,
     };
   },
 });
@@ -706,6 +802,11 @@ export const listForDay = query({
  * never the browser's. Slips (a later step) are refused until the list is
  * final: a slip sends a runner to a classroom, and a list still moving must
  * not send anyone.
+ *
+ * A TEST LIST IS NEVER A RECORD (owner, 2026-10-08). A day showing one (no
+ * real list made, and a TEST list built for it) records no print of any
+ * kind: the screen prints its TEST copy without one, and slips and "Print
+ * changes only" are off for it.
  */
 export const recordPrint = mutation({
   args: {
@@ -728,6 +829,7 @@ export const recordPrint = mutation({
     }
     const row = await getDay(ctx, a.day);
     const final = !!row?.frozenAt;
+    if (!final && await demoListOf(ctx, a.day)) return { ok: false as const, reason: DEMO_PRINT_REFUSED };
     if (a.kind === "slips" && !final) {
       return { ok: false as const, reason: "Slips print only once the list is final. Print the master list, which is marked NOT FINAL." };
     }
