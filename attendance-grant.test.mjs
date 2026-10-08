@@ -128,8 +128,8 @@ console.log("\nThe screens: two tabs, view only");
 
   const s = read("./script.js");
   check("the sidebar and the pane both pass the signed-in user",
-    /disciplineTabsFor\(currentUser && currentUser\.role, currentUser\)/.test(s)
-    && /canOpenDisciplineTab\(currentUser && currentUser\.role, subtab, currentUser\)/.test(s));
+    /disciplineTabsFor\(currentUser && currentUser\.role, currentUser, wcSchoolToday\(\)\)/.test(s)
+    && /canOpenDisciplineTab\(currentUser && currentUser\.role, subtab, currentUser, wcSchoolToday\(\)\)/.test(s));
   check("run-chart freeze/unfreeze/notes are drawn only for the roles",
     /const arCanEdit = window\.WildcatDiscipline\.canEditInsightSettings\(/.test(s)
     && /if \(c\.canFreeze && arCanEdit\)/.test(s) && /baseHtml \+= arCanEdit \? \('<div class="wc-ar-addnote">'/.test(s)

@@ -73,6 +73,22 @@ export default defineSchema({
     attendanceWatch: v.optional(v.boolean()),
     attendanceWatchSetBy: v.optional(v.string()),
     attendanceWatchSetAt: v.optional(v.string()),
+    /**
+     * THE DAILY REFLECTION ROOM LIST, for one staff member whose role would
+     * not otherwise reach it (2026-10-08): view it, print it, see what changed
+     * since their print, tick Not here and press Attendance done. Never the
+     * admin review, the settings or the admin buttons. Honoured by
+     * accessRules.canReadReflection only while `reflectionListUntil` (a school
+     * day, "YYYY-MM-DD", default the term's end) is today or later, so a grant
+     * given for the autumn does not quietly last forever. Set only by
+     * staffInvites:setStaffReflectionList (admin) or its CLI twin, never by a
+     * browser save (not in TEACHER_WRITABLE), and cleared by any role change
+     * (roleChangeRules.roleWritePatch).
+     */
+    reflectionList: v.optional(v.boolean()),
+    reflectionListSetBy: v.optional(v.string()),
+    reflectionListSetAt: v.optional(v.string()),
+    reflectionListUntil: v.optional(v.string()),
     // NOTE: no `password` field, deliberately. The cleartext password column is
     // what this whole migration exists to delete. Do not carry it across.
   })

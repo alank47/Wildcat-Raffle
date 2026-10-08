@@ -526,6 +526,17 @@ export const listForDay = query({
     ] as Array<[string, string | null]>) {
       if (text) banners.push({ id, level: "warn", text });
     }
+    // ---- "Who can see this list" (roles only): every per-person grant, with
+    // when it was given, by whom, and its last day. Staff names only.
+    let grants: Array<Record<string, any>> | null = null;
+    if (roles) {
+      const staffRows = await ctx.db.query("teachers").collect();
+      grants = staffRows.filter((t: any) => t.reflectionList === true).map((t: any) => ({
+        name: t.name || t.email, email: t.email, setAt: t.reflectionListSetAt ?? null, setBy: t.reflectionListSetBy ?? null,
+        until: t.reflectionListUntil ?? null, current: canReadReflection(t, today),
+      })).sort((a, b) => String(a.name).localeCompare(String(b.name)));
+    }
+
     let review: { count: number; oldest: string | null } | null = null;
     if (roles) {
       const items = await reviewItems(ctx, today, tz);
@@ -572,6 +583,7 @@ export const listForDay = query({
       review,
       myPrintChanges,
       printsToday,
+      grants,
     };
   },
 });

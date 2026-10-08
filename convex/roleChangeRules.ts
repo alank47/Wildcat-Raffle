@@ -193,6 +193,14 @@ export function roleWritePatch(
     patch.attendanceWatchSetBy = undefined;
     patch.attendanceWatchSetAt = undefined;
   }
+  // And so is the Reflection Room list grant (2026-10-08): a supervisor
+  // given the list, promoted, and later set back must not quietly keep it.
+  if (row && (row as any).reflectionList && norm(row.role) !== norm(newRole)) {
+    patch.reflectionList = undefined;
+    patch.reflectionListSetBy = undefined;
+    patch.reflectionListSetAt = undefined;
+    patch.reflectionListUntil = undefined;
+  }
   return patch;
 }
 
@@ -235,4 +243,83 @@ export function attendanceWatchVerdict(req: AttendanceWatchRequest):
     return { ok: false, reason: on ? "They already have Attendance Watch access." : "They do not have Attendance Watch access." };
   }
   return { ok: true, on };
+}
+
+// ---------------------------------------------------------------------------
+// THE REFLECTION ROOM LIST, FOR ONE PERSON (2026-10-08, build spec 4.6): the
+// room's supervisor or an aide who prints the list and takes the room's
+// attendance, without the PBIS role's whole discipline record. Copied step for
+// step from Attendance Watch above, plus an END DATE: admin only; never your
+// own record; pointless (refused) for admin, superadmin and PBIS, who already
+// have the list; and a grant ends -- by default at the end of the term, so the
+// January term switch is a natural time to give it again or let it go.
+// ---------------------------------------------------------------------------
+
+export type ReflectionListRequest = {
+  actorEmail: string;
+  actorRole: string;
+  targetEmail: string;
+  targetRole: string;
+  /** What they hold now. */
+  current: { on: boolean; until: string | null };
+  /** On or off. */
+  requested: unknown;
+  /** "YYYY-MM-DD"; null = no end date (said out loud); absent = the default. */
+  until: unknown;
+  /** The school day today, "YYYY-MM-DD". */
+  today: string;
+  /** The current term's last day, if known: the default end date. */
+  defaultUntil: string | null;
+};
+
+const DAY = /^\d{4}-\d{2}-\d{2}$/;
+/** A grant may end at most about a school year and a bit away. */
+export const REFLECTION_GRANT_MAX_DAYS = 400;
+
+export function reflectionListVerdict(req: ReflectionListRequest):
+  { ok: true; on: boolean; until: string | null } | { ok: false; reason: string } {
+  if (!canChangeRoles(req.actorRole)) {
+    return { ok: false, reason: "Only administrators can change who sees the Reflection Room list." };
+  }
+  const actor = norm(req.actorEmail);
+  const target = norm(req.targetEmail);
+  if (!target) return { ok: false, reason: "No staff member named." };
+  if (actor && actor === target) {
+    return { ok: false, reason: "You cannot change your own access. Ask another administrator." };
+  }
+  if (typeof req.requested !== "boolean") {
+    return { ok: false, reason: "Reflection Room list access is on or off." };
+  }
+  if (!req.requested) {
+    if (!req.current.on) return { ok: false, reason: "They do not have Reflection Room list access." };
+    return { ok: true, on: false, until: null };
+  }
+  if (["admin", "superadmin", "pbis"].includes(norm(req.targetRole))) {
+    return { ok: false, reason: "Admins and the PBIS team already see the Reflection Room list." };
+  }
+  const today = String(req.today ?? "");
+  if (!DAY.test(today)) return { ok: false, reason: "The server could not tell what day it is." };
+  let until: string | null;
+  if (req.until === null) {
+    until = null;
+  } else if (req.until === undefined || req.until === "") {
+    const d = req.defaultUntil;
+    if (!d || !DAY.test(d) || d < today) {
+      return { ok: false, reason: "The end of this term is not known yet, so give an end date (YYYY-MM-DD)." };
+    }
+    until = d;
+  } else {
+    const u = String(req.until);
+    if (!DAY.test(u) || Number.isNaN(Date.parse(u + "T00:00:00Z")) || new Date(u + "T00:00:00Z").toISOString().slice(0, 10) !== u) {
+      return { ok: false, reason: `"${u}" is not a date. Give the last day as YYYY-MM-DD.` };
+    }
+    if (u < today) return { ok: false, reason: `${u} has already passed: the access would never start.` };
+    const far = new Date(Date.parse(today + "T00:00:00Z") + REFLECTION_GRANT_MAX_DAYS * 86400000).toISOString().slice(0, 10);
+    if (u > far) return { ok: false, reason: `Give an end date within ${REFLECTION_GRANT_MAX_DAYS} days (by ${far}).` };
+    until = u;
+  }
+  if (req.current.on && (req.current.until ?? null) === until) {
+    return { ok: false, reason: until ? `They already have it, until ${until}.` : "They already have it, with no end date." };
+  }
+  return { ok: true, on: true, until };
 }

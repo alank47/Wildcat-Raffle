@@ -4097,6 +4097,9 @@
                                     // mutation. A cached copy from before the grant must not
                                     // hide what the server now says (review finding, 2026-09-30).
                                     attendanceWatch: serverTeacher.attendanceWatch === true,
+                                    // The Reflection Room list grant and its end date, likewise (2026-10-08).
+                                    reflectionList: serverTeacher.reflectionList === true,
+                                    reflectionListUntil: serverTeacher.reflectionListUntil || null,
                                     gradeScope: serverTeacher.gradeScope ?? null
                                 };
                             });
@@ -10486,8 +10489,13 @@
             const watchBox = document.getElementById('editTeacherAttendanceWatch');
             if (watchBox) watchBox.checked = teacher.attendanceWatch === true;
             syncAttendanceWatchControl();
+            const listBox = document.getElementById('editTeacherReflectionList');
+            if (listBox) listBox.checked = teacher.reflectionList === true;
+            const listUntil = document.getElementById('editTeacherReflectionListUntil');
+            if (listUntil) listUntil.value = teacher.reflectionList === true ? (teacher.reflectionListUntil || '') : '';
+            syncReflectionListControl();
             const roleSel = document.getElementById('editTeacherRole');
-            if (roleSel) roleSel.onchange = function () { syncGradeScopeControl(); syncAttendanceWatchControl(); };
+            if (roleSel) roleSel.onchange = function () { syncGradeScopeControl(); syncAttendanceWatchControl(); syncReflectionListControl(); };
             
             // Show modal
             document.getElementById('editTeacherModal').classList.remove('hidden');
@@ -10536,6 +10544,35 @@
                     : already
                         ? 'This role already sees Attendance Watch and Early Warning.'
                         : 'Lets them view Attendance Watch and Early Warning, but not change their settings. It applies the next time they load the app.';
+            }
+        }
+
+        /**
+         * THE REFLECTION ROOM LIST for one person (2026-10-08): view, print,
+         * changes since their print, Not here and Attendance done -- never the
+         * review queue or the admin buttons. Greyed out for the roles that
+         * already have it, and only an admin may change it (the server checks
+         * again). The end date may be left blank: the server then ends it on
+         * the last day of the term.
+         */
+        function syncReflectionListControl() {
+            const box = document.getElementById('editTeacherReflectionList');
+            const until = document.getElementById('editTeacherReflectionListUntil');
+            const hint = document.getElementById('editTeacherReflectionListHint');
+            const role = (document.getElementById('editTeacherRole') || {}).value;
+            const admin = currentUser && (currentUser.role === 'admin' || currentUser.role === 'superadmin');
+            if (!box) return;
+            const already = role === 'admin' || role === 'superadmin' || role === 'pbis';
+            box.disabled = already || !admin;
+            if (until) until.disabled = box.disabled || !box.checked;
+            if (hint) {
+                hint.style.color = '';
+                hint.textContent = !admin
+                    ? 'Only an admin can change who sees the Reflection Room list.'
+                    : already
+                        ? 'This role already sees the Reflection Room list.'
+                        : 'Lets them view and print the list and take the room\'s attendance, until the last day shown ' +
+                          '(blank: the end of this term). It applies the next time they load the app.';
             }
         }
 
@@ -10672,9 +10709,49 @@
                 }
             }
 
+            // THE REFLECTION ROOM LIST, through its own admin-gated mutation,
+            // same reasons again (2026-10-08). Sent when the box or the end
+            // date changed; skipped when the role just changed (the server
+            // cleared it) or the role already has the list.
+            let listResult = null;
+            let listError = null;
+            const listBox = document.getElementById('editTeacherReflectionList');
+            const listUntilEl = document.getElementById('editTeacherReflectionListUntil');
+            const wantedList = listBox && !listBox.disabled ? listBox.checked === true : undefined;
+            const wantedUntil = listUntilEl && listUntilEl.value ? listUntilEl.value : '';
+            if (roleResult && roleResult.reflectionListCleared) { teacher.reflectionList = false; teacher.reflectionListUntil = null; }
+            if (!roleError && !scopeError && !watchError && wantedList !== undefined
+                && (wantedList !== (teacher.reflectionList === true)
+                    || (wantedList && wantedUntil && wantedUntil !== (teacher.reflectionListUntil || '')))) {
+                const auth = window.WildcatAuth;
+                const session = auth && auth.getSession && auth.getSession();
+                if (!auth || !session) {
+                    listError = 'Reflection Room list access is stored on the server, which needs a Microsoft sign-in.';
+                } else {
+                    try {
+                        listResult = await auth.convexMutation('staffInvites:setStaffReflectionList',
+                            Object.assign({ email: teacher.email || '', on: wantedList }, wantedList && wantedUntil ? { until: wantedUntil } : {}),
+                            session.idToken);
+                        teacher.reflectionList = listResult.on === true;
+                        teacher.reflectionListUntil = listResult.until || null;
+                    } catch (e) {
+                        listError = (e && e.message) || String(e);
+                    }
+                }
+            }
+
             saveData();
             updateTeachersTable();
             updateAllDisplays(); // Refresh all displays including period filter
+
+            if (listError) {
+                const hint = document.getElementById('editTeacherReflectionListHint');
+                if (hint) { hint.textContent = listError; hint.style.color = '#b91c1c'; }
+                if (listBox) listBox.checked = teacher.reflectionList === true;
+                if (listUntilEl) listUntilEl.value = teacher.reflectionList === true ? (teacher.reflectionListUntil || '') : '';
+                alert(`Saved, but their Reflection Room list access did NOT change.\n\n${listError}`);
+                return;
+            }
 
             if (watchError) {
                 const hint = document.getElementById('editTeacherAttendanceWatchHint');
@@ -10712,6 +10789,9 @@
                 syncGradeScopeControl();
                 if (watchBox) watchBox.checked = teacher.attendanceWatch === true;
                 syncAttendanceWatchControl();
+                if (listBox) listBox.checked = teacher.reflectionList === true;
+                if (listUntilEl) listUntilEl.value = teacher.reflectionList === true ? (teacher.reflectionListUntil || '') : '';
+                syncReflectionListControl();
                 alert(`Name and email saved, but the access level did NOT change.\n\n${roleError}`);
                 return;
             }
@@ -10731,7 +10811,13 @@
                             ? 'can now view Attendance Watch and Early Warning.'
                             : 'no longer sees Attendance Watch and Early Warning.') +
                           `\n\nIt applies the next time they load the app.`
-                        : `✅ Teacher updated!\n\n${name}'s information has been saved.`);
+                        : listResult
+                            ? `✅ ${listResult.name} ` + (listResult.on
+                                ? 'can now view and print the Reflection Room list' +
+                                  (listResult.until ? `, until ${listResult.until}.` : ', with no end date.')
+                                : 'no longer sees the Reflection Room list.') +
+                              `\n\nIt applies the next time they load the app.`
+                            : `✅ Teacher updated!\n\n${name}'s information has been saved.`);
         }
 
         async function deleteTeacher(teacherId) {
@@ -14183,6 +14269,10 @@
                             ? ' <span class="wu-chip" title="Sees every student in grades 6-8 as well as their own classes">+ Middle School</span>'
                             : ''}${t.attendanceWatch === true && t.role !== 'admin' && t.role !== 'superadmin' && t.role !== 'pbis'
                             ? ' <span class="wu-chip" title="Can view Attendance Watch and Early Warning (view only)">+ Attendance</span>'
+                            : ''}${t.reflectionList === true && t.role !== 'admin' && t.role !== 'superadmin' && t.role !== 'pbis'
+                            ? ' <span class="wu-chip" title="Can view and print the Reflection Room list and take its attendance' +
+                              (t.reflectionListUntil ? ', until ' + escapeHtml(t.reflectionListUntil) : '') + '">+ Reflection Room' +
+                              (t.reflectionListUntil ? ' to ' + escapeHtml(t.reflectionListUntil.slice(5).replace('-', '/')) : '') + '</span>'
                             : ''}</td>
                         <td class="wc-money">${awarded}</td>
                         <td>
@@ -18762,12 +18852,14 @@
                     if (fresh) {
                         const before = currentUser.role;
                         const watchBefore = currentUser.attendanceWatch === true;
+                        const listBefore = String(currentUser.reflectionList === true) + '|' + (currentUser.reflectionListUntil || '');
                         currentUser = fresh;
                         if (typeof saveSession === 'function') saveSession();
                         // The Discipline tabs are drawn from the role and the
-                        // Attendance Watch grant; redraw them when either changed,
+                        // per-person grants; redraw them when any changed,
                         // so a grant reaches the page without a second reload.
-                        if ((before !== fresh.role || watchBefore !== (fresh.attendanceWatch === true))
+                        const listChanged = listBefore !== String(fresh.reflectionList === true) + '|' + (fresh.reflectionListUntil || '');
+                        if ((before !== fresh.role || listChanged || watchBefore !== (fresh.attendanceWatch === true))
                             && typeof renderModeSubnav === 'function' && disciplineModeEnabled === true) {
                             renderModeSubnav('discipline');
                         }
@@ -27967,7 +28059,7 @@
             // open and closed referrals, nothing else. Hiding the buttons is
             // the courtesy; switchDisciplineTab refuses the pane as well.
             if (mode === 'discipline') {
-                const allowed = window.WildcatDiscipline.disciplineTabsFor(currentUser && currentUser.role, currentUser);
+                const allowed = window.WildcatDiscipline.disciplineTabsFor(currentUser && currentUser.role, currentUser, wcSchoolToday());
                 items = items.filter(it => allowed.indexOf(it.id) !== -1);
             }
             subNav.innerHTML = items.map((it, idx) => `
@@ -36109,7 +36201,7 @@
             // teacher. Demographics lives inside Analytics, so this is the
             // check that keeps a child's grade, sex and race breakdown away
             // from someone who may only file referrals.
-            if (!window.WildcatDiscipline.canOpenDisciplineTab(currentUser && currentUser.role, subtab, currentUser)) {
+            if (!window.WildcatDiscipline.canOpenDisciplineTab(currentUser && currentUser.role, subtab, currentUser, wcSchoolToday())) {
                 console.warn(`[discipline] ${subtab} is not available to your access level.`);
                 switchDisciplineTab('submit');
                 return;
@@ -41512,6 +41604,17 @@
         // =====================================================================
         const RR_REFRESH_MS = 30000;
         const RR_TZ = 'America/Los_Angeles';
+
+        /**
+         * Today, as the SCHOOL's calendar has it ("YYYY-MM-DD", Los Angeles),
+         * never this Chromebook's: what a per-person grant's end date is
+         * compared with when the Discipline tabs are drawn. The server makes
+         * the same comparison itself (accessRules.canReadReflection).
+         */
+        function wcSchoolToday() {
+            return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Los_Angeles',
+                year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
+        }
         let _rrView = 'today';          // today | next | past
         let _rrPastDay = '';            // YYYY-MM-DD, for the past view
         let _rrData = null;             // the answer on screen now
@@ -41781,6 +41884,19 @@
                         return '<li>' + escapeHtml(rrClock(p.at)) + ' · ' + escapeHtml(p.by) + ' · ' + escapeHtml(p.kind)
                             + (p.final ? '' : ' (NOT FINAL)') + ' · ' + escapeHtml(since ? 'since then: ' + since : 'still current') + '</li>';
                     }).join('') + '</ul></div>';
+            }
+            // WHO CAN SEE THIS LIST (the roles only, build step 6): every
+            // per-person grant with its last day, so a grant nobody needs any
+            // more is seen, not forgotten.
+            if (Array.isArray(res.grants)) {
+                html += '<div class="rr-grants" data-rr-grants><h4>Who can see this list</h4>'
+                    + '<p class="print-note">Administrators and the PBIS team' + (res.grants.length ? ', and:' : ', and nobody else.') + '</p>'
+                    + (res.grants.length ? '<ul>' + res.grants.map(g => '<li>' + escapeHtml(g.name || g.email || '')
+                        + (g.email && g.email !== g.name ? ' (' + escapeHtml(g.email) + ')' : '')
+                        + (g.setAt ? ' · given ' + escapeHtml(String(g.setAt).slice(0, 10)) + (g.setBy ? ' by ' + escapeHtml(g.setBy) : '') : '')
+                        + ' · ' + (g.until ? (g.current ? 'until ' : 'ended ') + escapeHtml(g.until) : 'no end date')
+                        + '</li>').join('') + '</ul>' : '')
+                    + '<p class="print-note">Given and taken away on the Teachers tab: Edit, Reflection Room list.</p></div>';
             }
             list.innerHTML = html;
             if (foot) {

@@ -33,6 +33,8 @@ const VERIFY = "scripts/reflection-verify.mjs";
 const VERIFY_TEST = "reflection-verify.test.mjs";
 const UNIFORM = "convex/uniformViolations.ts";
 const UNIFORM_TEST = "uniform-violations.test.mjs";
+const ACCESS = "convex/accessRules.ts";
+const ACCESS_TEST = "reflection-access.test.mjs";
 
 const CASES = [
   // ---- step 1: the rules (spec 6, step 1 table)
@@ -240,6 +242,20 @@ const CASES = [
   { guard: "a void after the list is made needs no reason", file: UNIFORM, test: UNIFORM_TEST,
     from: "    if (r.unitId && !why) {", to: "    if (false) {",
     mustFail: "a void after the list is made needs a reason" },
+
+  // ---- step 6: the per-person grant with an end date (spec 6, step 6)
+  { guard: "reuse canReadInsights for the list (an Attendance Watch grant opens it)", file: ACCESS, test: ACCESS_TEST,
+    from: "  if (REFLECTION_ROLES.includes(String(row.role ?? \"\"))) return true;",
+    to: "  if (canReadInsights(row as any)) return true;",
+    mustFail: "attendanceWatch alone does not open the list (canReadInsights is not canReadReflection)" },
+  { guard: "ignore the grant's end date", file: ACCESS, test: ACCESS_TEST,
+    from: "  return /^\\d{4}-\\d{2}-\\d{2}$/.test(String(today)) && today <= until;",
+    to: "  return true;",
+    mustFail: "expired grant refused: the day after its last day it opens nothing" },
+  { guard: "a role change keeps the list grant", file: "convex/roleChangeRules.ts", test: ACCESS_TEST,
+    from: "  if (row && (row as any).reflectionList && norm(row.role) !== norm(newRole)) {",
+    to: "  if (false) {",
+    mustFail: "the grant is cleared on a role change, end date and all" },
 ];
 
 // A builder's shortcut, never set in npm test: REFLECTION_TEETH_ONLY=<text>

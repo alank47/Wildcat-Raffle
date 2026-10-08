@@ -131,6 +131,12 @@ export function toAppTeacher(row: Record<string, any>): AppTeacher {
     // server decides access itself (accessRules.canReadInsights). Not in
     // TEACHER_WRITABLE, so no save can carry it back.
     attendanceWatch: row.attendanceWatch === true,
+    // The Reflection Room list grant and its last day (2026-10-08): display
+    // and tab drawing only, like attendanceWatch. The server decides access
+    // itself (accessRules.canReadReflection), and neither is in
+    // TEACHER_WRITABLE, so no save can carry them back.
+    reflectionList: row.reflectionList === true,
+    reflectionListUntil: typeof row.reflectionListUntil === "string" ? row.reflectionListUntil : null,
   };
 }
 

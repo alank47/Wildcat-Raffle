@@ -180,8 +180,22 @@ npx convex run --prod reflection:rosterStatus '{}'    # snapshot age and the ter
 
 ### Who sees it, the review queue, and the audit trail
 
-The screen is Discipline > Reflection Room, for admin, superadmin and PBIS
-(and, from build step 6, a per-person grant with an end date). It reads
+The screen is Discipline > Reflection Room, for admin, superadmin and PBIS,
+and for anyone an admin gives the list to on the Teachers tab (Edit >
+"Reflection Room list"), until a last day: blank means the end of the term,
+read from PowerSchool. A grant holder may view and print the list and take the
+room's attendance; never the review queue, the settings, "Read PowerSchool
+now", the school-day mark, "Room did not run today" or uniform logging. A role
+change removes the grant. Admins see every holder and their last day under
+"Who can see this list" on the screen. From a terminal:
+
+```
+npx convex run --prod staffInvites:setStaffReflectionListFromCli '{"email":"someone@lapromisefund.org","on":true}'                       # until the end of the term
+npx convex run --prod staffInvites:setStaffReflectionListFromCli '{"email":"someone@lapromisefund.org","on":true,"until":"2026-11-06"}'
+npx convex run --prod staffInvites:setStaffReflectionListFromCli '{"email":"someone@lapromisefund.org","on":false}'
+```
+
+The list reads
 `reflectionList:listForDay` every 30 seconds while it is open; its Print
 button reads the list again, records the print (`reflectionPrints`: ids and
 student numbers, never names) and then prints. Until the resolve screen
@@ -259,7 +273,9 @@ teachers may be out of date until PS_TERM_ID is switched to the next term".
 1. Switch `PS_TERM_ID` (and `PS_YEAR_TERM_ID` if the term changes) to S2 in
    Convex: `npx convex env set --prod PS_TERM_ID <S2 id>`. Run a sync and
    check `rosterKept` is false and the roster count is about the same.
-2. Review the Reflection Room grants: who holds one, and their end dates.
+2. Review the Reflection Room grants ("Who can see this list" on the screen):
+   a grant given in the autumn with the default end date lapsed on 12/18, so
+   give it again for S2 to whoever still needs it.
 3. Run the period-id check (period id minus 850 must still give the slot):
    PowerSchool can renumber periods at a term switch.
 

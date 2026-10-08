@@ -1,6 +1,9 @@
 import { query, mutation, internalMutation, internalQuery } from "./_generated/server";
 import { v, ConvexError } from "convex/values";
-import { roleChangeVerdict, gradeScopeVerdict, attendanceWatchVerdict, roleWritePatch } from "./roleChangeRules";
+import {
+  roleChangeVerdict, gradeScopeVerdict, attendanceWatchVerdict, reflectionListVerdict, roleWritePatch,
+} from "./roleChangeRules";
+import { wallClock } from "./reflectionRules";
 import { requireStaff, requireAdmin } from "./identity";
 import { normalizeEmail } from "./identityRules";
 
@@ -421,6 +424,7 @@ export const setStaffRole = mutation({
     // quietly come back after a promotion and a demotion.
     const scopeCleared = Boolean((targetRow as any).gradeScope) && previousRole !== verdict.newRole;
     const watchCleared = (targetRow as any).attendanceWatch === true && previousRole !== verdict.newRole;
+    const listCleared = (targetRow as any).reflectionList === true && previousRole !== verdict.newRole;
     await ctx.db.patch(targetRow._id, roleWritePatch(targetRow, verdict.newRole));
 
     // WRITTEN DOWN, ALWAYS. A change to who can see the school's discipline
@@ -456,10 +460,12 @@ export const setStaffRole = mutation({
         // one and hoping is how a role change becomes an unexplained row.
         details: `${targetRow.name || target}: ${previousRole} \u2192 ${verdict.newRole}` +
           (scopeCleared ? " (Middle School access removed)" : "") +
-          (watchCleared ? " (Attendance Watch access removed)" : ""),
+          (watchCleared ? " (Attendance Watch access removed)" : "") +
+          (listCleared ? " (Reflection Room list access removed)" : ""),
         reason: `${targetRow.name || target}: ${previousRole} \u2192 ${verdict.newRole}` +
           (scopeCleared ? " (Middle School access removed)" : "") +
-          (watchCleared ? " (Attendance Watch access removed)" : ""),
+          (watchCleared ? " (Attendance Watch access removed)" : "") +
+          (listCleared ? " (Reflection Room list access removed)" : ""),
         userId: actor.email,
         timestamp: now,
       },
@@ -472,6 +478,7 @@ export const setStaffRole = mutation({
       role: verdict.newRole,
       gradeScopeCleared: scopeCleared,
       attendanceWatchCleared: watchCleared,
+      reflectionListCleared: listCleared,
     };
   },
 });
@@ -627,6 +634,96 @@ export const setStaffAttendanceWatchFromCli = internalMutation({
   args: { email: v.string(), on: v.boolean() },
   handler: async (ctx, { email, on }) =>
     await applyAttendanceWatch(ctx, { email: "command line", role: "admin", name: "command line" }, email, on),
+});
+
+/**
+ * Give a staff member the daily Reflection Room list -- to view it, print it,
+ * see what changed since their print, tick Not here and press Attendance done
+ * -- until an end date, or take it away (2026-10-08, build spec 4.6). Admin
+ * only, never your own record, decided by reflectionListVerdict.
+ *
+ * THE END DATE DEFAULTS TO THE END OF THE TERM, read from the list's roster
+ * record (the PowerSchool term the opening read found), so a grant given in
+ * October lapses on 12/18 unless somebody gives it again in January -- the
+ * runbook's term-switch step says to review them.
+ *
+ * appAuditLog gets one line naming staff only (who gave it, to whom, until
+ * when): never a student, so it is safe in a table every browser downloads.
+ */
+async function applyReflectionList(
+  ctx: any, actor: { email: string; role: string; name?: string | null },
+  email: string, requested: unknown, until: unknown,
+) {
+  const target = normalizeEmail(email);
+  const targetRow = await ctx.db
+    .query("teachers")
+    .withIndex("by_email", (q: any) => q.eq("email", target))
+    .unique();
+  if (!targetRow) throw new ConvexError(`No staff record for ${target}.`);
+
+  const now = new Date().toISOString();
+  const bell = await ctx.db.query("bellSettings").withIndex("by_key", (q: any) => q.eq("key", "bell")).first();
+  const lt = wallClock(now, (bell && bell.timeZone) || "America/Los_Angeles");
+  const today = lt.ok ? lt.dateKey : now.slice(0, 10);
+  const roster = await ctx.db.query("appState").withIndex("by_key", (q: any) => q.eq("key", "reflection:roster")).first();
+  const termEnd = roster && roster.value && typeof roster.value.termEnd === "string" ? roster.value.termEnd : null;
+
+  const previous = { on: (targetRow as any).reflectionList === true, until: (targetRow as any).reflectionListUntil ?? null };
+  const verdict = reflectionListVerdict({
+    actorEmail: actor.email, actorRole: actor.role,
+    targetEmail: target, targetRole: targetRow.role,
+    current: previous, requested, until, today, defaultUntil: termEnd,
+  });
+  if (!verdict.ok) throw new ConvexError(verdict.reason);
+
+  await ctx.db.patch(targetRow._id, {
+    reflectionList: verdict.on ? true : undefined,
+    reflectionListUntil: verdict.on && verdict.until ? verdict.until : undefined,
+    reflectionListSetBy: actor.email,
+    reflectionListSetAt: now,
+  });
+
+  const entryId = `rrlist_${Date.now()}_${Math.random().toString(36).slice(2, 12)}`;
+  const line = `${targetRow.name || target}: Reflection Room list ` + (verdict.on
+    ? `given${verdict.until ? ` until ${verdict.until}` : " with no end date"}`
+    : "removed");
+  await ctx.db.insert("appAuditLog", {
+    entryId,
+    timestamp: now,
+    payload: {
+      entryId,
+      action: "Changed Reflection Room access",
+      teacher: actor.name || actor.email,
+      teacherName: actor.name || actor.email,
+      details: line,
+      reason: line,
+      userId: actor.email,
+      timestamp: now,
+    },
+  });
+  console.log(`[reflectionList] ${actor.email} set ${target}: ${previous.on} -> ${verdict.on}${verdict.until ? ` until ${verdict.until}` : ""}`);
+  return { email: target, name: targetRow.name || target, previous: previous.on, on: verdict.on, until: verdict.on ? verdict.until : null };
+}
+
+export const setStaffReflectionList = mutation({
+  args: { email: v.string(), on: v.boolean(), until: v.optional(v.union(v.string(), v.null())) },
+  handler: async (ctx, { email, on, until }) => {
+    // requireStaff, then the verdict decides: only admin/superadmin pass.
+    const actor = await requireStaff(ctx);
+    return await applyReflectionList(ctx, actor, email, on, until);
+  },
+});
+
+/**
+ * The same, from a terminal (until: "YYYY-MM-DD", or null for no end date,
+ * or left out for the end of the term):
+ *   npx convex run --prod staffInvites:setStaffReflectionListFromCli \
+ *     '{"email":"someone@lapromisefund.org","on":true,"until":"2026-12-18"}'
+ */
+export const setStaffReflectionListFromCli = internalMutation({
+  args: { email: v.string(), on: v.boolean(), until: v.optional(v.union(v.string(), v.null())) },
+  handler: async (ctx, { email, on, until }) =>
+    await applyReflectionList(ctx, { email: "command line", role: "admin", name: "command line" }, email, on, until),
 });
 
 /**

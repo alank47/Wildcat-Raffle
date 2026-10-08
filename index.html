@@ -5814,6 +5814,23 @@
                 </label>
                 <p class="panel-hint" id="editTeacherAttendanceWatchHint" style="margin:6px 0 0 0;"></p>
             </div>
+
+            <!-- THE REFLECTION ROOM LIST for one person (2026-10-08), until an
+                 end date (blank: the end of this term). View, print and take
+                 the room's attendance; never the review queue. Admin only;
+                 the server decides (staffInvites:setStaffReflectionList).
+                 Admins and PBIS already have it. -->
+            <div class="form-group">
+                <label style="display:flex; align-items:center; gap:8px; font-weight:600;">
+                    <input type="checkbox" id="editTeacherReflectionList" onchange="syncReflectionListControl()">
+                    Reflection Room list (view, print, take attendance)
+                </label>
+                <label for="editTeacherReflectionListUntil" style="display:flex; align-items:center; gap:8px; margin-top:6px;">
+                    Last day
+                    <input type="date" id="editTeacherReflectionListUntil">
+                </label>
+                <p class="panel-hint" id="editTeacherReflectionListHint" style="margin:6px 0 0 0;"></p>
+            </div>
             
             <div style="display: flex; gap: 10px; margin-top: 20px;">
                 <button class="btn" onclick="saveTeacherEdit()" style="flex: 1;"><svg class="wc-icon" aria-hidden="true" focusable="false"><use href="#wci-save"></use></svg> Save Changes</button>

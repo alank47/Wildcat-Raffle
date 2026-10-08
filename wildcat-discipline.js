@@ -226,28 +226,51 @@
    * worried about this week. convex/earlyWarning.ts refuses the other roles
    * independently, so this list and that one have to agree.
    */
-  function disciplineTabsFor(role, user) {
+  /**
+   * A per-person Reflection Room list grant that is still running on `today`
+   * (the school day, "YYYY-MM-DD", which the caller supplies: this file has no
+   * clock). The same rule as convex/accessRules.ts canReadReflection, which
+   * is the real check: only a real `true`, and an end date on or after today
+   * (none means no end). A malformed end date, or no today to compare it
+   * with, draws no tab -- fail closed, never open-ended.
+   */
+  function reflectionGrantOpen(user, today) {
+    if (!user || user.reflectionList !== true) return false;
+    var until = user.reflectionListUntil;
+    if (until === undefined || until === null || until === '') return true;
+    var day = /^\d{4}-\d{2}-\d{2}$/;
+    if (typeof until !== 'string' || !day.test(until)) return false;
+    return day.test(String(today || '')) && String(today) <= until;
+  }
+
+  function disciplineTabsFor(role, user, today) {
     // THE REFLECTION ROOM LIST (2026-10-08) sits on the privileged side for
     // the reason Early Warning does: it names the children owing a detention
     // today. convex/accessRules.ts canReadReflection is the real check (the
-    // three roles, plus a per-person grant with an end date, build step 6);
-    // this only decides which buttons to draw.
+    // three roles, plus a per-person grant with an end date); this only
+    // decides which buttons to draw.
     if (seesAllReferrals(role)) {
       return ['submit', 'review', 'closed', 'detention', 'attendance', 'earlyWarning', 'uniform', 'reflection', 'history', 'analytics'];
     }
+    // THE REFLECTION ROOM LIST, per person, until its end date (build step
+    // 6): that one tab and nothing else. Never uniform logging, never the
+    // referral history -- and an Attendance Watch grant does not open it.
+    var listGrant = reflectionGrantOpen(user, today);
     // ATTENDANCE WATCH ACCESS, per person (2026-09-30, "Attendance Watch and
     // Early Warning for Avalos"). Those two tabs and nothing else: the
     // referral history, analytics, detention and uniform stay with the role.
     // convex/accessRules.ts canReadInsights is the real check; this only
     // decides which buttons to draw.
     if (user && user.attendanceWatch === true) {
-      return ['submit', 'review', 'closed', 'attendance', 'earlyWarning'];
+      if (!listGrant) return ['submit', 'review', 'closed', 'attendance', 'earlyWarning'];
+      return ['submit', 'review', 'closed', 'attendance', 'earlyWarning', 'reflection'];
     }
+    if (listGrant) return ['submit', 'review', 'closed', 'reflection'];
     return ['submit', 'review', 'closed'];
   }
 
-  function canOpenDisciplineTab(role, subtab, user) {
-    return disciplineTabsFor(role, user).indexOf(trimmed(subtab)) !== -1;
+  function canOpenDisciplineTab(role, subtab, user, today) {
+    return disciplineTabsFor(role, user, today).indexOf(trimmed(subtab)) !== -1;
   }
 
   /**
@@ -1690,6 +1713,7 @@
     seesAllReferrals: seesAllReferrals,
     disciplineTabsFor: disciplineTabsFor,
     canOpenDisciplineTab: canOpenDisciplineTab,
+    reflectionGrantOpen: reflectionGrantOpen,
     canEditInsightSettings: canEditInsightSettings,
     ownsReferral: ownsReferral,
     visibleReferrals: visibleReferrals,

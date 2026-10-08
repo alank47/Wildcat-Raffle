@@ -104,11 +104,11 @@ console.log("\nDemographics is unreachable for a teacher");
   // is seen; the role is still the first argument, so a teacher without the
   // grant gets exactly the three tabs pinned above.
   check("the pane refuses as well as the button being hidden",
-    /canOpenDisciplineTab\(currentUser && currentUser\.role, subtab, currentUser\)/.test(script));
+    /canOpenDisciplineTab\(currentUser && currentUser\.role, subtab, currentUser, wcSchoolToday\(\)\)/.test(script));
   check("and it falls back to submit rather than a blank screen",
     /switchDisciplineTab\('submit'\);\s*\n\s*return;/.test(script));
   check("the sidebar filters the buttons too",
-    /disciplineTabsFor\(currentUser && currentUser\.role, currentUser\)/.test(script));
+    /disciplineTabsFor\(currentUser && currentUser\.role, currentUser, wcSchoolToday\(\)\)/.test(script));
   check("analytics stays closed to a teacher even with the Attendance Watch grant",
     !D.disciplineTabsFor("teacher", { role: "teacher", attendanceWatch: true }).includes("analytics") &&
     D.canOpenDisciplineTab("teacher", "analytics", { role: "teacher", attendanceWatch: true }) === false);
