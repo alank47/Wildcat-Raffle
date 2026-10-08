@@ -42,6 +42,12 @@ function liftFn(src, name) {
   if (end < 0) throw new Error("unterminated function " + name);
   return src.slice(start, end + 10);
 }
+/** A multi-line const array, `const NAME = [` ... `];` (the form's field list). */
+function liftArray(src, name) {
+  const a = src.indexOf("        const " + name + " = [");
+  if (a < 0) throw new Error("missing const " + name);
+  return src.slice(a, src.indexOf("];", a) + 2);
+}
 function breakOnce(src, from, to, label) {
   const at = src.indexOf(from);
   if (at < 0 || src.indexOf(from, at + 1) >= 0) throw new Error(`teeth "${label}": anchor not found exactly once`);
@@ -82,6 +88,7 @@ function makeForm(src = script) {
     function populateReferralStudentDropdown() {}
     function updateInterventionCount() {}
     function populateReferringStaffDropdown() {}
+    ${liftArray(src, "REFERRAL_FORM_FIELDS")}
     ${liftFn(src, "clearReferralForm")}
     ${liftFn(src, "applyReferralWhenDefaults")}
     ${liftFn(src, "referralWhenTyped")}

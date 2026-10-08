@@ -2992,6 +2992,20 @@
         }
 
         /**
+         * The Submit Referral form's fields, emptied after a referral is
+         * filed (clearReferralForm) and at sign-out (forgetDisciplineRecord).
+         * One list, so a field added to the form is emptied by both.
+         *
+         * referralStudentScope and referralStudentSearch are in it
+         * deliberately. A period filter left over from the last referral
+         * would silently narrow the next one, and the teacher filing it has
+         * no reason to look at a control they did not just touch.
+         */
+        const REFERRAL_FORM_FIELDS = ['referralStudentSelect', 'referralStudentScope', 'referralStudentSearch',
+            'referralDate', 'referralTime', 'referralLocation',
+            'referralBehaviorType', 'referralDescription', 'referralAdditionalActions'];
+
+        /**
          * THE DISCIPLINE RECORD IN THIS TAB'S MEMORY AND ON ITS SCREENS, gone
          * at sign-out (review, 2026-10-07). Logout hid the app and nothing
          * more: the whole school's referrals and detentions stayed in
@@ -3011,16 +3025,35 @@
          * the person filed and never got onto the server is kept on the device
          * for them alone by the inactivity logout, before this runs
          * (stripDisciplineFromLocalCache); the Logout button asks first.
+         *
+         * AND AN OPEN DIALOG, AND A HALF-WRITTEN FORM (review, 2026-10-07).
+         * The Close and Close-the-loop dialogs hold the child, the behaviour,
+         * who referred them and what happened, and nothing closed them at
+         * sign-out: on the app's same-tab sign-in the next person found the
+         * previous admin's Close dialog open the moment they went to
+         * Discipline. A referral typed and never submitted, and a detention
+         * half assigned, are the same thing in a form. All of it goes. A
+         * draft never submitted is not kept for anyone; what is kept is a
+         * referral that was filed and did not reach the server.
          */
         function forgetDisciplineRecord() {
             behaviorReferrals = [];
             detentions = [];
             ['referralReviewTable', 'closedReferralsList', 'referralDetailBody', 'studentReferralHistoryBody',
              'referralTrend', 'referralBehaviors', 'referralDemographics', 'referralClosedAnalytics',
-             'activeDetentionsList', 'completedDetentionsList'].forEach(id => {
+             'activeDetentionsList', 'completedDetentionsList', 'closeReferralBody', 'closeLoopBody'].forEach(id => {
                 const el = document.getElementById(id);
                 if (el) el.innerHTML = '';
             });
+            try {
+                document.querySelectorAll('.ref-modal').forEach(m => m.classList.add('hidden'));
+                REFERRAL_FORM_FIELDS.concat(['detentionReason']).forEach(id => {
+                    const el = document.getElementById(id);
+                    if (el) el.value = '';
+                });
+                document.querySelectorAll('.referral-intervention, #referralSevereBypass').forEach(cb => { cb.checked = false; });
+                clearDetentionStudentSelection();
+            } catch (e) { /* a missing form never stops a sign-out */ }
             ['openReferralCount', 'closedReferralCount', 'activeDetentionCount', 'completedDetentionCount',
              'summaryTotal', 'summaryMinor', 'summaryMajor', 'summarySevere'].forEach(id => {
                 const el = document.getElementById(id);
@@ -42904,8 +42937,18 @@
             // Fire-and-report. Never blocks the UI.
             // saveData() catches its own errors and resolves either way, so the
             // outcome is read from the returned boolean rather than a rejection.
+            //
+            // NOTHING TO SAY ONCE THE PERSON HAS SIGNED OUT (review,
+            // 2026-10-07), as for a referral (submitBehaviorReferral). Both
+            // labels name the child ("Closing referral for ..."), and Logout
+            // now offers "Log out anyway" while this save is still out: the
+            // failure toast then landed on the login screen, naming the child
+            // for whoever sat down next, and saying the close was "still only
+            // on this device" after sign-out had already dropped it.
+            const generation = _signInGeneration;
             return requestSave(label)
                 .then(ok => {
+                    if (generation !== _signInGeneration) return;
                     if (ok === false) {
                         console.error(`❌ ${label} did not save`);
                         showReferralToast(
@@ -42916,6 +42959,7 @@
                     }
                 })
                 .catch(err => {
+                    if (generation !== _signInGeneration) return;
                     console.error(`❌ ${label} failed to save:`, err);
                     showReferralToast(
                         `<strong>Not saved.</strong> ${label} may not have persisted. Reload before closing this tab.`,
@@ -43018,13 +43062,7 @@
         }
 
         function clearReferralForm() {
-            // referralStudentScope and referralStudentSearch are in this list
-            // deliberately. A period filter left over from the last referral
-            // would silently narrow the next one, and the teacher filing it has
-            // no reason to look at a control they did not just touch.
-            ['referralStudentSelect','referralStudentScope','referralStudentSearch',
-             'referralDate','referralTime','referralLocation',
-             'referralBehaviorType','referralDescription','referralAdditionalActions'].forEach(id => {
+            REFERRAL_FORM_FIELDS.forEach(id => {
                 const el = document.getElementById(id);
                 if (el) el.value = '';
             });
@@ -43276,7 +43314,10 @@
             if (!bar || !text) return;
             const n = _unsavedReferrals.size;
             const c = _unsavedCash.size;
-            if (!n && !c) { bar.hidden = true; return; }
+            // The words go with the bar (review, 2026-10-07). Hidden alone, it
+            // kept "1 referral is not saved yet (<child>)" in the page after
+            // every sign-out, outside #mainApp, for the next person's console.
+            if (!n && !c) { text.textContent = ''; bar.hidden = true; return; }
             bar.hidden = false;
             if (!n) {
                 const labels = [..._unsavedCash.values()];
@@ -43396,9 +43437,13 @@
          * are named; otherwise a save still being sent, or waiting to try
          * again after failing (the save queue's own pending flag, and
          * isSyncing for a direct saveData), is what an unsent Close or
-         * detention looks like. The queue does not say what a pending save
-         * carries, so any counts: none of it can land once the person has
-         * gone. Never throws.
+         * detention looks like. That holds because every referral and
+         * detention write goes through the queue (a referral, a Close, a loop
+         * closure, and the detention screens since review, 2026-10-07), and
+         * the queue keeps a failed save pending until one lands; a direct
+         * saveData() that failed left no trace here. The queue does not say
+         * what a pending save carries, so any counts: none of it can land
+         * once the person has gone. Never throws.
          */
         function unsavedWorkAtLogout() {
             try {
@@ -45279,7 +45324,15 @@
             };
             
             detentions.push(detention);
-            saveData();
+            // THROUGH THE SAVE QUEUE, like every other discipline write
+            // (2026-10-07). A direct saveData() that failed was tried once and
+            // forgotten: nothing retried it, and nothing told the Logout button
+            // it had not landed, so "Log out anyway" was never offered and
+            // signing out took the detention off the device without a word.
+            // The queue retries a failed save, and its pending flag is what
+            // unsavedWorkAtLogout reads. markDetentionDay and editDetention
+            // save the same way.
+            requestSave('Detention assigned');
             
             // Clear form
             clearDetentionStudentSelection();
@@ -45456,7 +45509,7 @@
                 showSuccessToast(`⚠️ ABSENT - ${detention.studentName} was marked absent. No credit given.`);
             }
             
-            saveData();
+            requestSave('Detention day marked');   // the queue: see assignDetention
             updateDetentionLists();
         }
         
@@ -45483,7 +45536,7 @@
                 detention.completedAt = null;
             }
             
-            saveData();
+            requestSave('Detention edited');       // the queue: see assignDetention
             updateDetentionLists();
             showSuccessToast(`✅ Detention updated for ${detention.studentName}`);
         }

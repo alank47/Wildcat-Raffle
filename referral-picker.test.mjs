@@ -205,8 +205,10 @@ console.log("\nA choice already made survives typing");
 
 console.log("\nThe form reset clears the filters too");
 {
+  // One list of the form's fields (REFERRAL_FORM_FIELDS), shared with sign-out.
   check("scope and search are cleared with the rest of the form",
-    /'referralStudentSelect','referralStudentScope','referralStudentSearch'/.test(script));
+    /const REFERRAL_FORM_FIELDS = \['referralStudentSelect', 'referralStudentScope', 'referralStudentSearch',/.test(script)
+    && /function clearReferralForm\(\) \{\s*REFERRAL_FORM_FIELDS\.forEach\(id => \{/.test(script));
   check("and the list is repainted afterwards, not left filtered",
     /if \(el\) el\.value = '';\s*\}\);\s*populateReferralStudentDropdown\(\);/.test(script));
 }

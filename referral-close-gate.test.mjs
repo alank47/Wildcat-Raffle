@@ -38,6 +38,8 @@ import * as Server from "./convex/referralAccessRules.ts";
 const script = readFileSync(new URL("./script.js", import.meta.url), "utf8");
 const discSrc = readFileSync(new URL("./wildcat-discipline.js", import.meta.url), "utf8");
 const html = readFileSync(new URL("./index.html", import.meta.url), "utf8");
+/** Every dialog index.html marks class="ref-modal", by id. */
+const REF_MODALS = [...html.matchAll(/<div id="([A-Za-z]+)" class="ref-modal[ "]/g)].map((m) => m[1]);
 
 let pass = 0, fail = 0;
 const check = (n, c, why) => {
@@ -47,6 +49,8 @@ const check = (n, c, why) => {
 const J = (x) => JSON.stringify(x);
 const loadD = (src) => { const sb = {}; new Function("globalThis", src).call(sb, sb); return sb.WildcatDiscipline; };
 const D = loadD(discSrc);
+const Q = (() => { const sb = {}; new Function("globalThis",
+  readFileSync(new URL("./wildcat-savequeue.js", import.meta.url), "utf8")).call(sb, sb); return sb.WildcatSaveQueue; })();
 
 /** A top-level function in script.js: eight spaces in, up to the first eight-space "}". */
 function liftFn(src, name) {
@@ -86,7 +90,7 @@ function breakOnce(src, from, to, label) {
 function makeEl(id, els) {
   const cls = new Set();
   return {
-    id, innerHTML: "", textContent: "", value: "",
+    id, innerHTML: "", textContent: "", value: "", checked: false, dataset: {}, style: {},
     classList: { add: (c) => cls.add(c), remove: (c) => cls.delete(c), contains: (c) => cls.has(c) },
     querySelector: () => null,
     remove() { if (els) { delete els[id]; (els.__removed ||= []).push(id); } },
@@ -116,6 +120,9 @@ const FNS = [
   "pullReferralsAndRedraw", "updateStudentReferralHistory", "submitBehaviorReferral", "markReferralUnsaved",
   "markReferralSaved", "keepUnsavedReferralsInList", "unsavedWorkAtLogout", "ownUnsavedReferrals",
   "keptReferralsInCache", "restoreOwnUnsavedReferrals",
+  // Review, 2026-10-07: the detention screens save through the queue; the
+  // dialogs and the forms go at sign-out.
+  "assignDetention", "markDetentionDay", "editDetention", "clearDetentionStudentSelection",
 ];
 const LINES = ["isPreviewingTeacher", "getOpenReferrals", "getClosedReferrals", "DETENTION_CLOSING_ACTION", "LOCAL_CACHE_AUDIT_MAX"];
 
@@ -130,7 +137,15 @@ function loadApp(src, G, Dmod) {
     body: { classList: { add() {}, remove() {} }, appendChild() {} },
     createElement: () => makeEl("created", els),
     querySelector: (sel) => (sel === 'input[name="closeResolution"]:checked' ? { value: G.resolution || "action_taken" } : null),
-    querySelectorAll: (sel) => (sel === ".closing-action:checked" ? (G.actions || []).map((v) => ({ value: v })) : []),
+    querySelectorAll: (sel) => {
+      if (sel === ".closing-action:checked") return (G.actions || []).map((v) => ({ value: v }));
+      // The dialogs index.html marks .ref-modal, by id, so the test follows the page.
+      if (sel === ".ref-modal") return REF_MODALS.map((id) => document.getElementById(id));
+      if (sel === ".referral-intervention, #referralSevereBypass") {
+        return [...(G.interventions || []), document.getElementById("referralSevereBypass")];
+      }
+      return [];
+    },
   };
   // From the comment above the restore, so a test may break the restore's first line.
   const restoreSnippet = cut(src, "// ONLY THE SAME PERSON'S COPY (2026-10-07).",
@@ -175,6 +190,10 @@ function loadApp(src, G, Dmod) {
     function alert() {}
     function setButtonBusy() {}
     function clearReferralForm() {}
+    function showSuccessToast(message) { G.toasts.push({ message, kind: "success" }); }
+    async function showPrompt() { return G.promptAnswer === undefined ? null : G.promptAnswer; }
+    // A direct save, as the detention screens made before they used the queue.
+    async function saveData() { (G.directSaves ||= []).push(1); return G.directSaveResult === undefined ? true : G.directSaveResult; }
     function applyCashAnalyticsGate() {}
     function showStudentLogin() {}
     // loadData, as far as reloadPreservingUnsavedWork needs it: install what
@@ -209,6 +228,8 @@ function loadApp(src, G, Dmod) {
     async function flushSaves() { (G.flushes ||= []).push(1); return G.flushResult === undefined ? null : G.flushResult; }
     async function requestSave(label) {
       (G.requests ||= []).push(label);
+      // The real save queue, for the tests that need its pending flag.
+      if (G.useQueue) return _saveQueue.request(label);
       // A save held open until the test lets it go, as a slow network holds it.
       if (G.saveGate) return G.saveGate;
       return G.requestResult === undefined ? true : G.requestResult;
@@ -217,11 +238,16 @@ function loadApp(src, G, Dmod) {
     function _fmtPullTime() { return 'now'; }
     function redrawReferralInsightViews() { G.redraws = (G.redraws || 0) + 1; }
     function showToast(message, kind) { G.toasts.push({ message, kind }); }
-    function saveInBackground(label) { G.saves.push(label); }
+    function saveInBackground(label) {
+      G.saves.push(label);
+      if (G.realBackground) return (G.background = realSaveInBackground(label));
+    }
+    ${liftFn(src, "saveInBackground").replace("function saveInBackground(", "function realSaveInBackground(")}
     function updateDetentionLists() {}
     function toggleDetentionDays() {}
     function appendRaceVerification() {}   // admin-only extra, drawn after the card
     ${liftArray(src, "REFERRAL_CLOSING_ACTIONS")}
+    ${liftArray(src, "REFERRAL_FORM_FIELDS")}
     ${LINES.map((n) => liftLine(src, n)).join("\n")}
     ${FNS.map((n) => liftFn(src, n)).join("\n")}
     function runLocalRestore(data) {
@@ -573,7 +599,7 @@ const blobIn = (G) => JSON.parse(G.localStorage.getItem("raffleData"));
 // behaviour breakdown, referralBehaviors, was missing and nothing noticed).
 const SCREENS = ["referralReviewTable", "closedReferralsList", "referralDetailBody", "studentReferralHistoryBody",
   "referralTrend", "referralBehaviors", "referralDemographics", "referralClosedAnalytics", "activeDetentionsList",
-  "completedDetentionsList"];
+  "completedDetentionsList", "closeReferralBody", "closeLoopBody"];
 // Student History's four tiles (Total / Open / Closed / Loop closed, under the
 // old severity ids) and what shows them.
 const HISTORY_TILES = ["summaryTotal", "summaryMinor", "summaryMajor", "summarySevere"];
@@ -673,6 +699,8 @@ console.log("\n-- (A) Logout names a referral the server has not got, and asks o
   await a.logout();
   check("Log out anyway: signed out", a.currentUser === null);
   check("...memory and the bar are empty", a.referrals.length === 0 && a.unsaved.size === 0 && a.els.unsavedReferralBar.hidden === true);
+  check("...and so are the bar's words, which named the child (review)", a.els.unsavedReferralText.textContent === "",
+    a.els.unsavedReferralText.textContent);
   const b = blobIn(G);
   check("...and nothing is kept on the device: no referrals, no stamp, no list of unsaved ones",
     !("behaviorReferrals" in b) && !("referralsOwner" in b) && !("unsavedReferralIds" in b) && !("detentions" in b), J(Object.keys(b)));
@@ -705,6 +733,73 @@ console.log("\n-- (A) Logout names a referral the server has not got, and asks o
     J(plain.confirms) === J(["Are you sure you want to logout?"]) && plain.confirmOpts[0] === null);
   check("...and the inactivity logout asks nothing", await (async () => {
     const q = teacherWithUnsaved(); await q.a.logout({ inactive: true }); return !(q.G.confirms || []).length; })());
+}
+
+const SENDING_QUESTION = "Not saved yet: changes this tab is still sending to the server. If you log out now, they will be lost from this device.";
+const DET_ACTIVE = () => [{ id: "detention_1", studentId: "S1", studentName: "Kid Synthetic", grade: "9", status: "active",
+  totalDays: 2, daysServed: 0, daysRemaining: 2, servedDates: [], attendanceRecords: [] }];
+/**
+ * An admin's tab with the real save queue (its timer in the test's hands) and
+ * a save that fails until `G.saveOk`, after one of the three detention actions.
+ */
+async function detentionAction(action, src, over) {
+  const timers = [];
+  const G = world(ADMIN, Object.assign({ useQueue: true, detentions: DET_ACTIVE(), detentionIdCounter: 2,
+    students: [{ id: "S1", firstName: "Kid", lastName: "Synthetic", grade: "9" }], promptAnswer: "3",
+    directSaveResult: false }, over));
+  G.saveQueue = Q.create({ save: () => { (G.queueSaves ||= []).push(1); return G.saveOk === true; },
+    setTimer: (fn) => { timers.push(fn); return timers.length; }, clearTimer: () => {} });
+  const a = loadApp(src || script, G);
+  if (action === "assign") {
+    for (const [id, v] of [["selectedDetentionStudentId", "S1"], ["detentionLocation", "Main Office"],
+      ["detentionDateAssigned", "2026-10-07"], ["detentionTotalDays", "2"], ["detentionStartDate", "2026-10-08"],
+      ["detentionReason", "SYNTHETIC-REASON"]]) document_el(a, id).value = v;
+    a.assignDetention();
+  } else if (action === "mark") {
+    (G.answers ||= []).unshift(true);              // "PRESENT"
+    await a.markDetentionDay("detention_1");
+  } else {
+    await a.editDetention("detention_1");
+  }
+  // The queue's quiet period ends and its save runs, and fails.
+  const tick = async () => { const fn = timers.shift(); if (fn) fn(); for (let i = 0; i < 5; i++) await null; };
+  await tick();
+  return { G, a, tick };
+}
+const DETENTION_CHANGED = {
+  assign: (a) => a.detentions.length === 2,
+  mark: (a) => a.detentions[0].daysServed === 1,
+  edit: (a) => a.detentions[0].totalDays === 3,
+};
+
+console.log("\n-- (A) a detention whose save failed is named too, until a save lands (review) --");
+for (const action of ["assign", "mark", "edit"]) {
+  const { G, a, tick } = await detentionAction(action, script, { answers: [false] });
+  check(`${action}: the change is made`, DETENTION_CHANGED[action](a));
+  check(`${action}: it is saved through the queue, not a one-off direct save`,
+    !(G.directSaves || []).length && (G.queueSaves || []).length === 1, J({ direct: G.directSaves, queue: G.queueSaves }));
+  check(`${action}: the failed save stays pending in the queue`, G.saveQueue.isPending() === true);
+  await a.logout();
+  check(`${action}: Logout asks the one question, Log out anyway offered`,
+    G.confirms.at(-1) === SENDING_QUESTION && G.confirmOpts.at(-1)?.confirmLabel === "Log out anyway"
+    && G.confirmOpts.at(-1)?.cancelLabel === "Stay signed in", G.confirms.at(-1));
+  check(`${action}: Stay signed in keeps the person and the detention`, a.currentUser === ADMIN && DETENTION_CHANGED[action](a));
+  // The queue tries again, and this time the save lands.
+  G.saveOk = true;
+  await tick();
+  check(`${action}: the queue retried it`, (G.queueSaves || []).length === 2 && G.saveQueue.isPending() === false);
+  G.answers = [false];
+  await a.logout();
+  check(`${action}: once it has landed, the usual question`, G.confirms.at(-1) === "Are you sure you want to logout?"
+    && G.confirmOpts.at(-1) === null, G.confirms.at(-1));
+}
+{
+  const { G, a } = await detentionAction("assign", script, { answers: [true] });
+  failedSaveCache(a);
+  check("before: the device cache holds both detentions", blobIn(G).detentions.length === 2);
+  await a.logout();
+  check("assign, Log out anyway: signed out, the detention gone from memory and the device, as chosen",
+    a.currentUser === null && a.detentions.length === 0 && !("detentions" in blobIn(G)));
 }
 
 console.log("\n-- (B) the inactivity logout keeps the teacher's own unsaved referral, and nothing else --");
@@ -918,6 +1013,7 @@ console.log("\n-- a student's sign-in takes the bar and its list too (review) --
   a.currentUser = null;
   a.establishStudentSession({ id: "S1" });
   check("the bar is hidden and its list empty", a.els.unsavedReferralBar.hidden === true && a.unsaved.size === 0);
+  check("...and its words are gone", a.els.unsavedReferralText.textContent === "");
 }
 
 console.log("\n-- a save takes off the bar only what it sent; Retry says what is left (review) --");
@@ -1437,6 +1533,91 @@ console.log("\n-- a referral save that settles after sign-out says nothing (revi
   }
 }
 
+/**
+ * An admin's Close (or loop closure) whose save is held open; Logout is
+ * answered Log out anyway; then the save settles with `outcome`.
+ */
+async function closeThenLeave(kind, outcome, src) {
+  let release, refuse;
+  const G = world(ADMIN, { actions: ["Notified parents/guardians promptly"], realBackground: true, answers: [true],
+    saveQueue: { isPending: () => true } });
+  G.saveGate = new Promise((res, rej) => { release = res; refuse = rej; });
+  const a = loadApp(src || script, G);
+  if (kind === "close") await a.confirmCloseReferral("THEIRS-OPEN");
+  else await a.confirmCloseLoop("THEIRS-CLOSED");
+  await a.logout();
+  const before = G.toasts.length;
+  if (outcome === "throws") refuse(new Error("network")); else release(outcome);
+  await G.background;
+  return { G, a, after: G.toasts.slice(before) };
+}
+
+console.log("\n-- a Close save that settles after sign-out says nothing (review) --");
+for (const kind of ["close", "loop"]) {
+  for (const outcome of [false, "throws", true]) {
+    const { G, a, after } = await closeThenLeave(kind, outcome);
+    check(`${kind}, save ${outcome === "throws" ? "throws" : outcome ? "lands" : "fails"} after Log out anyway: no toast on the login screen`,
+      a.currentUser === null && G.confirms[0] === SENDING_QUESTION && after.length === 0, J(after));
+  }
+}
+{
+  // Still signed in, a failed Close is still said, with the child's name.
+  let release;
+  const G = world(ADMIN, { actions: ["Notified parents/guardians promptly"], realBackground: true });
+  G.saveGate = new Promise((r) => { release = r; });
+  const a = loadApp(script, G);
+  await a.confirmCloseReferral("THEIRS-OPEN");
+  const before = G.toasts.length;
+  release(false); await G.background;
+  check("signed in, a failed Close still says so", G.toasts.slice(before).some((t) => /Not saved\. Closing referral for Student THEIRS-OPEN/.test(t.message)),
+    J(G.toasts.slice(before)));
+}
+
+console.log("\n-- sign-out closes the dialogs and empties the half-written forms (review) --");
+// The referral form's fields, by hand rather than read from the code, so
+// dropping one from what sign-out empties is caught.
+const REFERRAL_FORM = ["referralStudentSelect", "referralStudentScope", "referralStudentSearch", "referralDate", "referralTime",
+  "referralLocation", "referralBehaviorType", "referralDescription", "referralAdditionalActions"];
+const DETENTION_FORM = ["selectedDetentionStudentId", "detentionStudentSearch", "detentionReason"];
+/** An admin mid-way through everything: both dialogs open, a referral typed, a detention half assigned. */
+function busyAdminTab(src) {
+  const G = world(ADMIN, { interventions: [{ checked: true }] });
+  const a = loadApp(src || script, G);
+  a.openCloseReferralModal("THEIRS-OPEN");
+  a.openCloseLoopModal("THEIRS-CLOSED");
+  REFERRAL_FORM.concat(DETENTION_FORM).forEach((id) => { document_el(a, id).value = "DRAFT " + id + " Student THEIRS-OPEN"; });
+  document_el(a, "referralSevereBypass").checked = true;
+  document_el(a, "selectedDetentionStudent").style.display = "block";
+  return { G, a };
+}
+{
+  check("index.html marks the three discipline dialogs .ref-modal",
+    ["closeReferralModal", "referralDetailModal", "closeLoopModal"].every((id) => REF_MODALS.includes(id)), J(REF_MODALS));
+  const { G, a } = busyAdminTab();
+  check("before: the Close dialog is open and names the child and what happened",
+    !a.els.closeReferralModal.classList.contains("hidden") && /Student THEIRS-OPEN/.test(a.els.closeReferralBody.innerHTML));
+  check("...and so is the close-the-loop dialog", !a.els.closeLoopModal.classList.contains("hidden") && /Student THEIRS-CLOSED/.test(a.els.closeLoopBody.innerHTML));
+  await a.logout({ inactive: true });
+  check("after sign-out every dialog is closed", REF_MODALS.every((id) => a.els[id].classList.contains("hidden")),
+    REF_MODALS.filter((id) => !a.els[id].classList.contains("hidden")).join());
+  check("...and their bodies are empty", a.els.closeReferralBody.innerHTML === "" && a.els.closeLoopBody.innerHTML === "");
+  check("...the typed referral is gone, every field", REFERRAL_FORM.every((id) => a.els[id].value === ""),
+    REFERRAL_FORM.filter((id) => a.els[id].value).join());
+  check("...its boxes unticked", a.els.referralSevereBypass.checked === false && G.interventions[0].checked === false);
+  check("...and the half-assigned detention too", DETENTION_FORM.every((id) => a.els[id].value === "")
+    && a.els.selectedDetentionStudent.style.display === "none", DETENTION_FORM.filter((id) => a.els[id].value).join());
+  // The app's same-tab sign-in: a third teacher, same tab, no reload.
+  const third = { id: "t3", role: "teacher", email: "third@x.org", name: "Third Teacher" };
+  signsIn(a, third);
+  check("a third teacher signing in to the same tab sees no dialog and no draft",
+    a.els.closeReferralModal.classList.contains("hidden") && !/THEIRS/.test(a.els.closeReferralBody.innerHTML)
+    && !a.referrals.some((r) => r.id === "THEIRS-OPEN") && a.els.referralDescription.value === "");
+  const b = busyAdminTab();
+  await b.a.logout();
+  check("the Logout button does the same", b.a.els.closeReferralModal.classList.contains("hidden")
+    && b.a.els.referralDescription.value === "" && b.a.els.closeLoopBody.innerHTML === "");
+}
+
 console.log("\n-- TEETH: work the server has not got, at sign-out: each rule, removed, is caught --");
 {
   // (A) the Logout question.
@@ -1570,6 +1751,70 @@ console.log("\n-- TEETH: work the server has not got, at sign-out: each rule, re
   const n = K.toasts.length;
   rel(true); await kd;
   check("TEETH: without the sign-in check the login screen gets a toast naming the child", K.toasts.slice(n).some((x) => /Synthetic/.test(x.message)));
+}
+
+console.log("\n-- TEETH: the detention saves, the Close toast, the bar's words, the dialogs and the forms (review) --");
+{
+  // A detention screen back on a one-off direct save: it fails, nothing is
+  // pending, and Logout asks the usual question before losing it.
+  for (const [action, line] of [["assign", "            requestSave('Detention assigned');\n"],
+                                ["mark", "            requestSave('Detention day marked');   // the queue: see assignDetention\n"],
+                                ["edit", "            requestSave('Detention edited');       // the queue: see assignDetention\n"]]) {
+    const direct = breakOnce(script, line, "            saveData();\n", "detention " + action);
+    const { G, a } = await detentionAction(action, direct, { answers: [false] });
+    await a.logout();
+    check(`TEETH: ${action} on a direct save that failed: Logout does not name it`,
+      (G.directSaves || []).length === 1 && DETENTION_CHANGED[action](a) && G.confirms.at(-1) === "Are you sure you want to logout?",
+      G.confirms.at(-1));
+  }
+
+  const chattyClose = script
+    .replace("                .then(ok => {\n                    if (generation !== _signInGeneration) return;\n", "                .then(ok => {\n")
+    .replace("                .catch(err => {\n                    if (generation !== _signInGeneration) return;\n", "                .catch(err => {\n");
+  if (chattyClose.split("if (generation !== _signInGeneration) return;").length !== script.split("if (generation !== _signInGeneration) return;").length - 2) {
+    throw new Error("teeth: saveInBackground guard anchors moved");
+  }
+  for (const outcome of [false, "throws"]) {
+    const { after } = await closeThenLeave("close", outcome, chattyClose);
+    check(`TEETH: without its sign-in check a Close save that ${outcome === "throws" ? "throws" : "fails"} names the child on the login screen`,
+      after.some((t) => /Student THEIRS-OPEN/.test(t.message)), J(after));
+  }
+
+  const wordsStay = breakOnce(script, "if (!n && !c) { text.textContent = ''; bar.hidden = true; return; }",
+    "if (!n && !c) { bar.hidden = true; return; }", "bar words");
+  const ws = teacherWithUnsaved({ answers: [true] }, wordsStay);
+  await ws.a.logout();
+  check("TEETH: a bar hidden with its words left keeps the child's name in the page",
+    ws.a.els.unsavedReferralBar.hidden === true && /Student UNSAVED-NEW/.test(ws.a.els.unsavedReferralText.textContent));
+
+  const leaveOpen = breakOnce(script, "                document.querySelectorAll('.ref-modal').forEach(m => m.classList.add('hidden'));\n", "", "dialogs");
+  const lo = busyAdminTab(leaveOpen);
+  await lo.a.logout({ inactive: true });
+  check("TEETH: a sign-out that does not close the dialogs leaves the Close dialog open", !lo.a.els.closeReferralModal.classList.contains("hidden"));
+
+  const keepBodies = breakOnce(script, "'completedDetentionsList', 'closeReferralBody', 'closeLoopBody'].forEach", "'completedDetentionsList'].forEach", "bodies");
+  const kb = busyAdminTab(keepBodies);
+  await kb.a.logout({ inactive: true });
+  check("TEETH: a sign-out that does not empty the dialogs leaves the child and the incident in them",
+    /Student THEIRS-OPEN/.test(kb.a.els.closeReferralBody.innerHTML) && /Student THEIRS-CLOSED/.test(kb.a.els.closeLoopBody.innerHTML));
+
+  const keepDraft = breakOnce(script, "                REFERRAL_FORM_FIELDS.concat(['detentionReason']).forEach(id => {", "                [].forEach(id => {", "draft");
+  const kd = busyAdminTab(keepDraft);
+  await kd.a.logout({ inactive: true });
+  check("TEETH: a sign-out that leaves the forms keeps the typed referral for the next person",
+    /Student THEIRS-OPEN/.test(kd.a.els.referralDescription.value) && /Student THEIRS-OPEN/.test(kd.a.els.detentionReason.value));
+
+  const keepTicks = breakOnce(script, "                document.querySelectorAll('.referral-intervention, #referralSevereBypass').forEach(cb => { cb.checked = false; });\n", "", "ticks");
+  const kt = busyAdminTab(keepTicks);
+  await kt.a.logout({ inactive: true });
+  check("TEETH: a sign-out that leaves the boxes ticked is caught", kt.a.els.referralSevereBypass.checked === true);
+
+  const keepPick = breakOnce(script, "                clearDetentionStudentSelection();\n            } catch (e) { /* a missing form never stops a sign-out */ }",
+    "            } catch (e) { /* a missing form never stops a sign-out */ }", "detention pick");
+  const kp = busyAdminTab(keepPick);
+  await kp.a.logout({ inactive: true });
+  check("TEETH: a sign-out that leaves the detention's student picked is caught",
+    kp.a.els.selectedDetentionStudentId.value !== "" && kp.a.els.selectedDetentionStudent.style.display === "block");
 }
 
 console.log("\n-- the page these run in --");
