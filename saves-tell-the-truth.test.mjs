@@ -142,8 +142,12 @@ console.log("\nThe toast follows the save, on every award path");
   const tickets = fn("awardTicketsToSelected");
   check("tickets keep the result", /const ticketSaveOk = await requestSave\('Ticket award'\)/.test(tickets));
   check("and the confetti toast is conditional on it", /if \(ticketSaveOk !== false\) showSuccessToast/.test(tickets));
-  check("a successful save clears the referrals that were unsaved when it began",
-    /unsavedAtStart\.referrals\.forEach\(id => _unsavedReferrals\.delete\(id\)\);/.test(save));
+  // ...and that the referral write SENT (review, 2026-10-07): one that had
+  // dropped out of the list was cleared too, and announced as on the server.
+  // referral-close-gate.test.mjs runs clearSentFromUnsaved itself.
+  check("a successful save clears the referrals that were unsaved when it began, and were sent",
+    /clearSentFromUnsaved\(unsavedAtStart\.referrals, referralIdsSent\);/.test(save)
+    && !/unsavedAtStart\.referrals\.forEach\(id => _unsavedReferrals\.delete\(id\)\);/.test(save));
   // Cash is NOT cleared on "no write threw": a pass with nothing dirty throws
   // nothing and sends nothing, and that cleared the bar on 2026-09-17 while an
   // award was still only in the tab.

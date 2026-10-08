@@ -363,6 +363,69 @@
   }
 
   /**
+   * JSON with every object's keys in name order, so the same row prints the
+   * same whichever copy of it is in hand: a merged row and the server's can
+   * hold the same fields in a different order. Undefined fields are left out,
+   * as JSON.stringify leaves them out.
+   */
+  function stableJson(value) {
+    if (Array.isArray(value)) {
+      return '[' + value.map(function (v) { return v === undefined ? 'null' : stableJson(v); }).join(',') + ']';
+    }
+    if (value && typeof value === 'object') {
+      return '{' + Object.keys(value).sort()
+        .filter(function (k) { return value[k] !== undefined && typeof value[k] !== 'function'; })
+        .map(function (k) { return JSON.stringify(k) + ':' + stableJson(value[k]); })
+        .join(',') + '}';
+    }
+    var s = JSON.stringify(value);
+    return s === undefined ? 'null' : s;
+  }
+
+  /**
+   * A short fingerprint of one referral or detention: FNV-1a over its stable
+   * JSON, plus the length. A HASH, NOT THE ROW, on purpose: the tab keeps one
+   * for every row the server is known to hold (rowsNotOnServer), and keeping
+   * the rows themselves would be one more copy of the school's referrals in
+   * memory. Null when the row cannot be serialised; a null never matches, so
+   * such a row always counts as not on the server.
+   */
+  function rowPrint(row) {
+    var json;
+    try { json = stableJson(row); } catch (e) { return null; }
+    var h = 0x811c9dc5;
+    for (var i = 0; i < json.length; i++) {
+      h ^= json.charCodeAt(i);
+      h = (h + ((h << 1) + (h << 4) + (h << 7) + (h << 8) + (h << 24))) >>> 0;
+    }
+    return json.length + ':' + h.toString(36);
+  }
+
+  /**
+   * The rows in `rows` the server is not known to hold as they are now: new
+   * rows, and rows changed here since the server last had them.
+   *
+   * `known` maps an id to the fingerprints (rowPrint) of every version of
+   * that row the server is known to hold -- served by a load or a pull, or
+   * sent by a save that landed. More than one, because the server can store
+   * a row a little differently from how it was sent (a clamped stamp), and
+   * the copy sent and the copy served back are then both on the server.
+   *
+   * This is what a sign-out sets aside for the person who made it
+   * (script.js setAsideUnsentDiscipline). A row with no id cannot be found
+   * again by id, so it is never returned.
+   */
+  function rowsNotOnServer(rows, known) {
+    var list = Array.isArray(rows) ? rows : [];
+    return list.filter(function (r) {
+      if (!r || !trimmed(r.id)) return false;
+      var prints = known && typeof known.get === 'function' ? known.get(r.id) : null;
+      var p = rowPrint(r);
+      return !(p !== null && prints && typeof prints.has === 'function' && prints.has(p));
+    });
+  }
+
+  /**
    * What a referral save reports, as NUMBERS ONLY, for the console.
    *
    * legacyData:mergeSlice answers every save with counters; the browser
@@ -1651,6 +1714,8 @@
     canCloseReferrals: canCloseReferrals,
     cacheableReferrals: cacheableReferrals,
     activeDetentionFor: activeDetentionFor,
+    rowPrint: rowPrint,
+    rowsNotOnServer: rowsNotOnServer,
     REFERRAL_SAVE_COUNTERS: REFERRAL_SAVE_COUNTERS,
     referralSaveCounts: referralSaveCounts,
     valueOf: valueOf,
