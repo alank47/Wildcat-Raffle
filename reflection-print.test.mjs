@@ -471,6 +471,32 @@ console.log("\n8. CTRL+P AND THE BROWSER'S PRINT MENU\n");
     pages.length === 2 && pages.every((p) => /STALE: as of 11:46:10 AM\. Use the Print button/.test(p)), J(pages.map((p) => (/rr-watermark">([^<]*)</.exec(p) || [])[1])));
   w.fire("afterprint");
 }
+{
+  // THE PRINT BUTTON'S SHEET LEFT OPEN, then the browser's menu (review,
+  // 2026-10-08). The dialog's close takes the print class away, not the
+  // sheet. A later menu print must draw the list again, aged, never put out
+  // the old sheet as it stood.
+  let answer = FRESH();
+  const w = makeWorld(scriptSrc, { query: () => answer, mutation: () => ({ ok: true, at: "2026-10-13T18:47:00.000Z" }) });
+  await w.app.loadReflectionList();
+  await w.app.printReflectionList();
+  w.fire("afterprint");
+  const leftOpen = !!w.sheet() && !w.document.body.classList.contains("wc-printing");
+  answer = FRESH();
+  answer.asOf = "2026-10-13T18:50:00.000Z";
+  answer.sections[1].rows.push(row("2002", { unitId: "reflectionUnits:22", key: "reflectionUnits:22", state: "listed", grade: "11", division: "hs", mode: "live" }));
+  await w.app.loadReflectionList();
+  w.app.setLoadedAt(Date.now() - 61000);
+  w.fire("beforeprint");
+  const again = w.sheet()?.innerHTML || "";
+  const againPages = sheetPages(again);
+  check("a sheet left open after a print is drawn again for a menu print: the list on screen, STALE on every page, printing as a sheet",
+    leftOpen && /2002/.test(again) && againPages.length === 2 && againPages.every((p) => /STALE: as of 11:50:00 AM\. Use the Print button/.test(p))
+      && w.document.body.classList.contains("wc-printing") && w.document.title === "Reflection Room list 2026-10-13"
+      && /This print is not recorded: use the Print button\./.test(again) && !/Read from the server just now/.test(again),
+    J({ leftOpen, pages: againPages.length, title: w.document.title, printing: w.document.body.classList.contains("wc-printing") }));
+  w.fire("afterprint");
+}
 
 // ======================================================================
 console.log("\n9. THE ROOM'S ATTENDANCE ON SCREEN\n");
@@ -490,6 +516,28 @@ console.log("\n9. THE ROOM'S ATTENDANCE ON SCREEN\n");
   await w.app.markReflectionNotHere("reflectionUnits:9", true);
   await w.app.reflectionAttendanceDone(true);
   check("a tick and Attendance done go to the server as they are", J(sent.slice(-2)) === J([{ unitId: "reflectionUnits:9", notHere: true }, { day: "2026-10-13", done: true }]), J(sent));
+}
+
+// ======================================================================
+console.log("\n10. WHO HAS PRINTED: A PRINT FROM BEFORE THE LIST WAS MADE IS OUT OF DATE\n");
+// ======================================================================
+{
+  // The same four students before and after the freeze: no change counts,
+  // but the 11:31 paper says NOT FINAL, and its holder is told to print
+  // again. The roles' panel must say the same (review, 2026-10-08).
+  const answer = FRESH();
+  answer.printsToday = [
+    { by: "granted@school.test", at: "2026-10-13T18:31:00.000Z", kind: "master", final: false, students: 4,
+      changes: { added: 0, release: 0, cleared: 0, voided: 0 }, beforeFreeze: true, outOfDate: true },
+    { by: "pbis@school.test", at: "2026-10-13T18:46:00.000Z", kind: "master", final: true, students: 4,
+      changes: { added: 0, release: 0, cleared: 0, voided: 0 }, beforeFreeze: false, outOfDate: false },
+  ];
+  const w = makeWorld(scriptSrc, { query: () => answer, mutation: () => ({ ok: true }) });
+  await w.app.loadReflectionList();
+  const items = [...w.fixed.rrList.innerHTML.matchAll(/<li>([^<]*)<\/li>/g)].map((m) => m[1]);
+  check("the roles' panel says a print from before the list was made is out of date, not 'still current'",
+    items.some((t) => /^11:31 AM · granted@school\.test · master \(NOT FINAL\) · out of date: list made final at 11:45 AM$/.test(t))
+      && items.some((t) => /^11:46 AM · pbis@school\.test · master · still current$/.test(t)), J(items));
 }
 
 console.log(`\n${pass} passed, ${fail} failed\n`);

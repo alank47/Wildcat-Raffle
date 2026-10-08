@@ -282,6 +282,16 @@ console.log("\nThe grant is not browser-writable, and the screens are wired");
   const save = s.slice(s.indexOf("async function saveTeacherEdit()"), s.indexOf("async function deleteTeacher"));
   check("the Edit dialog saves it through the admin-only mutation, before the staff table redraws",
     /convexMutation\('staffInvites:setStaffReflectionList'/.test(save) && save.indexOf("setStaffReflectionList") < save.indexOf("updateTeachersTable();"));
+  // What the dialog sends, run as shipped: a CLEARED last day on a grant
+  // that has one renews it to the end of the term (review, 2026-10-08).
+  const fnStart = s.indexOf("        function reflectionListRequest(");
+  const request = new Function(s.slice(fnStart, s.indexOf("\n        }\n", fnStart) + 10) + "\nreturn reflectionListRequest;")();
+  const expired = { reflectionList: true, reflectionListUntil: "2026-10-12" };
+  check("Edit Teacher: clearing the last day of a grant is sent as 'until the end of this term', never silently dropped",
+    J(request(expired, true, "")) === J({ on: true }) && request(expired, true, "2026-10-12") === null
+      && J(request(expired, true, "2026-11-06")) === J({ on: true, until: "2026-11-06" }) && J(request(expired, false, "")) === J({ on: false })
+      && J(request({}, true, "")) === J({ on: true }) && request({}, false, "") === null && request({ reflectionList: true }, true, "") === null
+      && /reflectionListRequest\(teacher, wantedList, wantedUntil\)/.test(save), J(request(expired, true, "")));
   const html = read("./index.html");
   check("the dialog has the checkbox, the last day and the hint",
     ["editTeacherReflectionList", "editTeacherReflectionListUntil", "editTeacherReflectionListHint"].every((id) => html.includes(`id="${id}"`)));

@@ -10580,6 +10580,23 @@
             }
         }
 
+        /**
+         * What Edit Teacher sends for the Reflection Room list -- { on, until? }
+         * -- or null when nothing changed. A CLEARED last day on a grant that
+         * has one is a change (review, 2026-10-08): the hint says blank means
+         * the end of this term, so it is sent with no date and the server fills
+         * the term's end in -- which is how an admin renews a grant that ran
+         * out. Before, a cleared date sent nothing and still said "updated".
+         */
+        function reflectionListRequest(teacher, wantedList, wantedUntil) {
+            if (wantedList === undefined || !teacher) return null;
+            const had = teacher.reflectionList === true;
+            const until = wantedUntil || '';
+            if (!wantedList) return had ? { on: false } : null;
+            if (had && until === (teacher.reflectionListUntil || '')) return null;
+            return until ? { on: true, until: until } : { on: true };
+        }
+
         function closeEditTeacherModal() {
             document.getElementById('editTeacherModal').classList.add('hidden');
             editingTeacherId = null;
@@ -10724,9 +10741,8 @@
             const wantedList = listBox && !listBox.disabled ? listBox.checked === true : undefined;
             const wantedUntil = listUntilEl && listUntilEl.value ? listUntilEl.value : '';
             if (roleResult && roleResult.reflectionListCleared) { teacher.reflectionList = false; teacher.reflectionListUntil = null; }
-            if (!roleError && !scopeError && !watchError && wantedList !== undefined
-                && (wantedList !== (teacher.reflectionList === true)
-                    || (wantedList && wantedUntil && wantedUntil !== (teacher.reflectionListUntil || '')))) {
+            const listRequest = reflectionListRequest(teacher, wantedList, wantedUntil);
+            if (!roleError && !scopeError && !watchError && listRequest) {
                 const auth = window.WildcatAuth;
                 const session = auth && auth.getSession && auth.getSession();
                 if (!auth || !session) {
@@ -10734,8 +10750,7 @@
                 } else {
                     try {
                         listResult = await auth.convexMutation('staffInvites:setStaffReflectionList',
-                            Object.assign({ email: teacher.email || '', on: wantedList }, wantedList && wantedUntil ? { until: wantedUntil } : {}),
-                            session.idToken);
+                            Object.assign({ email: teacher.email || '' }, listRequest), session.idToken);
                         teacher.reflectionList = listResult.on === true;
                         teacher.reflectionListUntil = listResult.until || null;
                     } catch (e) {
@@ -41391,6 +41406,12 @@
                 }
             } finally {
                 _uvPumping = false;
+                // SIGNED OUT AND BACK IN WHILE A SEND WAS OUT (review,
+                // 2026-10-08): the queue resumed in the meantime found this
+                // pump still busy and left it to finish -- and it finishes by
+                // stepping aside for the new sign-in. Start the resumed queue
+                // now, or it would sit at "Saving 1…" holding every update.
+                if (gen !== _uvPumpGen && _uvQueue.length && !_uvPumpTimer) armUniformPump(0);
             }
         }
 
@@ -42080,8 +42101,13 @@
                         const c = p.changes || {};
                         const since = [c.added ? '+' + c.added + ' added' : '', c.release ? 'release ' + c.release : '',
                             c.cleared ? c.cleared + ' cleared' : '', c.voided ? c.voided + ' voided' : ''].filter(Boolean).join(', ');
+                        // A print from before the list was made is out of date
+                        // even with the same students: it says NOT FINAL, and
+                        // its holder is told to print again (review, 2026-10-08).
+                        const state = [p.beforeFreeze && res.frozenAt ? 'out of date: list made final at ' + rrClock(res.frozenAt) : '',
+                            since ? 'since then: ' + since : ''].filter(Boolean).join('; ') || (p.outOfDate ? 'out of date' : 'still current');
                         return '<li>' + escapeHtml(rrClock(p.at)) + ' · ' + escapeHtml(p.by) + ' · ' + escapeHtml(p.kind)
-                            + (p.final ? '' : ' (NOT FINAL)') + ' · ' + escapeHtml(since ? 'since then: ' + since : 'still current') + '</li>';
+                            + (p.final ? '' : ' (NOT FINAL)') + ' · ' + escapeHtml(state) + '</li>';
                     }).join('') + '</ul></div>';
             }
             // WHO CAN SEE THIS LIST (the roles only, build step 6): every
@@ -42567,7 +42593,14 @@
         function reflectionBeforePrint() {
             if (_rrPrintDone) return;                 // the Print button started this one
             if (!reflectionOwnsPrint() || !_rrData || !Array.isArray(_rrData.sections)) return;
-            if (document.getElementById('wcPrintSheet')) return;   // a sheet already open prints as it is
+            // A LIST SHEET LEFT OPEN after an earlier print is DRAWN AGAIN
+            // (review, 2026-10-08). The print dialog's close takes the print
+            // class away, not the sheet; printed as it stood, the browser's
+            // menu would put out the whole app with that old answer cut off
+            // at one screenful a page, no STALE mark, and a toolbar saying it
+            // was "read from the server just now". So it is redrawn from the
+            // list on screen, aged like any menu print. Another app's sheet
+            // never reaches here (reflectionOwnsPrint).
             const stale = Date.now() - _rrLoadedAt > RR_STALE_MS ? rrClockSeconds(_rrData.asOf) : null;
             openReflectionSheet(_rrData, null, { stale: stale, fromMenu: true });
             beginReflectionPrint(_rrData, { closeSheetAfter: true });
@@ -45030,15 +45063,27 @@
                 // with the person: kept on this device under their own sign-in
                 // and sent when they next sign in here -- unless this device
                 // could not keep them, and then they are lost.
+                const sending = isSyncing === true || Boolean(_saveQueue && _saveQueue.isPending());
                 const u = typeof uniformQueueLength === 'function' ? uniformQueueLength() : 0;
                 if (u) {
                     const words = u === 1 ? '1 uniform entry' : u + ' uniform entries';
-                    return typeof _uvQueueStored !== 'undefined' && _uvQueueStored
+                    const kept = typeof _uvQueueStored !== 'undefined' && _uvQueueStored;
+                    // A SAVE STILL OUT AS WELL (review, 2026-10-08): it is lost at
+                    // sign-out whatever becomes of the uniform entries, so it is
+                    // named too, plainly -- a network outage is exactly when both
+                    // are waiting, and the reassuring "it waits" must never be
+                    // all that is said.
+                    if (sending) {
+                        return `Not saved yet: changes this tab is still sending to the server, and ${words}. ` +
+                            'If you log out now, the changes will be lost from this device' +
+                            (kept ? `; the uniform ${u === 1 ? 'entry waits' : 'entries wait'} on this device and will be sent the next time you sign in here.`
+                                : `, and so will the uniform ${u === 1 ? 'entry' : 'entries'}.`);
+                    }
+                    return kept
                         ? `Not saved yet: ${words}. If you log out now, ${u === 1 ? 'it waits' : 'they wait'} on this device ` +
                           'and will be sent the next time you sign in here.'
                         : `Not saved yet: ${words}. If you log out now, ${u === 1 ? 'it' : 'they'} will be lost from this device.`;
                 }
-                const sending = isSyncing === true || Boolean(_saveQueue && _saveQueue.isPending());
                 return sending
                     ? 'Not saved yet: changes this tab is still sending to the server. ' +
                       'If you log out now, they will be lost from this device.'

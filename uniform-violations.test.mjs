@@ -819,6 +819,51 @@ console.log("\nThe queue survives a reload, and goes with the person at sign-out
   check("a device that cannot store it says so, so Logout can warn it would be lost", priv.api.stored() === false && priv.api.uniformQueueLength() === 1);
 }
 
+console.log("\nSigned out and back in while a send is out: the queue still goes");
+{
+  // Logout empties the queue and steps the pump's generation; the same
+  // person signs straight back in (the native app does not reload) while the
+  // first send is still out. The resumed queue must not wait for ever behind
+  // a pump that is only finishing (review, 2026-10-08).
+  const w = queueWorld({ hold: true, students: [ROSA] });
+  w.api.pick(ROSA); w.api.commitUniformViolation(false);
+  await w.settle();
+  w.api.forgetUniformQueue();
+  w.api.resumeUniformQueue("pbis@school.test");
+  await w.settle();
+  const whileOut = w.calls.length;
+  w.pending.shift().reject(new Error("Failed to fetch"));       // the old send comes back
+  await w.settle();
+  await w.fire((t) => t.ms === 0);
+  const resent = w.calls.length;
+  w.pending.shift()?.resolve(okAnswer("", w.calls[1]?.args || {}));
+  await w.settle();
+  check("a sign-out and sign-in while a send is out: the resumed queue is sent once that send returns, never stalled",
+    whileOut === 1 && resent === 2 && w.calls[1].args.attemptId === w.calls[0].args.attemptId && w.api.uniformQueueLength() === 0,
+    JSON.stringify({ whileOut, resent, left: w.api.uniformQueueLength(), timers: w.timers.map((t) => t.ms) }));
+}
+
+console.log("\nLogout names a save still out, even with uniform entries waiting");
+{
+  const fn = new Function("G", `
+    const _unsavedReferrals = new Map();
+    let isSyncing = G.isSyncing;
+    const _saveQueue = { isPending: () => false };
+    const uniformQueueLength = () => G.uniform;
+    let _uvQueueStored = G.stored;
+    ${liftFn("unsavedWorkAtLogout")}
+    return unsavedWorkAtLogout();
+  `);
+  const both = fn({ isSyncing: true, uniform: 1, stored: true });
+  check("a save still being sent is named as lost even when a uniform entry waits on this device",
+    /changes this tab is still sending to the server/.test(both) && /the changes will be lost from this device/.test(both)
+      && /uniform entry waits on this device/.test(both), both);
+  check("...with no save out, the uniform entry alone is said to wait",
+    fn({ isSyncing: false, uniform: 1, stored: true }) === "Not saved yet: 1 uniform entry. If you log out now, it waits on this device and will be sent the next time you sign in here.");
+  check("...and a device that cannot keep it says everything will be lost",
+    /will be lost from this device, and so will the uniform entry\.$/.test(fn({ isSyncing: true, uniform: 1, stored: false })));
+}
+
 console.log("\nA refused press stops, and says why");
 {
   const w = queueWorld({ students: [ROSA], answer: () => ({ ok: false, refused: true, reason: "No student has number 12001." }) });
