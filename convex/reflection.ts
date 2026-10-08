@@ -1099,7 +1099,12 @@ export const applyRead = internalMutation({
             // the next list -- unless its date is before its division started
             // counting (admitState), when it is before-start.
             let state: Doc<"reflectionTardies">["state"] = c.verdict === "counted" ? "countable" : c.verdict === "held" ? "held" : "arrival";
-            const rides = state === "countable" ? await rejoinDetention(ctx, t.unitId, settings, tz) : "none";
+            // HELD OR AN ARRIVAL, IT KEEPS ITS DETENTION (second review,
+            // 2026-10-08), exactly as the re-classify below does: the
+            // detention may still stand on another violation, and if this
+            // tardy counts again later, rejoinDetention decides then. Dropped
+            // here, it came back unit-less and the next list served it again.
+            const rides = state === "countable" ? await rejoinDetention(ctx, t.unitId, settings, tz) : t.unitId ? "kept" : "none";
             if (rides === "none" && (state === "countable" || state === "held") && admitState(t.attDate, t.division ?? divisionOf(t.studentNumber), settings)) {
               state = "before-start";
             }

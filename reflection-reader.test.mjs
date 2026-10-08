@@ -34,7 +34,8 @@
 //      uniform entry all stay off the first live list (review, 2026-10-08).
 //  16. One tardy, one list: a mark typed back after the room ran rejoins its
 //      detention; one deleted before the pull is still owed; a second mark
-//      for a listed tardy never sends it to a second list.
+//      for a listed tardy never sends it to a second list; one typed back as
+//      an arrival, then counted again, stays on the detention that stood.
 //  17. A Power-Up absence taken back just before the close: the closing read
 //      decides yesterday's carry before it makes today's list.
 //  18. The last-read banner, judged against the reader's own schedule.
@@ -1218,6 +1219,50 @@ try {
     const after3 = w.store.rows("reflectionTardies").find((t) => t._id === t3);
     check("Add to next list on a tardy already on a standing detention keeps it there",
       add.ok && after3.state === "countable" && after3.unitId === u3 && after3.resolution === "added", J(after3));
+  }
+  // AN ARRIVAL ROUND TRIP ON A DETENTION THAT STANDS (second review,
+  // 2026-10-08). P's detention holds two tardies. One is deleted and typed
+  // back, but by then a Promise Time absence makes it an arrival; the
+  // absence is then taken back, and it counts again. Its detention stood the
+  // whole time (it still held the other tardy), so it must stay on it: the
+  // cleared branch dropped unitId for an arrival, and the next list served
+  // the same tardy a second time.
+  {
+    const TUE = "2026-10-13", WED = "2026-10-14";
+    const ms = { grade: 7, sections: MS };
+    const w = await world({
+      students: { P: ms },
+      days: [{ date: TUE, slots: TUE_SLOTS }, { date: WED, slots: WED_SLOTS }],
+      settings: { modeByDivision: { ms: "live", hs: "off" }, countFromDateByDivision: { ms: "2026-10-12", hs: null } },
+    });
+    const p3 = w.mark(TUE, "P", 3, "T");
+    w.mark(TUE, "P", 5, "T");
+    await drive(w, la(TUE, "07:30"), la(TUE, "11:45"));
+    const unit = w.units("P")[0];
+    const slot3 = () => w.tardies("P").find((t) => t.slot === 3);
+    check("Tuesday's list holds P, one detention for both tardies",
+      J(w.listed(TUE)) === J(["P"]) && w.units("P").length === 1 && unit.tardyIds.length === 2, J(w.units("P")));
+    const seen = {};
+    let pt;
+    await drive(w, la(TUE, "11:50"), la(TUE, "15:45"), [
+      [la(TUE, "12:40"), () => w.unmark(p3)],
+      [la(TUE, "13:05"), () => { seen.cleared = { ...slot3() }; }],
+      [la(TUE, "13:10"), () => { w.mark(TUE, "P", 3, "T"); pt = w.mark(TUE, "P", 1, "A"); }],
+      [la(TUE, "14:05"), () => { seen.arrival = { ...slot3() }; }],
+      [la(TUE, "14:30"), () => w.unmark(pt)],
+      [la(TUE, "15:05"), () => { seen.back = { ...slot3() }; }],
+    ]);
+    check("...the deleted mark is cleared at 13:00 while the detention stands on the other tardy",
+      seen.cleared.state === "cleared" && w.units("P")[0].state !== "released", J({ t: seen.cleared, u: w.units("P")[0].state }));
+    check("typed back as an arrival, a tardy whose detention still stands stays on it",
+      seen.arrival.state === "arrival" && seen.arrival.unitId === unit._id, J(seen.arrival));
+    check("...and counting again, it is back on that same detention",
+      seen.back.state === "countable" && seen.back.unitId === unit._id, J(seen.back));
+    await drive(w, la(WED, "07:30"), la(WED, "11:20"));
+    const holding = w.units("P").filter((u) => u.tardyIds.includes(slot3()._id) && u.state !== "expired" && u.state !== "released");
+    check("an arrival round trip never puts one tardy on two lists: Wednesday's list does not hold P",
+      w.day(WED).freezeKind === "closing" && !w.listed(WED).includes("P") && holding.length === 1 && holding[0]._id === unit._id,
+      J({ wed: w.listed(WED), units: w.units("P").map((u) => [u.serveDay, u.state, u.tardyIds.length]) }));
   }
 
   // ==========================================================================
