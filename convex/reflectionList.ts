@@ -470,7 +470,12 @@ export const listForDay = query({
       banners.push({ id: "off", level: "info", text: "The Reflection Room list is switched off for both divisions." });
     }
     if (view === "no-list") {
-      banners.push({ id: "no-list", level: "alert", text: noListBanner(st, await nextSchoolDay(ctx, date), tz) });
+      const text = noListBanner(st, await nextSchoolDay(ctx, date), tz);
+      // The same words, about the day shown: a past day is not "today".
+      banners.push({
+        id: "no-list", level: "alert",
+        text: date === today ? text : text.replace(/^No list today/, `No list on ${dayLabel(date)}`).replace("Today's violations", "That day's violations"),
+      });
     }
     if (view === "no-school") {
       banners.push({ id: "no-school", level: "info", text: `No school today (${todaySd.reason}) Today's violations go on ${dayLabel(next)}'s list.` });

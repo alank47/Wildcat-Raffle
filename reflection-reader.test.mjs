@@ -826,6 +826,12 @@ try {
       && none.banners.some((b) => b.id === "no-list" && b.text === "No list today: PowerSchool unreachable all morning. Today's violations will be on Wed 10/14's list."),
       J(none.banners));
     check("...and a live division has no PILOT banner", !none.banners.some((b) => /^pilot/.test(b.id)));
+    clock.set(la("2026-10-14", "08:00"));
+    const later = await w.rt.run("reflectionList.listForDay", { day: TUE });
+    check("...looked back on the next day, it names the day it is about",
+      later.view === "no-list" && later.banners.some((b) => b.id === "no-list"
+        && b.text === "No list on Tue 10/13: PowerSchool unreachable all morning. That day's violations will be on Wed 10/14's list."),
+      J(later.banners));
   }
 
   // ==========================================================================

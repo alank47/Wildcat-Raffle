@@ -41404,13 +41404,26 @@
             return bits.join(' ');
         }
 
-        /** Every violation with its date; anything cleared since the list was made, struck through, with why. */
+        /**
+         * Every violation with its date. One cleared since the list was made
+         * (or a uniform entry removed) is struck through IN PLACE, with why:
+         * the list record is never rewritten, so the line stays where it was.
+         */
         function rrViolationsHtml(r) {
-            const lines = (r.lines || []).map(l => '<div>' + escapeHtml(l) + '</div>');
-            (r.cleared || []).forEach(c => lines.push('<div class="rr-cleared">Cleared after the list was made: '
-                + escapeHtml(c.line) + ' (' + escapeHtml(c.reason) + ')</div>'));
-            (r.voided || []).forEach(x => lines.push('<div class="rr-cleared">Removed after the list was made: ' + escapeHtml(x.line) + '</div>'));
-            return lines.join('');
+            const gone = new Map();
+            (r.cleared || []).forEach(c => gone.set(c.line, 'cleared after the list was made (' + c.reason + ')'));
+            (r.voided || []).forEach(x => gone.set(x.line, 'removed after the list was made'));
+            const struck = (line, why) => '<div><s class="rr-cleared">' + escapeHtml(line) + '</s> <span class="rr-cleared-why">'
+                + escapeHtml(why) + '</span></div>';
+            const out = (r.lines || []).map(l => {
+                if (!gone.has(l)) return '<div>' + escapeHtml(l) + '</div>';
+                const why = gone.get(l);
+                gone.delete(l);
+                return struck(l, why);
+            });
+            // A cleared mark whose line reads differently now (its period moved).
+            gone.forEach((why, line) => out.push(struck(line, why)));
+            return out.join('');
         }
 
         function rrTagHtml(r) {
@@ -41459,7 +41472,7 @@
                 const cap = section.capacity ? ' of ' + section.capacity : '';
                 html += '<div class="rr-section" data-rr-section="' + escapeHtml(section.division) + '">'
                     + '<h4 class="rr-section-head">' + escapeHtml(section.label)
-                    + ' <span class="wc-chip">' + section.count + cap + ' student' + (section.count === 1 ? '' : 's') + '</span>'
+                    + ' <span class="wc-chip">' + section.count + cap + ' student' + (section.count === 1 && !cap ? '' : 's') + '</span>'
                     + (section.mode === 'off' ? ' <span class="print-note">switched off</span>'
                         : ' <span class="print-note">pull at about ' + escapeHtml(section.pullAt) + '</span>')
                     + (section.mode === 'shadow' ? ' <span class="rr-pilot">PILOT: do not assign</span>' : '')
