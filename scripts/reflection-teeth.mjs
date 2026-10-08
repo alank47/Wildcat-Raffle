@@ -417,6 +417,12 @@ const CASES = [
     from: "            if (had && until === (teacher.reflectionListUntil || '')) return null;",
     to: "            if (had && (!until || until === (teacher.reflectionListUntil || ''))) return null;",
     mustFail: "Edit Teacher: clearing the last day of a grant is sent as 'until the end of this term', never silently dropped" },
+
+  // ---- the third review (2026-10-08): round-2 regressions and the weeks simulation
+  { guard: "the verify calls any arrival that still has a detention 'listed'", file: VERIFY, test: VERIFY_TEST,
+    from: "        const listable = sys && (sys.state === \"countable\" || sys.state === \"held\" || sys.state === \"review\");",
+    to: "        const listable = sys && (sys.unitId || sys.state === \"countable\" || sys.state === \"held\" || sys.state === \"review\");",
+    mustFail: "an arrival the system also calls an arrival, still holding the detention it was listed on, is corrected after the list was made: never an 'arrival tardy listed' or a disagreement" },
 ];
 
 // A builder's shortcut, never set in npm test: REFLECTION_TEETH_ONLY=<text>

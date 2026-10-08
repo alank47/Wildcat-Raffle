@@ -470,10 +470,18 @@ export function judge({ day, days, sch, exp, snap, salt }) {
       psT.add(t.key);
       const sys = sysByKey.get(t.key);
       if (t.verdict === "arrival") {
-        // Agrees when the system will never list it: stored as an arrival,
-        // before-start, cleared, or not stored at all.
-        const listable = sys && (sys.unitId || sys.state === "countable" || sys.state === "held" || sys.state === "review");
-        if (listable) { c.disagree++; if (onDay(sys)) ctl.arrivalListed++; } else c.excluded++;
+        // Judged by the system's STATE, never by whether it still has a
+        // detention (second review, 2026-10-08). Countable, held or in review,
+        // it could still be listed: a rule disagreement. Stored as an arrival,
+        // before-start or cleared, the system agrees -- even when it keeps the
+        // detention it was on (a tardy listed at the close and re-judged an
+        // arrival after, or a cleared tardy typed back as an arrival): that
+        // was "corrected after the list was made", the release metric the
+        // pilot tolerates, never an "arrival tardy listed".
+        const listable = sys && (sys.state === "countable" || sys.state === "held" || sys.state === "review");
+        if (listable) { c.disagree++; if (onDay(sys)) ctl.arrivalListed++; }
+        else if (sys && sys.unitId && sys.unitServeDay && sys.unitServeDay <= day) c.corrected++;
+        else c.excluded++;
         continue;
       }
       if (!sys) { c.missing++; continue; }

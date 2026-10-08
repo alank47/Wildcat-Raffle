@@ -48,7 +48,8 @@ const la = (date, hhmm) => {
 const MS = { 1: "PT-A", 2: "P1-A", 3: "P2-A", 4: "P3-A", 5: "P4-A", 6: "P5-A", 7: "P6-A", 9: "PU-7", 10: "PM-A" };
 const MON_SLOTS = [1, 2, 4, 6, 8, 9, 10], TUE_SLOTS = [1, 3, 5, 7, 8, 9, 10];
 /** The students under test: student numbers that must never be printed. */
-const SN = { A: "5101", B: "5102", BX: "5103", M: "5104", DR: "5105", L: "5106", C: "5107", S6: "5108", W: "5109", K9: "5110", P: "5111" };
+const SN = { A: "5101", B: "5102", BX: "5103", M: "5104", DR: "5105", L: "5106", C: "5107", S6: "5108", W: "5109", K9: "5110", P: "5111",
+  PA: "5112", QA: "5113" };
 
 function world() {
   const tables = {
@@ -138,7 +139,10 @@ function exportOf({ good }) {
 
 const dirs = [];
 const scratch = () => { const d = mkdtempSync(join(tmpdir(), "wc-reflection-verify-")); dirs.push(d); return d; };
-const leaks = (text) => Object.values(SN).filter((sn) => String(text).includes(sn));
+// A student number standing on its own. Not a run of digits inside a salted
+// hash: 64 random hex characters hold "5101" by chance about once in 70
+// snapshots, which made this test fail at random.
+const leaks = (text) => Object.values(SN).filter((sn) => new RegExp(`(^|[^0-9a-f])${sn}(?![0-9a-f])`).test(String(text)));
 
 try {
   // ==========================================================================
@@ -255,6 +259,52 @@ try {
     check("the five school days before are found by its own count of Promise Time rows (Monday, the only one here)",
       fake.log.some((l) => l.kind === "count" && l.q === `schoolid==${SCHOOL};yearid==${YEAR};att_date==${MON};periodid==851`)
       && fake.log.filter((l) => l.kind === "table" && l.table === "attendance" && /att_date==2026-10-12/.test(l.q)).length >= 2);
+  }
+
+  // ==========================================================================
+  console.log("\n5. THE SECOND REVIEW (2026-10-08): WHAT THE VERIFY MUST NOT CALL A FAULT, AND WHAT IT MUST\n");
+  // ==========================================================================
+  // Each check judges one export with the verify's own judge(), against
+  // PowerSchool as the fake holds it, and only for the students it is about.
+  const only = (w, sns) => {
+    const ids = new Set(Object.values(SN).filter((sn) => !sns.includes(sn)).map((sn) => w.tables.students.find((s) => s.student_number === sn).id));
+    return w.tables.attendance.filter((r) => !ids.has(r.studentid));
+  };
+  const item = (sn, slot, over) => ({
+    id: `t-${sn}-${slot}`, key: `${sn}|${TUE}|${850 + slot}`, studentNumber: sn, attDate: TUE, periodId: 850 + slot, slot, code: "T",
+    division: "ms", state: "countable", reason: null, firstSeenAt: la(TUE, "09:30"), firstCountableAt: la(TUE, "09:30"), wasHeld: false,
+    listsBeforeSeen: 0, unitId: `u-${sn}`, unitServeDay: TUE, unitState: "listed", ...over,
+  });
+  const exportWith = (tardies, list, over = {}) => {
+    const base = exportOf({ good: true });
+    return { ...base, ...over, dayRow: { ...base.dayRow, ...(over.dayRow ?? {}) }, tardies, list, uniformsOnList: [] };
+  };
+  {
+    // P: late to P2 and P4, listed at 11:45. The P2 mark is deleted, then
+    // typed back at 13:10 with a Promise Time absence: P2 is now an arrival,
+    // and keeps the detention, which still stands on P4 (dc20098).
+    // Q: late to P2 only, listed; a Promise Time absence entered after the
+    // list re-judges it an arrival and releases the detention.
+    const w = world();
+    w.mark(TUE, SN.PA, 1, "A"); w.mark(TUE, SN.PA, 3, "T"); w.mark(TUE, SN.PA, 5, "T");
+    w.mark(TUE, SN.QA, 1, "A"); w.mark(TUE, SN.QA, 3, "T");
+    const sch = V.school({ codes: w.tables.attendance_code, students: w.tables.students, cc: w.tables.cc });
+    const days = { [TUE]: V.dayOf(TUE, only(w, [SN.PA, SN.QA]), sch) };
+    const unit = (sn, state) => ({ unitId: `u-${sn}`, studentNumber: sn, division: "ms", kind: "new", state, mode: "shadow", carryBasis: null, carryCount: 0 });
+    const exp = exportWith([
+      item(SN.PA, 3, { state: "arrival", reason: "Arrived late to school" }),
+      item(SN.PA, 5),
+      item(SN.QA, 3, { state: "arrival", reason: "Arrived late to school", unitState: "released" }),
+    ], [unit(SN.PA, "listed"), unit(SN.QA, "released")]);
+    const r = V.judge({ day: TUE, days, sch, exp, snap: null, salt: null });
+    check("an arrival the system also calls an arrival, still holding the detention it was listed on, is corrected after the list was made: never an 'arrival tardy listed' or a disagreement",
+      r.counts.corrected === 2 && r.counts.onList === 1 && r.counts.disagree === 0 && r.controls.arrivalListed === 0
+        && Object.values(r.controls).every((n) => n === 0), J({ c: r.counts, k: r.controls }));
+    const listedCountable = exportWith([item(SN.PA, 3), item(SN.PA, 5), item(SN.QA, 3, { unitState: "released" })],
+      [unit(SN.PA, "listed"), unit(SN.QA, "released")]);
+    const r2 = V.judge({ day: TUE, days, sch, exp: listedCountable, snap: null, salt: null });
+    check("...while one the system still counts, on the list, is still an 'arrival tardy listed'",
+      r2.controls.arrivalListed === 2 && r2.counts.disagree === 2, J({ c: r2.counts, k: r2.controls }));
   }
 
   // ==========================================================================
