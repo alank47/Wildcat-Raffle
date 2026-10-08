@@ -1790,6 +1790,8 @@ export default defineSchema({
     wasHeld: v.optional(v.boolean()),
     firstSeenAt: v.string(),
     listsBeforeSeen: v.number(),
+    // When it last BECAME countable (first seen, or re-judged from an
+    // arrival, a hold or cleared): the "entered late" and "held" tags.
     firstCountableAt: v.optional(v.string()),
     lastSeenAt: v.string(),
     missingSince: v.optional(v.string()),

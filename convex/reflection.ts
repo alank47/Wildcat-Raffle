@@ -1120,7 +1120,9 @@ export const applyRead = internalMutation({
             await ctx.db.patch(t._id, {
               state, reason: state === "countable" ? undefined : state === "before-start" ? BEFORE_START_AGAIN : c.reason,
               holdReason: state === "held" ? c.reason : undefined,
-              clearedAt: undefined, firstCountableAt: state === "countable" ? (t.firstCountableAt ?? a.startedAt) : t.firstCountableAt,
+              // Counting AGAIN, from now: a tag judged by when it counts
+              // says it was entered late if its own list is already made.
+              clearedAt: undefined, firstCountableAt: state === "countable" ? a.startedAt : t.firstCountableAt,
               lastSeenAt: a.startedAt, ...(rides === "none" ? { unitId: undefined } : {}),
             });
             counts.reclassified++;
@@ -1136,7 +1138,9 @@ export const applyRead = internalMutation({
             holdReason: r.state === "held" ? c.reason : undefined,
           };
           if (r.state === "held") next.wasHeld = true;
-          if (r.state === "countable" && !t.firstCountableAt) next.firstCountableAt = a.startedAt;
+          // When it began to count (again): an arrival or a hold that counts
+          // only after its list was made is tagged as such (tardyTags).
+          if (r.state === "countable") next.firstCountableAt = a.startedAt;
           // Its detention was released while it did not count: back on it if
           // the room had already run with the student on it, otherwise off it
           // and on to the next list (rejoinDetention).

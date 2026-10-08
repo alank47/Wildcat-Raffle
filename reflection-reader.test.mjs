@@ -41,6 +41,8 @@
 //  18. The last-read banner, judged against the reader's own schedule.
 //  19. MS live with HS in shadow: the room's Attendance done, Room did not
 //      run and Not here decide the live division's carries only.
+//  20. Tardies that count only after their own list was made are tagged
+//      "Entered late in PowerSchool" on the next one.
 //
 // TEETH: scripts/reflection-teeth.mjs breaks the direct id confirmation, the
 // natural key, the lease expiry, the "unconfirmed changes nothing" rule,
@@ -1399,6 +1401,46 @@ try {
     check("the room's Not here count takes only the live division's rows; HS rows come marked shadow, so the screen draws no box on them",
       monScreen.room?.tick === true && monScreen.room.notHere === 1 && modesOf("ms").every((m) => m === "live")
         && modesOf("hs").length === 2 && modesOf("hs").every((m) => m === "shadow"), J({ room: monScreen.room, ms: modesOf("ms"), hs: modesOf("hs") }));
+  }
+
+  // ==========================================================================
+  console.log("\n20. COUNTED ONLY AFTER ITS OWN LIST WAS MADE: TAGGED ENTERED LATE\n");
+  // ==========================================================================
+  // Spec 3.10: an item that becomes countable after its own list was made
+  // lands on the next list, tagged as entered late. Two such items were
+  // SEEN before the close, so a tag judged by firstSeenAt never fired (second
+  // review, 2026-10-08): an arrival re-judged as counted once the Promise
+  // Time mark is corrected, a T changed to D before the close and back to T
+  // after it, and a counted tardy re-judged an arrival and counted again.
+  {
+    const MON = "2026-12-07", TUE = "2026-12-08";
+    const ms = { grade: 7, sections: MS };
+    const w = await world({
+      students: { MREJ: ms, MDT: ms, MBACK: ms },
+      days: [{ date: MON, slots: MON_SLOTS }, { date: TUE, slots: TUE_SLOTS }],
+      settings: { modeByDivision: { ms: "shadow", hs: "off" }, countFromDateByDivision: { ms: MON, hs: null } },
+    });
+    const recode = (id, code) => { w.fake.tables.attendance.find((r) => r.id === id).attendance_codeid = CODE[code]; };
+    let pt, dt, bt;
+    await drive(w, la(MON, "07:30"), la(MON, "15:45"), [
+      [la(MON, "08:40"), () => { pt = w.mark(MON, "MREJ", 1, "A"); }],   // absent at Promise Time ...
+      [la(MON, "09:20"), () => w.mark(MON, "MREJ", 2, "T")],             // ... so a T in P1 is an arrival
+      [la(MON, "09:21"), () => { dt = w.mark(MON, "MDT", 2, "T"); }],
+      [la(MON, "09:22"), () => w.mark(MON, "MBACK", 2, "T")],            // counted at 09:30 ...
+      [la(MON, "10:00"), () => { recode(dt, "D"); bt = w.mark(MON, "MBACK", 1, "A"); }],   // excused; an arrival ...
+      [la(MON, "12:30"), () => { recode(pt, "P"); recode(dt, "T"); recode(bt, "P"); }],     // ... all corrected after the close
+    ]);
+    check("neither is on Monday's list: one was an arrival, the other excused, when it was made",
+      w.day(MON).freezeKind === "closing" && ["MREJ", "MDT", "MBACK"].every((sn) => !w.listed(MON).includes(sn) && w.tardies(sn)[0].state === "countable"),
+      J({ mon: w.listed(MON), t: w.tardies().filter((t) => ["MREJ", "MDT", "MBACK"].includes(t.studentNumber)).map((t) => [t.studentNumber, t.state]) }));
+    await drive(w, la(TUE, "07:30"), la(TUE, "11:45"));
+    const tagsOf = (sn) => w.units(sn).find((u) => u.serveDay === TUE)?.tags;
+    check("an arrival re-judged as counted after its list was made lands on the next list tagged 'Entered late in PowerSchool'",
+      J(tagsOf("MREJ")) === J(["Entered late in PowerSchool (Mon 12/7 P1)"]), J(tagsOf("MREJ")));
+    check("a T changed to D before the close and back to T after it is tagged the same way",
+      J(tagsOf("MDT")) === J(["Entered late in PowerSchool (Mon 12/7 P1)"]), J(tagsOf("MDT")));
+    check("...and so is a tardy counted, re-judged an arrival before the close, and counted again after it",
+      J(tagsOf("MBACK")) === J(["Entered late in PowerSchool (Mon 12/7 P1)"]), J(tagsOf("MBACK")));
   }
 
   // ==========================================================================

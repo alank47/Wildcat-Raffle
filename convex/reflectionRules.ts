@@ -1784,6 +1784,11 @@ export function uniformLine(u: Pick<UniformItem, "day" | "at" | "loaner">, tz: s
   return `${dayLabel(u.day)}: Uniform ${clockText(u.at, tz, true)}${u.loaner ? " (loaner)" : ""}`;
 }
 
+/** When a tardy began to count: the later of first seen and (last) became countable. */
+function countsSince(t: Pick<TardyItem, "firstSeenAt" | "firstCountableAt">): number {
+  return Math.max(Date.parse(t.firstSeenAt), t.firstCountableAt ? Date.parse(t.firstCountableAt) : 0);
+}
+
 /** The tags a tardy brings to its row (3.6), from what happened to its own date. */
 export function tardyTags(t: TardyItem, serveDay: string, days: Record<string, DayState>, tz: string): string[] {
   const tags: string[] = [];
@@ -1796,7 +1801,11 @@ export function tardyTags(t: TardyItem, serveDay: string, days: Record<string, D
       tags.push(`Found after the list was made (PowerSchool unreadable at close, ${dayLabel(t.attDate)})`);
     } else if (t.wasHeld && own.frozenAt && t.firstCountableAt && Date.parse(t.firstCountableAt) > Date.parse(own.frozenAt)) {
       tags.push(`Held for attendance (${when})`);
-    } else if (own.closingReadStartedAt && Date.parse(t.firstSeenAt) > Date.parse(own.closingReadStartedAt)) {
+    } else if (own.closingReadStartedAt && countsSince(t) > Date.parse(own.closingReadStartedAt)) {
+      // ENTERED LATE is judged by when it began to COUNT, not when it was
+      // first seen (second review, 2026-10-08): an arrival re-judged as
+      // counted, or a T changed to D before the close and back after it,
+      // was seen before the closing read and still missed the list.
       tags.push(`Entered late in PowerSchool (${when})`);
     }
   }
