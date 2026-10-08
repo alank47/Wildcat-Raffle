@@ -190,4 +190,29 @@ crons.cron(
   {},
 );
 
+/**
+ * THE REFLECTION ROOM LIST'S TICK (build spec 4.2, 2026-10-08).
+ *
+ * Every 5 minutes from 14:00 to 23:55 UTC. That covers Los Angeles 07:00 to
+ * 16:55 in daylight time and 06:00 to 15:55 in standard time, on the same
+ * calendar date, so the list's day -- 07:30 opening read to the 15:45
+ * after-school read -- is inside it all year. A plain minute list rather than
+ * a step expression, so the schedule does not depend on step syntax.
+ *
+ * THE HANDLER NEVER TRUSTS THE HOUR IT FIRED AT. It turns now into the LA
+ * wall clock and decides from that (reflectionRules.decideTick), so the
+ * 1 November clock change cannot move the list an hour.
+ *
+ * IT DOES NOTHING UNTIL IT IS TURNED ON, per division, from the command line:
+ *   npx convex run --prod reflection:setMode '{"division":"ms","mode":"shadow"}'
+ * Switched off (the default, and what a missing settings row means), each
+ * firing reads one settings row and stops.
+ */
+crons.cron(
+  "reflection tick",
+  "0,5,10,15,20,25,30,35,40,45,50,55 14-23 * * *",
+  internal.reflection.tick,
+  {},
+);
+
 export default crons;

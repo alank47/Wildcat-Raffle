@@ -234,8 +234,10 @@ export const components = {};
  * Transpile convex/<name>.ts (and every relative import it pulls in) into a
  * scratch folder and import them. `baseUrl` is the repo root (the test's own
  * folder), so the teeth script's broken copy loads its own broken files.
+ * `transform(name, src)` may change a source first -- only ever a test knob,
+ * like the one-second pause between PowerSchool retries.
  */
-export async function loadConvex(baseUrl, names) {
+export async function loadConvex(baseUrl, names, { transform } = {}) {
   const dir = mkdtempSync(join(tmpdir(), "wc-fake-convex-"));
   mkdirSync(join(dir, "_generated"));
   writeFileSync(join(dir, "_generated", "server.mjs"), SERVER_STUB);
@@ -245,7 +247,8 @@ export async function loadConvex(baseUrl, names) {
   const build = (name) => {
     if (built.has(name)) return;
     built.add(name);
-    const src = readFileSync(new URL(`./convex/${name}.ts`, baseUrl), "utf8");
+    let src = readFileSync(new URL(`./convex/${name}.ts`, baseUrl), "utf8");
+    if (transform) src = transform(name, src);
     let js = ts.transpileModule(src, {
       compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext, verbatimModuleSyntax: false },
     }).outputText;

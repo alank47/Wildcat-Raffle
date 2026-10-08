@@ -554,6 +554,55 @@ export function normalizeRows(raw: any[], studentNumberOfPsId: Record<string, st
   return { rows, unmatched };
 }
 
+/**
+ * THE READER'S WIRE FORMAT. A confirmed day is up to about 900 rows, and one
+ * read can hand several days to applyRead at once, so each row crosses as one
+ * short string, "id|studentNumber|periodId|codeId", grouped under its date.
+ */
+export function encodeRow(r: Pick<AttRow, "id" | "studentNumber" | "periodId" | "codeId">): string {
+  return `${r.id}|${r.studentNumber}|${r.periodId}|${r.codeId}`;
+}
+export function decodeRows(date: string, rows: string[]): AttRow[] {
+  return (rows || []).map((s) => {
+    const [id, studentNumber, periodId, codeId] = String(s).split("|");
+    return { id, studentNumber, attDate: date, periodId: Number(periodId), codeId };
+  });
+}
+
+/**
+ * A fingerprint of one date's T row ids (FNV-1a over the sorted ids, with the
+ * count). The lookback re-reads a past date IN FULL only when its tardies
+ * changed since its last full read, so a quiet week costs a few short T-only
+ * reads instead of a full day each.
+ */
+export function idSetHash(ids: string[]): string {
+  const sorted = [...new Set((ids || []).map(String))].sort();
+  let h = 0x811c9dc5;
+  for (const id of sorted) {
+    for (let i = 0; i < id.length; i++) { h ^= id.charCodeAt(i); h = Math.imul(h, 0x01000193) >>> 0; }
+    h ^= 0x2c; h = Math.imul(h, 0x01000193) >>> 0;
+  }
+  return `${sorted.length}:${h.toString(16).padStart(8, "0")}`;
+}
+
+/**
+ * PowerSchool's internal student id -> student number, and the grade by
+ * student number, from the stored map ("psId|studentNumber|grade" per
+ * student: an array, because Convex caps an object's fields and the school
+ * has about 700 students).
+ */
+export function studentMap(entries: unknown): { snOf: Record<string, string>; gradeOf: Record<string, string> } {
+  const snOf: Record<string, string> = {};
+  const gradeOf: Record<string, string> = {};
+  for (const e of Array.isArray(entries) ? entries : []) {
+    const [psId, sn, grade] = String(e).split("|");
+    if (!psId || !sn) continue;
+    snOf[psId] = sn;
+    if (grade) gradeOf[sn] = grade;
+  }
+  return { snOf, gradeOf };
+}
+
 export function summarizeDay(
   date: string, rows: AttRow[], codes: Extract<CodeBook, { ok: true }>, rosterBySn: Record<string, RosterSnap>,
 ): DaySummary {
@@ -1264,7 +1313,10 @@ export function lookbackDates(input: {
   for (let d = addDays(input.today, -1); d >= floor && school.length < input.n; d = addDays(d, -1)) {
     if (byDate.get(d)?.schoolDay === true) school.push(d);
   }
-  const newest = school[0] ?? floor;
+  // With no school day found at all, the floor itself is the oldest date that
+  // may still have no verdict (the first counted day, read by nobody because
+  // PowerSchool was down that day, say), so it is included.
+  const newest = school[0] ?? addDays(floor, -1);
   const unverified: string[] = [];
   for (let d = addDays(input.today, -1); d > newest && d >= floor; d = addDays(d, -1)) {
     const row = byDate.get(d);

@@ -24,6 +24,9 @@ const RULES_TEST = "convex/reflectionRules.test.mjs";
 const READ = "convex/reflectionRead.ts";
 const READ_TEST = "reflection-read.test.mjs";
 const GUARD_TEST = "roster-empty-guard.test.mjs";
+const SERVER = "convex/reflection.ts";
+const READER = "convex/reflectionRead.ts";
+const READER_TEST = "reflection-reader.test.mjs";
 
 const CASES = [
   // ---- step 1: the rules (spec 6, step 1 table)
@@ -121,6 +124,44 @@ const CASES = [
   { guard: "copy a roster whose sync has not finished", file: "convex/reflection.ts", test: GUARD_TEST,
     from: "    const syncOk = !!rosterSyncedAt && runs.some(", to: "    const syncOk = true || runs.some(",
     mustFail: "a roster mid-rebuild (its sync has not finished) is never copied" },
+
+  // ---- step 4: the reader, the tick, the lease and the freeze (spec 6, step 4 table)
+  { guard: "delete the direct id confirmation (a mark missing from a read is removed outright)", file: SERVER, test: READER_TEST,
+    from: "        const direct = directAnswer(m.psRowIds.map((id) => directById.get(id)).find(Boolean));",
+    to: "        const direct = { status: \"none\" as const };",
+    mustFail: "a delete during paging: no clear without the direct id read" },
+  { guard: "key a tardy on psRowIds[0] instead of (student, date, period)", file: RULES, test: READER_TEST,
+    from: "map((i) => [tardyKey(i.studentNumber, i.attDate, i.periodId), i]));",
+    to: "map((i) => [i.psRowIds[0], i]));",
+    mustFail: "a re-entered row: no double listing (one tardy, its new id, still on its detention)" },
+  { guard: "no lease expiry (a lease is held until released)", file: RULES, test: READER_TEST,
+    from: "  const leaseHeld = !!input.lease && Date.parse(input.lease.expiresAt) > now;",
+    to: "  const leaseHeld = !!input.lease;",
+    mustFail: "an expired lease is taken over: the 09:35 tick books a new read with a new runId" },
+  { guard: "let an unconfirmed read through (it can then make the list)", file: SERVER, test: READER_TEST,
+    from: "    if (!a.ok || !tz) {", to: "    if (!tz) {",
+    mustFail: "a delete plus an insert mid-read (swapDuringRead): the read is not taken, and the arrival stays an arrival" },
+  { guard: "skip countFromDate (every new tardy is admitted)", file: SERVER, test: READER_TEST,
+    from: "        const admit = admitState(c.attDate, division, settings);", to: "        const admit = null;",
+    mustFail: "before-start on switching on: an HS tardy dated before HS's countFromDate is stored, never listed" },
+  { guard: "the fallback freeze does not take the lease", file: SERVER, test: READER_TEST,
+    from: "      await writeState(ctx, LEASE_KEY, {\n        runId: `fallback_${Date.now().toString(36)}`, kind: \"fallback\", key: \"fallback\", date, startedAt: nowIso, expiresAt: nowIso,\n      } satisfies LeaseValue);\n",
+    to: "",
+    mustFail: "the fallback fences a straggling read: its write is refused" },
+  { guard: "look back by calendar days, not school days", file: READER, test: READER_TEST,
+    from: "        const dates = lookbackDates({ today: a.date, days: c.days, n: settings.lateEntryLists, notBefore });",
+    to: "        const dates = Array.from({ length: settings.lateEntryLists }, (_, i) => shiftDay(a.date, -(i + 1))).reverse();",
+    mustFail: "after a 10-day break, the first day's lookback re-reads the day before the break" },
+  // Two more guards of this step that the spec's table does not list.
+  { guard: "applyRead ignores the runId (no fence at all)", file: SERVER, test: READER_TEST,
+    from: "    if (!lease || lease.runId !== a.runId) {", to: "    if (false) {",
+    mustFail: "...and a stale runId write is refused, writing nothing" },
+  { guard: "a re-entered mark whose tardy was cleared just follows the new id (never judged again)", file: SERVER, test: READER_TEST,
+    from: "        if (byId.get(r.itemId)?.state !== \"cleared\") handled.add(r.itemId);", to: "        handled.add(r.itemId);",
+    mustFail: "a tardy deleted (confirmed) and entered again later is judged afresh, never lost: off its released detention, for the next list" },
+  { guard: "never treat marks as final at the after-school read", file: SERVER, test: READER_TEST,
+    from: "      const final = d.date < today || a.kind === \"after-school\";", to: "      const final = d.date < today;",
+    mustFail: "...a section that never took attendance is taken as present at 15:45: H2's hold is released, for the next list" },
 ];
 
 // ------------------------------------------------------------------ the copy

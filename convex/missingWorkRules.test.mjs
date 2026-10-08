@@ -47,6 +47,7 @@ import * as seniorEligibility from "./seniorEligibility.ts";
 import * as accessRules from "./accessRules.ts";
 import * as identityRules from "./identityRules.ts";
 import * as rosterEmail from "./rosterEmail.ts";
+import * as rosterGuardRules from "./rosterGuardRules.ts";
 import * as raceRollup from "./raceRollup.ts";
 
 const { isMissingWork, onlyMissingWork, teacherMarkedMissing, scoredExactlyZero, markedMissingButScored } = rules;
@@ -540,6 +541,7 @@ console.log("\n-- the cron writes every row it fetched, flag and score as given 
     "./identityRules": identityRules,
     "./rosterEmail": rosterEmail,
     "./missingWorkRules": rules,
+    "./rosterGuardRules": rosterGuardRules,
   });
   const run = async (missingWork) => {
     const calls = [];
@@ -556,7 +558,12 @@ console.log("\n-- the cron writes every row it fetched, flag and score as given 
       return { ok: true, status: 200, json: async () => ({ record: [] }) };
     };
     const ctx = {
-      runQuery: async () => { throw new Error("the sync is not expected to run a query"); },
+      // The one query the sync runs: the empty-clear guard counting the
+      // roster already here (2026-10-08). Nothing here, so nothing is kept.
+      runQuery: async (ref) => {
+        if (ref === "psSync.rosterCountPage") return { n: 0, isDone: true, continueCursor: "" };
+        throw new Error(`the sync is not expected to run the query ${ref}`);
+      },
       runMutation: async (ref, args) => {
         calls.push({ ref, args });
         if (ref === "psSync.clearRoster") return { deleted: 0, remaining: "none" };
