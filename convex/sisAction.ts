@@ -182,15 +182,20 @@ export const syncFromPowerSchool = internalAction({
       if (counted.isDone) break;
       rosterCursor = counted.continueCursor;
     }
-    // THE ROSTER IN PLACE IS THE NEWEST SYNC'S ROWS (review, 2026-10-08). The
-    // 13:00/19:00 cron and an admin's "Sync now" share no lock, so two syncs
-    // can overlap -- both clear, both write -- and leave every row twice,
-    // under two syncedAts. Measured against all of them, every later read
-    // looked "under half" and was refused, so the doubled roster was kept for
-    // good. Measured against the newest sync's rows alone, the next
-    // believable read replaces it, as it did before the guard.
-    const newestSync = [...rowsBySync.keys()].sort().pop();
-    const rosterRowsCurrent = newestSync ? rowsBySync.get(newestSync)! : 0;
+    // THE ROSTER IN PLACE IS ONE WHOLE SYNC'S ROWS: the LARGEST group under
+    // one syncedAt (review, 2026-10-08). The 13:00/19:00 cron and an admin's
+    // "Sync now" share no lock, so two syncs can overlap -- both clear, both
+    // write -- and leave every row twice, under two syncedAts. Measured
+    // against all of them, every later read looked "under half" and was
+    // refused, so the doubled roster was kept for good. Measured against one
+    // sync's rows, the next believable read replaces it, as it did before the
+    // guard.
+    // NOT THE NEWEST group (second review, 2026-10-08): rows written after
+    // the last sync carry a later syncedAt -- seedTestRoster.seedLawrencebTest
+    // adds 6 TESTROSTER rows stamped "now", and is re-run after each sync --
+    // and measured against those 6, a 300-row partial read of a 1000-row
+    // roster looked believable and wiped 700 real rows.
+    const rosterRowsCurrent = Math.max(0, ...rowsBySync.values());
     const rosterGuard = rosterReplaceVerdict({ incomingRows: rosterRows.length, currentRows: rosterRowsCurrent });
     const rosterKept = !rosterGuard.replace;
     const rosterKeptReason = rosterGuard.replace ? null : rosterGuard.reason;

@@ -31,7 +31,7 @@ const check = (n, c, why) => {
 };
 const J = (x) => JSON.stringify(x);
 
-const loaded = await loadConvex(new URL("./", import.meta.url), ["sisAction", "psSync", "syncLog", "reflection", "rosterGuardRules", "reflectionRules"]);
+const loaded = await loadConvex(new URL("./", import.meta.url), ["sisAction", "psSync", "syncLog", "reflection", "rosterGuardRules", "reflectionRules", "seedTestRoster"]);
 try {
   const { mods } = loaded;
   const G = mods.rosterGuardRules;
@@ -138,6 +138,36 @@ try {
       const roster = store.rows("psRoster");
       check("a roster doubled by two overlapping syncs is replaced by the next believable read, not kept for good",
         roster.length === 95 && summary.rosterKept === false && summary.rosterRowsBefore === 200, J({ rows: roster.length, kept: summary.rosterKeptReason }));
+    }
+    // A SMALL GROUP NEWER THAN THE LAST SYNC (second review, 2026-10-08).
+    // seedTestRoster.seedLawrencebTest -- run in production, and re-run after
+    // each sync -- writes 6 TESTROSTER rows stamped "now". Measured against
+    // the newest syncedAt's rows alone, those 6 became "the roster", and a
+    // 30% read of the real one was believed: 70 real rows deleted. The
+    // shipped seeder runs here, as it does in production.
+    {
+      const store = makeDb(schemaSrc);
+      for (let i = 0; i < 100; i++) {
+        const r = rosterRow(i);
+        await store.db.insert("psRoster", {
+          studentNumber: r.student_number, firstName: "F", lastName: "L", gradeLevel: "7", sectionId: r.section_id,
+          period: r.section_expression, syncedAt: "2026-10-07T19:00:00.000Z",
+        });
+      }
+      await store.db.insert("teachers", { name: "Lawrence Test", ticketsAwarded: 0, email: "lawrenceb@lapromisefund.org", role: "teacher" });
+      const rt = runtime(store, { ...mods, ...stubs });
+      clock.set("2026-10-07T21:00:00.000Z");
+      const seeded = await rt.run("seedTestRoster.seedLawrencebTest", {});
+      const testRows = store.rows("psRoster").filter((r) => r.schoolId === "TESTROSTER");
+      globalThis.fetch = namedQueryServer(30);
+      clock.set("2026-10-08T13:00:00.000Z");
+      const summary = await rt.run("sisAction.syncFromPowerSchool", { reason: "test" });
+      const roster = store.rows("psRoster");
+      check("a test roster seeded after the last sync never becomes the roster the guard measures: a 30% read keeps the real one",
+        seeded.ok && testRows.length === 6 && testRows.every((r) => r.syncedAt === "2026-10-07T21:00:00.000Z")
+          && summary.rosterKept === true && summary.rosterRowsBefore === 106 && roster.length === 106
+          && /30 rows against 100/.test(summary.rosterKeptReason),
+        J({ rows: roster.length, kept: summary.rosterKept, why: summary.rosterKeptReason }));
     }
     const src = read("./convex/sisAction.ts");
     check("the guard sits before the clear: nothing is deleted until the new read is believed",
