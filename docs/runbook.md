@@ -214,7 +214,10 @@ is more than a minute old.
   until the next list is made: tick **Not here**, then press **Attendance
   done**; only ticked students carry. **Room did not run today** (roles only,
   with a reason) carries everyone without counting toward the limit. Each act
-  is kept on the detention or the day, and in `reflectionAudit`.
+  is kept on the detention or the day, and in `reflectionAudit`. All of this
+  applies to the **live** division only: a division in shadow (HS during the
+  MS live week) has no Not here box, and PowerSchool decides its carries
+  whatever the room presses.
 - **Review** (roles only) is the admin review queue: "Add to next list" or
   "Dismiss" (a reason is required), each with its age in school days.
 - **Read PowerSchool now** and **This is a school day** (roles only) are on

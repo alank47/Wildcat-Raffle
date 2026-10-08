@@ -490,8 +490,11 @@ export const listForDay = query({
     // ---- The room's own attendance for this day (build step 8b): Not here
     // and Attendance done from Lunch & Power-Up start until the next list is
     // made; Room did not run (roles) from this list's freeze until then.
+    // Only a LIVE division's detentions are the room's: a division in shadow
+    // is decided by PowerSchool (reflection.decideCarries), so its rows get
+    // no Not here box, and a list with no live division has no room bar.
     let room: Record<string, any> | null = null;
-    if (frozen) {
+    if (frozen && (modes.ms === "live" || modes.hs === "live")) {
       const later = await ctx.db.query("reflectionDays").withIndex("by_date", (q) => q.gt("date", date)).collect();
       const nextMade = later.filter((d) => d.frozenAt).sort((a, b) => a.date.localeCompare(b.date))[0] ?? null;
       const w = roomWindow({
@@ -502,7 +505,7 @@ export const listForDay = query({
         tick: w.tick, closeRoom: w.closeRoom && roles, why: w.why,
         doneAt: row?.roomAttendanceDoneAt ?? null, doneBy: row?.roomAttendanceDoneBy ?? null,
         closed: row?.roomClosed ?? null,
-        notHere: rows.filter((r) => r.notHere && r.state !== "released").length,
+        notHere: rows.filter((r) => r.notHere && r.state !== "released" && r.mode === "live").length,
       };
     }
 

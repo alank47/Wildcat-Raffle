@@ -41987,7 +41987,7 @@
                 const bits = [];
                 if (room.closed) {
                     bits.push('<b>Room did not run</b>: ' + escapeHtml(room.closed.reason || '') + ' (' + escapeHtml(room.closed.by || '')
-                        + ', ' + escapeHtml(rrClock(room.closed.at)) + '). Everyone on this list carries over, without counting toward the limit.');
+                        + ', ' + escapeHtml(rrClock(room.closed.at)) + '). Everyone the room was to take carries over, without counting toward the limit.');
                 } else if (room.doneAt) {
                     bits.push('<b>Attendance done</b> at ' + escapeHtml(rrClock(room.doneAt)) + (room.doneBy ? ' by ' + escapeHtml(room.doneBy) : '')
                         + ': ' + room.notHere + ' not here, and they carry over.');
@@ -42067,10 +42067,12 @@
                 }
                 // NOT HERE: on screen only, never on paper (the paper has an
                 // empty Served box instead). A box while the room's attendance
-                // is open; afterwards, the word, or nothing.
+                // is open; afterwards, the word, or nothing. Never on a row of
+                // a division in shadow: no room runs for it, and PowerSchool
+                // decides its carries (second review, 2026-10-08).
                 const notHereCell = r => {
                     if (!room) return '';
-                    if (!r.unitId || r.released) return '<td></td>';
+                    if (!r.unitId || r.released || r.mode !== 'live') return '<td></td>';
                     if (room.tick) {
                         return '<td><label class="rr-nothere"><input type="checkbox" data-rr-unit="' + escapeHtml(r.unitId) + '"'
                             + (r.notHere ? ' checked' : '') + ' onchange="markReflectionNotHere(this.getAttribute(\'data-rr-unit\'), this.checked)">'

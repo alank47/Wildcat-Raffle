@@ -734,13 +734,22 @@ async function decideCarries(ctx: MutationCtx, c: {
     if (u.mode === "live") live = true;
     const carry = u.carriedToUnitId ? await ctx.db.get(u.carriedToUnitId) : null;
     const snap = c.roster[u.studentNumber] ?? null;
+    // THE ROOM DECIDES ONLY THE DETENTIONS IT RUNS FOR (second review,
+    // 2026-10-08). "Attendance done", "Room did not run" and the Not here
+    // ticks are pressed once for the day, but no room runs for a division in
+    // shadow: its carries are PowerSchool's (spec 3.8 rule 3). In the MS live
+    // week, with HS in shadow as the control, the MS room's presses decided
+    // every HS carry -- an HS student absent at Power-Up and after it was
+    // "served", and Room did not run carried HS students who were in class.
+    const roomRuns = u.mode === "live";
     const verdict: CarryVerdict = carryVerdict({
       unit: { carryCount: u.carryCount }, studentNumber: u.studentNumber, division: u.division, serveDay: c.d,
-      room: { closed: !!dRow.roomClosed, attendanceDone: !!dRow.roomAttendanceDoneAt, notHere: !!u.roomNotHere },
+      room: roomRuns ? { closed: !!dRow.roomClosed, attendanceDone: !!dRow.roomAttendanceDoneAt, notHere: !!u.roomNotHere } : {},
       final: true, summary: c.summary, snap, enrolled: c.enrolled(u.studentNumber), maxCarries: c.settings.maxCarries,
     });
     if (verdict.verdict === "undecided") continue;
-    if ((verdict.verdict === "carry" || verdict.verdict === "served") && (verdict.basis === "powerschool" || verdict.basis === "whole-day")) {
+    // The day's review says the ROOM recorded nothing: only its own detentions count.
+    if (roomRuns && (verdict.verdict === "carry" || verdict.verdict === "served") && (verdict.basis === "powerschool" || verdict.basis === "whole-day")) {
       decidedByPowerSchool++;
     }
     const puMarks = snap?.puSlot ? c.summary.marks[u.studentNumber]?.[String(snap.puSlot)] ?? [] : [];

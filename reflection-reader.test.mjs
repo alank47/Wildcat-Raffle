@@ -39,6 +39,8 @@
 //  17. A Power-Up absence taken back just before the close: the closing read
 //      decides yesterday's carry before it makes today's list.
 //  18. The last-read banner, judged against the reader's own schedule.
+//  19. MS live with HS in shadow: the room's Attendance done, Room did not
+//      run and Not here decide the live division's carries only.
 //
 // TEETH: scripts/reflection-teeth.mjs breaks the direct id confirmation, the
 // natural key, the lease expiry, the "unconfirmed changes nothing" rule,
@@ -1323,6 +1325,80 @@ try {
       levels.find(([t]) => t === "12:35")?.[1]?.text === "Last good PowerSchool read 11:45. Next read 1:00.", J(levels.find(([t]) => t === "12:35")));
     const failed = seen.find(([t]) => t === "15:07")?.[1];
     check("a read that failed turns it red at once", failed && failed.level === "alert" && /the latest read failed/.test(failed.text), J(failed));
+  }
+
+  // ==========================================================================
+  console.log("\n19. MS LIVE, HS IN SHADOW: THE ROOM DECIDES ONLY THE LIVE DIVISION'S CARRIES\n");
+  // ==========================================================================
+  // The MS live week (spec 7): MS is pulled, HS stays in shadow as the
+  // control. No room runs for HS, so its carries are PowerSchool's (spec 3.8
+  // rule 3), whatever the room presses for MS (second review, 2026-10-08).
+  {
+    const MON = "2026-11-09", TUE = "2026-11-10";
+    async function liveWeek(press) {
+      const w = await world({
+        // Ten HS fillers, absent everywhere, so HS's own Power-Up (slot 8) meets.
+        students: { M1: { grade: 7, sections: MS }, HABS: { grade: 10, sections: HS }, HOK: { grade: 10, sections: HS },
+          ...Object.fromEntries(Array.from({ length: 10 }, (_, i) => [`HF${i}`, { grade: 10, sections: HS, filler: true }])) },
+        days: [{ date: MON, slots: MON_SLOTS }, { date: TUE, slots: TUE_SLOTS }],
+        settings: { modeByDivision: { ms: "live", hs: "shadow" }, countFromDateByDivision: { ms: MON, hs: MON } },
+      });
+      const staff = { admin: { email: "admin@school.test", role: "admin" }, pbis: { email: "pbis@school.test", role: "pbis" } };
+      for (const t of Object.values(staff)) await w.store.db.insert("teachers", { name: "Staff", ticketsAwarded: 0, ...t });
+      w.as = (who) => { w.rt.signIn({ issuer: STAFF_ISSUER, email: staff[who].email }); return w.rt; };
+      w.mark(MON, "M1", 2, "T");                                 // MS, at school all day
+      w.mark(MON, "HOK", 2, "T");                                // HS, at school all day
+      const hooks = [
+        [la(MON, "09:21"), () => w.mark(MON, "HABS", 2, "T")],   // HS: late to P1 ...
+        [la(MON, "12:36"), () => w.mark(MON, "HABS", 8, "A")],   // ... absent at Power-Up ...
+        [la(MON, "13:42"), () => w.mark(MON, "HABS", 6, "A")],   // ... and at P5: gone after lunch
+      ];
+      if (press) hooks.push(press(w));
+      await drive(w, la(MON, "07:30"), la(MON, "15:45"), hooks);
+      await drive(w, la(TUE, "07:30"), la(TUE, "11:45"));
+      return w;
+    }
+    const carryOf = (w, sn) => w.units(sn).find((u) => u.serveDay === TUE);
+
+    const none = await liveWeek(null);
+    check("nothing pressed: HS H-ABS, absent at Power-Up and after it, carries to Tuesday through the PowerSchool fallback",
+      J(none.listed(MON)) === J(["HABS", "HOK", "M1"]) && J(none.listed(TUE)) === J(["HABS"])
+        && carryOf(none, "HABS")?.tags[0] === "Carried over from Mon 11/9 (absent)", J({ mon: none.listed(MON), tue: none.listed(TUE) }));
+    check("...and the day's review counts only the LIVE detentions PowerSchool decided (1, not 3)",
+      /^Room attendance not recorded Mon 11\/9 \(1 detention decided from PowerSchool\)$/.test(none.day(MON).fallbackReview?.reason || ""),
+      J(none.day(MON).fallbackReview));
+
+    let done = null;
+    const pressed = await liveWeek((w) => [la(MON, "13:30"), async () => { done = await w.as("pbis").run("reflectionRoom.roomAttendanceDone", { day: MON }); }]);
+    const habs = pressed.units("HABS").find((u) => u.serveDay === MON);
+    check("Attendance done for the MS room, nobody ticked: H-ABS (HS, in shadow) still carries, decided by PowerSchool",
+      done?.ok === true && J(pressed.listed(TUE)) === J(["HABS"]) && habs.carryBasis === "powerschool"
+        && pressed.units("M1")[0].carryBasis === "room" && pressed.units("M1")[0].state === "listed",
+      J({ done, tue: pressed.listed(TUE), habs: habs?.carryBasis, m1: pressed.units("M1")[0].carryBasis }));
+    check("...and with Attendance done pressed, no day review is raised",
+      !pressed.day(MON).fallbackReview, J(pressed.day(MON).fallbackReview));
+    clock.set(la(TUE, "11:00"));
+
+    let closed = null;
+    const shut = await liveWeek((w) => [la(MON, "12:40"), async () => { closed = await w.as("admin").run("reflectionRoom.roomDidNotRun", { day: MON, reason: "Supervisor out" }); }]);
+    check("Room did not run carries the live division's detentions only: M1 (room closed) and H-ABS (absent), never H-OK, who was in class all day",
+      closed?.ok === true && J(shut.listed(TUE)) === J(["HABS", "M1"])
+        && carryOf(shut, "M1")?.tags[0] === "Carried over from Mon 11/9 (room closed)"
+        && carryOf(shut, "HABS")?.tags[0] === "Carried over from Mon 11/9 (absent)" && shut.units("HOK")[0].state === "listed",
+      J({ closed, tue: shut.listed(TUE), hok: shut.units("HOK").map((u) => [u.serveDay, u.state, u.carryBasis]) }));
+
+    // On screen: the room counts and ticks only the live division's rows.
+    let monScreen = null;
+    await liveWeek((w) => [la(MON, "12:45"), async () => {
+      for (const sn of ["M1", "HABS"]) {
+        await w.as("pbis").run("reflectionRoom.markRoom", { unitId: w.units(sn).find((u) => u.serveDay === MON)._id, notHere: true });
+      }
+      monScreen = await w.as("pbis").run("reflectionList.listForDay", { day: MON });
+    }]);
+    const modesOf = (div) => monScreen.sections.find((s) => s.division === div).rows.map((r) => r.mode);
+    check("the room's Not here count takes only the live division's rows; HS rows come marked shadow, so the screen draws no box on them",
+      monScreen.room?.tick === true && monScreen.room.notHere === 1 && modesOf("ms").every((m) => m === "live")
+        && modesOf("hs").length === 2 && modesOf("hs").every((m) => m === "shadow"), J({ room: monScreen.room, ms: modesOf("ms"), hs: modesOf("hs") }));
   }
 
   // ==========================================================================

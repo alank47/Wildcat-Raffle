@@ -508,9 +508,14 @@ console.log("\n9. THE ROOM'S ATTENDANCE ON SCREEN\n");
   const w = makeWorld(scriptSrc, { query: () => answer, mutation: (a) => { sent.push(a); return { ok: true }; } });
   await w.app.loadReflectionList();
   const html = w.fixed.rrList.innerHTML;
-  check("while the room's attendance is open, each row has a Not here box (screen only) and there is an Attendance done button",
-    /<th>Not here<\/th>/.test(html) && (html.match(/data-rr-unit="/g) || []).length === 5 && /onclick="reflectionAttendanceDone\(true\)">Attendance done</.test(html)
-      && !/Room did not run today/.test(html), html.slice(0, 200));
+  // MS is in shadow here and HS live: no room runs for a shadow division,
+  // so only the HS row is the room's to tick (second review, 2026-10-08).
+  const boxes = [...html.matchAll(/data-rr-unit="([^"]*)"/g)].map((m) => m[1]);
+  check("while the room's attendance is open, each LIVE row has a Not here box (screen only) and there is an Attendance done button",
+    /<th>Not here<\/th>/.test(html) && J(boxes) === J(["reflectionUnits:10"]) && /onclick="reflectionAttendanceDone\(true\)">Attendance done</.test(html)
+      && !/Room did not run today/.test(html), J(boxes));
+  check("...and no box on a row of a division in shadow (the pilot), whose carries PowerSchool decides",
+    !boxes.some((id) => answer.sections[0].rows.some((r) => r.unitId === id)), J(boxes));
   w.app.printReflectionList && (await w.app.printReflectionList());
   check("...never on paper: the printed list has the empty Served box instead", !/Not here/.test(w.prints[0]?.sheet || "x"));
   await w.app.markReflectionNotHere("reflectionUnits:9", true);
