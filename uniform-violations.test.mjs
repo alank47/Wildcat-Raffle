@@ -846,7 +846,7 @@ console.log("\nSigned out and back in while a send is out: the queue still goes"
 console.log("\nLogout names a save still out, even with uniform entries waiting");
 {
   const fn = new Function("G", `
-    const _unsavedReferrals = new Map();
+    const _unsavedReferrals = new Map(Array.from({ length: G.referrals || 0 }, (_, i) => ["REF-" + i, {}]));
     let isSyncing = G.isSyncing;
     const _saveQueue = { isPending: () => false };
     const uniformQueueLength = () => G.uniform;
@@ -862,6 +862,19 @@ console.log("\nLogout names a save still out, even with uniform entries waiting"
     fn({ isSyncing: false, uniform: 1, stored: true }) === "Not saved yet: 1 uniform entry. If you log out now, it waits on this device and will be sent the next time you sign in here.");
   check("...and a device that cannot keep it says everything will be lost",
     /will be lost from this device, and so will the uniform entry\.$/.test(fn({ isSyncing: true, uniform: 1, stored: false })));
+  // A REFERRAL ON THE BAR NO LONGER HIDES THE REST (second review,
+  // 2026-10-08): it returned first, and uniform entries this device could
+  // not keep were lost at sign-out unmentioned.
+  const refLost = fn({ isSyncing: false, uniform: 2, stored: false, referrals: 1 });
+  check("a referral and uniform entries this device could not keep are both named as lost",
+    refLost === "Not saved yet: 1 referral, and 2 uniform entries. If you log out now, the referral will be lost from this device, and so will the uniform entries.",
+    refLost);
+  const refKept = fn({ isSyncing: true, uniform: 1, stored: true, referrals: 2 });
+  check("...and with the entries kept on this device, the referrals are lost and the entry is said to wait",
+    refKept === "Not saved yet: 2 referrals, and 1 uniform entry. If you log out now, the referrals will be lost from this device; "
+      + "the uniform entry waits on this device and will be sent the next time you sign in here.", refKept);
+  check("...a referral alone reads as before",
+    fn({ isSyncing: true, uniform: 0, stored: true, referrals: 1 }) === "Not saved yet: 1 referral. If you log out now, it will be lost from this device.");
 }
 
 console.log("\nA refused press stops, and says why");

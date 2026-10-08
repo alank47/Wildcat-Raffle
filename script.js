@@ -45052,44 +45052,50 @@
          * the queue keeps a failed save pending until one lands; a direct
          * saveData() that failed left no trace here. The queue does not say
          * what a pending save carries, so any counts: none of it can land
-         * once the person has gone. Never throws.
+         * once the person has gone. Uniform entries still in their send
+         * queue are named in the same message: waiting on this device, or
+         * lost with the rest when this device could not keep them. Never
+         * throws.
          */
         function unsavedWorkAtLogout() {
             try {
+                // ONE MESSAGE NAMES EVERYTHING (second review, 2026-10-08).
+                // Returning at the first thing found hid the rest: with a
+                // referral on the bar, uniform entries this device could not
+                // keep were lost at sign-out without a word.
+                //
+                // What sign-out loses whatever happens: referrals on the bar,
+                // or else a save still out (which is what carries a Close or a
+                // detention; with referrals on the bar it is theirs).
                 const n = _unsavedReferrals.size;
-                if (n) {
-                    return `Not saved yet: ${n === 1 ? '1 referral' : n + ' referrals'}. ` +
-                        `If you log out now, ${n === 1 ? 'it' : 'they'} will be lost from this device.`;
-                }
+                const sending = isSyncing === true || Boolean(_saveQueue && _saveQueue.isPending());
+                const lost = n
+                    ? { words: n === 1 ? '1 referral' : n + ' referrals', the: n === 1 ? 'the referral' : 'the referrals', many: n !== 1 }
+                    : sending ? { words: 'changes this tab is still sending to the server', the: 'the changes', many: true } : null;
                 // UNIFORM ENTRIES STILL IN THE SEND QUEUE (2026-10-08). They go
                 // with the person: kept on this device under their own sign-in
                 // and sent when they next sign in here -- unless this device
-                // could not keep them, and then they are lost.
-                const sending = isSyncing === true || Boolean(_saveQueue && _saveQueue.isPending());
+                // could not keep them, and then they are lost too.
                 const u = typeof uniformQueueLength === 'function' ? uniformQueueLength() : 0;
-                if (u) {
-                    const words = u === 1 ? '1 uniform entry' : u + ' uniform entries';
-                    const kept = typeof _uvQueueStored !== 'undefined' && _uvQueueStored;
-                    // A SAVE STILL OUT AS WELL (review, 2026-10-08): it is lost at
-                    // sign-out whatever becomes of the uniform entries, so it is
-                    // named too, plainly -- a network outage is exactly when both
-                    // are waiting, and the reassuring "it waits" must never be
-                    // all that is said.
-                    if (sending) {
-                        return `Not saved yet: changes this tab is still sending to the server, and ${words}. ` +
-                            'If you log out now, the changes will be lost from this device' +
-                            (kept ? `; the uniform ${u === 1 ? 'entry waits' : 'entries wait'} on this device and will be sent the next time you sign in here.`
-                                : `, and so will the uniform ${u === 1 ? 'entry' : 'entries'}.`);
-                    }
+                if (!u) {
+                    return lost
+                        ? `Not saved yet: ${lost.words}. If you log out now, ${lost.many ? 'they' : 'it'} will be lost from this device.`
+                        : '';
+                }
+                const words = u === 1 ? '1 uniform entry' : u + ' uniform entries';
+                const kept = typeof _uvQueueStored !== 'undefined' && _uvQueueStored;
+                if (!lost) {
                     return kept
                         ? `Not saved yet: ${words}. If you log out now, ${u === 1 ? 'it waits' : 'they wait'} on this device ` +
                           'and will be sent the next time you sign in here.'
                         : `Not saved yet: ${words}. If you log out now, ${u === 1 ? 'it' : 'they'} will be lost from this device.`;
                 }
-                return sending
-                    ? 'Not saved yet: changes this tab is still sending to the server. ' +
-                      'If you log out now, they will be lost from this device.'
-                    : '';
+                // BOTH (review, 2026-10-08): what is lost is named plainly, and
+                // the reassuring "it waits" is never all that is said.
+                return `Not saved yet: ${lost.words}, and ${words}. ` +
+                    `If you log out now, ${lost.the} will be lost from this device` +
+                    (kept ? `; the uniform ${u === 1 ? 'entry waits' : 'entries wait'} on this device and will be sent the next time you sign in here.`
+                        : `, and so will the uniform ${u === 1 ? 'entry' : 'entries'}.`);
             } catch (e) {
                 return '';
             }
