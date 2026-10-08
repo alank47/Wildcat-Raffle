@@ -255,8 +255,13 @@ function budgetRefusal(deadline: number): Refusal {
  * 10-minute kill, which records nothing. Each request now carries a timeout at
  * the deadline: a request still open then is abandoned and the run refuses
  * 'budget' like any other slow read.
+ *
+ * EXPORTED (2026-10-08), with countRows, readWindow and sameList, for the
+ * Reflection Room reader (reflectionRead.ts), which reads one school day the
+ * same proven way rather than through a second copy. Export only: nothing in
+ * these four changed.
  */
-async function psGet(url: string, tok: string, deadline: number, what: string): Promise<any> {
+export async function psGet(url: string, tok: string, deadline: number, what: string): Promise<any> {
   for (let attempt = 0; ; attempt++) {
     if (pastDeadline(deadline)) throw budgetRefusal(deadline);
     const signal = AbortSignal.timeout(Math.max(1, deadline - Date.now()));
@@ -295,7 +300,7 @@ async function psGet(url: string, tok: string, deadline: number, what: string): 
  * PowerSchool's own count of the rows a query matches. WITHOUT IT THERE IS NO
  * PROOF, so an unreadable count throws rather than reading as zero.
  */
-async function countRows(host: string, tok: string, table: string, q: string, deadline: number): Promise<number> {
+export async function countRows(host: string, tok: string, table: string, q: string, deadline: number): Promise<number> {
   const b = await psGet(`https://${host}/ws/schema/table/${table}/count?q=${encodeURIComponent(q)}`,
     tok, deadline, `the count of ${table} (${q})`);
   const raw = b?.count ?? b?.resource?.count;
@@ -313,7 +318,7 @@ async function countRows(host: string, tok: string, table: string, q: string, de
  * counted once (and the repeat is reported), and a row with no id stops the
  * run: without ids there is nothing to prove.
  */
-async function readWindow(host: string, tok: string, q: string, deadline: number, abort: { stop: boolean }) {
+export async function readWindow(host: string, tok: string, q: string, deadline: number, abort: { stop: boolean }) {
   const t = Date.now();
   const rows = new Map<string, any>();
   let duplicates = 0;
@@ -379,7 +384,8 @@ function checkPiece(rows: Map<string, any>, w: Win, yearid: string): void {
   }
 }
 
-function sameList(a: string[], b: string[]): boolean {
+/** Two sorted id lists hold exactly the same ids. */
+export function sameList(a: string[], b: string[]): boolean {
   if (a.length !== b.length) return false;
   for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
   return true;

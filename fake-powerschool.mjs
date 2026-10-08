@@ -57,6 +57,14 @@
 //   editBeforeRecheck  { id, field, value } an office correction landing
 //                      after the comparison's old single read, just before
 //                      its first by-id re-read (a table read with id==)
+//
+// And three ways an office or a teacher changes a mark BETWEEN reads, for the
+// Reflection Room reader (2026-10-08), each a method on the fake:
+//   changeCode(id, codeId)  a mark's code changes in place (T to D, say)
+//   reenter(id)             a mark deleted and entered again: same student,
+//                           date and period, a NEW row id (returned)
+//   movePeriod(id, periodid) the same row id, now under another period
+// plus reflectionDay(), a school day built from slots and sections (below).
 
 const NULL = (x) => x === null || x === undefined || x === "";
 
@@ -240,11 +248,120 @@ export function fakePowerSchool(tablesIn, opts = {}) {
       inFlight--;
     }
   };
+  const rowOf = (id) => {
+    const r = tables.attendance.find((x) => String(x.id) === String(id));
+    if (!r) throw new Error(`the fake PowerSchool has no attendance row ${id}`);
+    return r;
+  };
   return {
     fetch, log, tables,
     get maxInFlight() { return maxInFlight; },
     get inserted() { return inserted; },
     get swaps() { return swaps; },
     deleted,
+    changeCode(id, codeId) { rowOf(id).attendance_codeid = codeId; },
+    reenter(id) {
+      const at = tables.attendance.indexOf(rowOf(id));
+      const old = tables.attendance.splice(at, 1)[0];
+      deleted.push(old);
+      const fresh = { ...old, id: nextId++ };
+      tables.attendance.push(fresh);
+      return fresh.id;
+    },
+    movePeriod(id, periodid) { rowOf(id).periodid = periodid; },
+  };
+}
+
+// ---------------------------------------------------------------------------
+// A SCHOOL DAY FOR THE REFLECTION ROOM TESTS (2026-10-08).
+//
+// The list's rules turn on two counts PowerSchool does not hand over
+// directly: whether a SLOT MET today (at least 10 rows of any code in it)
+// and whether a student's own SECTION has any marks yet (a teacher who has
+// not taken attendance leaves every student in the section with "no row").
+// This builds a day where both are chosen on purpose:
+//   meet          slots given 10 filler rows (code A, filler students in
+//                 section FILL-<slot>), so the slot meets school-wide
+//   sectionMarks  section ids given one classmate row (code A), so the
+//                 section has marks; a section not listed has none unless a
+//                 student under test has a row in it
+//   marks         [{ sn, slot, code, date? }] the rows under test
+//   futureRows    rows per slot (1, 2, 4, 6, 9, 10) dated the next day, code
+//                 X: PowerSchool's absences entered ahead of time
+// Students: [{ sn, grade, sections: { slot: sectionId }, teachers?, courses? }].
+// Returns PowerSchool's tables (attendance, attendance_code, students), the
+// matching psRoster rows (period "8(A-E)" etc.), the code ids by letter,
+// and PowerSchool's internal student id for each student number.
+// ---------------------------------------------------------------------------
+export const REFLECTION_CODES = [
+  { id: 1, att_code: "A", description: "Absent", presence_status_cd: "Absent" },
+  { id: 2, att_code: "T", description: "Tardy", presence_status_cd: "Present" },
+  { id: 3, att_code: "D", description: "Excused Tardy", presence_status_cd: "Present" },
+  { id: 4, att_code: "K", description: "Ditching", presence_status_cd: "Present" },
+  { id: 5, att_code: "", description: "Present", presence_status_cd: "Present" },
+  { id: 6, att_code: "S", description: "Suspended", presence_status_cd: "Absent" },
+  { id: 7, att_code: "X", description: "Excused Absence", presence_status_cd: "Absent" },
+];
+
+export function reflectionDay({
+  date, schoolid = "1817", yearid = "36", students = [], marks = [], meet = [], sectionMarks = [], futureRows = 0,
+} = {}) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(date))) throw new Error("reflectionDay needs a YYYY-MM-DD date");
+  const codeId = Object.fromEntries(REFLECTION_CODES.map((c) => [c.att_code || "P", c.id]));
+  const attendance = [], studentsTable = [], psRoster = [];
+  const psIdOf = {};
+  let rowId = 5000, psId = 70000;
+  const addStudent = ({ sn, grade = 7, sections = {}, teachers = {}, courses = {} }) => {
+    if (psIdOf[sn]) return;
+    psIdOf[sn] = ++psId;
+    studentsTable.push({ id: psIdOf[sn], student_number: sn, schoolid });
+    for (const [slot, sectionId] of Object.entries(sections)) {
+      const [first, last] = String(teachers[slot] ?? `Teacher ${sectionId}`).split(" ");
+      psRoster.push({
+        studentNumber: sn, gradeLevel: String(grade), period: `${slot}(A-E)`, sectionId,
+        courseName: courses[slot] ?? `Course ${sectionId}`, teacherFirstName: first, teacherLastName: last ?? "",
+        teacherEmail: `${String(sectionId).toLowerCase()}@school.test`, syncedAt: "2026-10-08T13:00:00Z",
+      });
+    }
+  };
+  const addRow = (sn, slot, code, onDate = date) => {
+    const id = ++rowId;
+    attendance.push({
+      id, schoolid, yearid, studentid: psIdOf[sn], att_date: onDate, periodid: 850 + Number(slot),
+      attendance_codeid: codeId[code], ccid: 0,
+    });
+    return id;
+  };
+  for (const s of students) addStudent(s);
+  for (const slot of meet) {
+    for (let i = 0; i < 10; i++) {
+      const sn = `F${slot}-${i}`;
+      addStudent({ sn, sections: { [slot]: `FILL-${slot}` } });
+      addRow(sn, slot, "A");
+    }
+  }
+  for (const sectionId of sectionMarks) {
+    const owner = psRoster.find((r) => r.sectionId === sectionId);
+    if (!owner) throw new Error(`reflectionDay: no student is enrolled in section ${sectionId}`);
+    const slot = Number(owner.period.split("(")[0]);
+    const sn = `C-${sectionId}`;
+    addStudent({ sn, sections: { [slot]: sectionId } });
+    addRow(sn, slot, "A");
+  }
+  const ids = marks.map((m) => addRow(m.sn, m.slot, m.code, m.date ?? date));
+  const next = new Date(Date.parse(date + "T00:00:00Z") + 86400000).toISOString().slice(0, 10);
+  for (const slot of futureRows ? [1, 2, 4, 6, 9, 10] : []) {
+    for (let i = 0; i < futureRows; i++) {
+      const sn = `X${slot}-${i}`;
+      addStudent({ sn, sections: { [slot]: `FUT-${slot}` } });
+      addRow(sn, slot, "X", next);
+    }
+  }
+  const codes = REFLECTION_CODES.map((c) => ({ ...c, schoolid, yearid }));
+  const rowCountBySlot = {};
+  for (const r of attendance) if (r.att_date === date) rowCountBySlot[r.periodid - 850] = (rowCountBySlot[r.periodid - 850] ?? 0) + 1;
+  return {
+    tables: { attendance, attendance_code: codes, students: studentsTable },
+    psRoster, codeId, psIdOf, markIds: ids, rowCountBySlot,
   };
 }

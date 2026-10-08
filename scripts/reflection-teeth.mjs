@@ -21,6 +21,8 @@ import { fileURLToPath } from "node:url";
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const RULES = "convex/reflectionRules.ts";
 const RULES_TEST = "convex/reflectionRules.test.mjs";
+const READ = "convex/reflectionRead.ts";
+const READ_TEST = "reflection-read.test.mjs";
 
 const CASES = [
   // ---- step 1: the rules (spec 6, step 1 table)
@@ -99,6 +101,11 @@ const CASES = [
   { guard: "drop the enrolment filter", file: RULES, test: RULES_TEST,
     from: "    && (enrolled ? enrolled.has(s) : !POWER_UP_SLOTS.includes(s)));", to: "    && true);",
     mustFail: "a class the student is not enrolled in is not evidence of being in school" },
+
+  // ---- step 2: the confirmed read
+  { guard: "accept a single steady read (drop the same-ids check)", file: READ, test: READ_TEST,
+    from: "      if (steady && previous !== null && sameList(previous, ids)) {", to: "      if (steady) {",
+    mustFail: "delete + insert mid-read is not taken" },
 ];
 
 // ------------------------------------------------------------------ the copy
