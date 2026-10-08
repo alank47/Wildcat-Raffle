@@ -143,6 +143,7 @@ console.log("\nUnfinished work is defined by what is actually on screen");
   check("a typed referral description counts", /referralDescription/.test(body));
   check("a chosen referral student counts", /referralStudentSelect/.test(body));
   check("ticked students count", /checkbox"\]:checked/.test(body));
+  check("unsent uniform entries count", /if \(_uvQueue\.length\) return true;/.test(body));
   check("typed cash notes count", /cashNotes/.test(body));
   check("and if it cannot tell, it assumes busy rather than reloading",
     /catch \(e\) \{ return true; \}/.test(body));
@@ -420,6 +421,20 @@ console.log("\n-- the busy deadline: a weekend tab cannot hold write access fore
   check("the tab passes its pending list, not a screen flag",
     /unconfirmedMoney: unconfirmedCashForUpdate\(\)\.length > 0,/.test(script)
       && /unconfirmedMoneyAgeMs: oldestUnconfirmedCashAgeMs\(\),/.test(script));
+
+  // UNSAVED UNIFORM ENTRIES (2026-10-08, the Reflection Room build, step 5).
+  // A door burst saved into a hidden tab whose saves are failing is the same
+  // shape as the nine lost awards: the queue lives in memory while it sends.
+  check("an unsaved uniform queue blocks the update reload even on a hidden tab past the busy deadline",
+    at({ unconfirmedUniform: true, unconfirmedUniformAgeMs: 3 * HOUR, busy: true, hidden: true, pendingForMs: 99 * HOUR }).reload === false);
+  check("...and says why", /uniform entries the server has not confirmed/.test(at({ unconfirmedUniform: true, hidden: true }).reason));
+  check("...but a queue stuck for a whole day is a fault, and the update goes ahead",
+    at({ unconfirmedUniform: true, unconfirmedUniformAgeMs: 25 * HOUR, hidden: true }).reload === true
+      && U.UNIFORM_HOLD_MAX_MS === 24 * HOUR);
+  check("the uniform hold, too, is checked before the busy deadline's override",
+    src.indexOf("if (s.unconfirmedUniform)") > 0 && src.indexOf("if (s.unconfirmedUniform)") < src.indexOf("if (s.busy && !(s.hidden && overdue))"));
+  check("the tab passes its send queue",
+    /unconfirmedUniform: uniformQueueLength\(\) > 0,/.test(script) && /unconfirmedUniformAgeMs: oldestUniformQueuedAgeMs\(\),/.test(script));
 
   // UNCHANGED: politeness while somebody is actually looking at the screen.
   check("busy and visible still waits, however long it has waited",

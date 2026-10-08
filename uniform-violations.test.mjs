@@ -13,12 +13,28 @@
 //     it, and there is an assertion below for exactly that student.
 //   - ONE VIOLATION PER STUDENT PER DAY, and that a VOIDED one does not block
 //     the day — undoing a mistake has to leave the child loggable again.
-//   - THE LOCAL SCHOOL DAY. A server-side UTC date rolls over at 5pm Pacific,
-//     so an after-school entry would be filed against tomorrow.
+//   - THE SCHOOL DAY IS THE SERVER'S (2026-10-08, the Reflection Room build,
+//     step 5). The shipped `log` mutation is RUN against an in-memory Convex
+//     (fake-convex.mjs): it files an entry under the Los Angeles day of the
+//     moment Enter was pressed (`observedAt`), ignores and counts the day a
+//     browser sends, and refuses to believe a time outside [now - 72 h,
+//     now + 5 min]. The old one-day "slack" that accepted tomorrow is gone.
+//   - THE SEND QUEUE: a second Enter during a save is queued, never dropped;
+//     a failed send retries itself under the same attemptId; the queue
+//     survives a reload; and it goes with the person at sign-out.
+//   - THE SCHOOL'S CLOCK on every time shown -- this whole file runs with the
+//     machine in Tokyo, so a time read off the machine's zone is caught.
 //   - THAT ABSENT DATA IS NEVER RENDERED AS A GOOD RESULT, the refusal
 //     attendanceRanking already makes.
+//
+// TEETH: scripts/reflection-teeth.mjs puts back the busy early return, the
+// trusted client day and the ignored observedAt, one at a time, and requires
+// the check named for each to FAIL.
+process.env.TZ = "Asia/Tokyo";
+
 import { readFileSync } from "node:fs";
 import ts from "typescript";
+import { clock, loadConvex, makeDb, runtime } from "./fake-convex.mjs";
 
 let pass = 0, fail = 0;
 const check = (n, c, why) => {
@@ -39,7 +55,7 @@ function lift(name) {
   return ruleSrc.slice(start, end).replace("export function", "function");
 }
 const js = ts.transpileModule(
-  ["dayToEpoch", "dayMinus", "dayVerdict", "windowStart", "duplicateVerdict",
+  ["dayToEpoch", "dayMinus", "windowStart", "duplicateVerdict",
    "mayLogUniform", "mayReadUniform"].map(lift).join("\n") +
   // The module-level constants the lifted functions close over. Taken from
   // the shipped source by regex rather than retyped, so a change to either
@@ -47,12 +63,11 @@ const js = ts.transpileModule(
   "\n" + ruleSrc.match(/^export const UNIFORM_LOG_ROLES = .*$/m)[0].replace("export ", "").replace(" as const", "") +
   "\n" + ruleSrc.match(/^export const UNIFORM_READ_ROLES = .*$/m)[0].replace("export ", "").replace(" as const", "") +
   "\n" + ruleSrc.match(/^export const MAX_WINDOW_DAYS = .*$/m)[0].replace("export ", "") +
-  "\n" + ruleSrc.match(/^export const DAY_SLACK = .*$/m)[0].replace("export ", "") +
   "\n" + ruleSrc.match(/^const DAY_RE = .*$/m)[0],
   { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext } },
 ).outputText;
-const [dayToEpoch, dayMinus, dayVerdict, windowStart, duplicateVerdict, mayLogUniform, mayReadUniform] =
-  new Function(js + "\nreturn [dayToEpoch, dayMinus, dayVerdict, windowStart, duplicateVerdict, mayLogUniform, mayReadUniform];")();
+const [dayToEpoch, dayMinus, windowStart, duplicateVerdict, mayLogUniform, mayReadUniform] =
+  new Function(js + "\nreturn [dayToEpoch, dayMinus, windowStart, duplicateVerdict, mayLogUniform, mayReadUniform];")();
 
 console.log("\nThe owner's ladder: 1 is an accident, 2 is concerning, 3 is a habit");
 {
@@ -135,22 +150,14 @@ console.log("\nThe repeat list is a queue, worst first, and absent data is not '
     tie.ranked[0].studentName === "Ongoing");
 }
 
-console.log("\nThe day of a violation is the LOCAL school day, validated and clamped");
+console.log("\nA day is a real day");
 {
-  // A server-side UTC date rolls over at 5pm Pacific: an after-school entry
-  // would land on tomorrow's list.
-  const now = "2026-09-18T20:00:00.000Z";   // 1pm Pacific
-  check("today is accepted", dayVerdict("2026-09-18", now).ok === true);
-  check("yesterday is accepted, for a timezone behind UTC", dayVerdict("2026-09-17", now).ok === true);
-  check("tomorrow is accepted, for one ahead", dayVerdict("2026-09-19", now).ok === true);
-  check("last week is refused", dayVerdict("2026-09-10", now).ok === false);
-  check("and the refusal says how far off it is", /8 days from the server's date/.test(dayVerdict("2026-09-10", now).reason));
-  check("a non-day is refused", dayVerdict("yesterday", now).ok === false);
-  check("an empty day is refused", dayVerdict("", now).ok === false);
   check("a date that does not exist is refused", dayToEpoch("2026-02-31") === null);
   check("a real leap day is not", dayToEpoch("2028-02-29") !== null);
   check("month 13 is refused", dayToEpoch("2026-13-01") === null);
   check("a timestamp is not a day", dayToEpoch("2026-09-18T10:00:00Z") === null);
+  check("the one-day slack that accepted tomorrow is gone from the rules",
+    !/DAY_SLACK|function dayVerdict/.test(ruleSrc.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "")));
 }
 
 console.log("\nA count window cannot be widened without limit by a stale client");
@@ -383,30 +390,33 @@ function harness(opts) {
     const enrolledStudents = () => stubs.enrolled;
     let uniformSettings = ${JSON.stringify(o.settings || null)};
     let _uvToday = [], _uvCounts = ${JSON.stringify(o.counts || [])}, _uvLoaners = [];
-    let _uvTruncated = false, _uvBusy = false, _uvPick = null, _uvMatches = [], _uvHighlight = -1;
+    let _uvTruncated = false, _uvPick = null, _uvMatches = [], _uvHighlight = -1;
     let _uvPickSummary = null;
-    const _uvUnsaved = new Map();
+    let _uvDay = ${JSON.stringify(o.day || "")};
     let renderCalls = 0;
     function renderUniformViolations() { renderCalls++; }
-    ${["wcIsoDay", "uniformSettingsNow", "uniformWindowStart", "refreshUniformData",
-       "uniformPickerMatches", "uniformCountFor", "wcOrdinalSuffix", "wcDaysAgoLabel"].map(liftFn).join("\n")}
+    ${["wcIsoDay", "uniformSettingsNow", "uvSchoolDay", "uvDayLabel", "uniformWindowStart", "updateUniformDayNote",
+       "refreshUniformData", "uniformPickerMatches", "uniformCountFor", "wcOrdinalSuffix", "wcDaysAgoLabel"].map(liftFn).join("\n")}
     return {
       refreshUniformData, uniformWindowStart, uniformSettingsNow,
       uniformPickerMatches, uniformCountFor, wcOrdinalSuffix, wcDaysAgoLabel, wcIsoDay,
-      state: () => ({ today: _uvToday, counts: _uvCounts, loaners: _uvLoaners, truncated: _uvTruncated, renderCalls }),
+      state: () => ({ today: _uvToday, counts: _uvCounts, loaners: _uvLoaners, truncated: _uvTruncated, renderCalls, day: _uvDay }),
     };
   `;
   return { api: new Function("stubs", "D", body)(stubs, D), calls, el };
 }
 
-/** The day, formatted as the app formats it, from the real clock. */
+/** The school day in Los Angeles: what the screen falls back to before the server has said. */
+const laDay = (ms) => new Intl.DateTimeFormat("en-CA", { timeZone: "America/Los_Angeles", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date(ms));
 const dayOf = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 const TODAY = dayOf(new Date());
 const daysBack = (n) => { const d = new Date(); d.setDate(d.getDate() - n); return dayOf(d); };
 
-console.log("\nThe refresh actually runs, and asks for the right day");
+console.log("\nThe refresh actually runs, and lets the SERVER say which day it is");
 {
-  const { api, calls } = harness({});
+  const { api, calls, el } = harness({
+    answers: { "uniformViolations:forDay": { allowed: true, rows: [], truncated: false, day: "2026-10-13" } },
+  });
   let threw = null;
   await api.refreshUniformData().catch((e) => { threw = e; });
   // THE ASSERTION THAT WAS MISSING. It fails on the shipped bug with
@@ -416,15 +426,15 @@ console.log("\nThe refresh actually runs, and asks for the right day");
 
   const forDay = calls.find((c) => c.path === "uniformViolations:forDay");
   check("forDay was called", Boolean(forDay));
-  check("and it was given a REAL day, not undefined",
-    Boolean(forDay) && forDay.args.day === TODAY,
-    forDay ? JSON.stringify(forDay.args) : "no call");
+  check("and it was sent NO day: the server answers with its own school day (step 5)",
+    Boolean(forDay) && Object.keys(forDay.args).length === 0, forDay ? JSON.stringify(forDay.args) : "no call");
+  check("the screen keeps the server's day, and says 'Logging for' it",
+    api.state().day === "2026-10-13" && /^Logging for Tue 10\/13\./.test(el("uvDayNote").textContent), el("uvDayNote").textContent);
 
   const counts = calls.find((c) => c.path === "uniformViolations:counts");
-  check("counts was given today", Boolean(counts) && counts.args.today === TODAY);
-  check("and a window start 13 days earlier, so today is the 14th day",
-    Boolean(counts) && counts.args.sinceDay === daysBack(13),
-    counts ? String(counts.args.sinceDay) + " wanted " + daysBack(13) : "no call");
+  check("counts is sent the window's length, never this Chromebook's date",
+    Boolean(counts) && counts.args.windowDays === 14 && !("today" in counts.args) && !("sinceDay" in counts.args),
+    counts ? JSON.stringify(counts.args) : "no call");
   check("every argument is defined",
     calls.every((c) => Object.values(c.args).every((v) => v !== undefined)),
     JSON.stringify(calls.map((c) => c.args)));
@@ -453,14 +463,18 @@ console.log("\nThe refresh degrades rather than throwing");
   check("signed out asks for nothing and does not throw", threw3 === null && out.calls.length === 0);
 }
 
-console.log("\nThe window is the settings window, counted back from today");
+console.log("\nThe window is the settings window, counted back from the server's day");
 {
-  const wide = harness({ settings: { windowDays: 30, concerningAt: 2, habitAt: 3 } });
-  check("a 30-day window starts 29 days ago", wide.api.uniformWindowStart() === daysBack(29));
-  const one = harness({ settings: { windowDays: 1, concerningAt: 1, habitAt: 1 } });
-  check("a one-day window is today itself", one.api.uniformWindowStart() === TODAY);
-  const junk = harness({ settings: { windowDays: "lots" } });
-  check("a junk window falls back to the 14-day default", junk.api.uniformWindowStart() === daysBack(13));
+  const wide = harness({ settings: { windowDays: 30, concerningAt: 2, habitAt: 3 }, day: "2026-10-13" });
+  check("a 30-day window starts 29 days before the server's day", wide.api.uniformWindowStart() === "2026-09-14", wide.api.uniformWindowStart());
+  const one = harness({ settings: { windowDays: 1, concerningAt: 1, habitAt: 1 }, day: "2026-10-13" });
+  check("a one-day window is that day itself", one.api.uniformWindowStart() === "2026-10-13");
+  const junk = harness({ settings: { windowDays: "lots" }, day: "2026-11-02" });
+  check("a junk window falls back to the 14-day default, across the clock change", junk.api.uniformWindowStart() === "2026-10-20", junk.api.uniformWindowStart());
+  const early = harness({});
+  const want = new Date(Date.parse(laDay(Date.now()) + "T12:00:00Z") - 13 * 86400000).toISOString().slice(0, 10);
+  check("before the server has said, it counts from the LOS ANGELES day, not this (Tokyo) machine's",
+    early.api.uniformWindowStart() === want, early.api.uniformWindowStart() + " wanted " + want);
   check("the lifted formatter is the shipped one", wide.api.wcIsoDay(new Date()) === TODAY);
 }
 
@@ -510,6 +524,342 @@ console.log("\nThe small display helpers run");
   check("yesterday reads 'yesterday'", api.wcDaysAgoLabel(daysBack(1)) === "yesterday");
   check("older reads in days", api.wcDaysAgoLabel(daysBack(4)) === "4 days ago");
   check("junk reads empty, not NaN", api.wcDaysAgoLabel("nope") === "");
+}
+
+// ---------------------------------------------------------------------------
+// THE SERVER SETS THE DAY (step 5): the SHIPPED log, voidEntry and forDay,
+// run against an in-memory Convex with the real schema's indexes.
+// ---------------------------------------------------------------------------
+Object.assign(process.env, { STAFF_DOMAIN: "school.test", ENTRA_TENANT_ID: "tenant-1" });
+const STAFF_ISSUER = "https://login.microsoftonline.com/tenant-1/v2.0";
+const convex = await loadConvex(new URL("./", import.meta.url), ["uniformViolations", "reflectionRules"]);
+try {
+  const U = convex.mods.uniformViolations;
+  const RR = convex.mods.reflectionRules;
+  const la = (date, hhmm) => { const [h, m] = hhmm.split(":").map(Number); return RR.laWallToUtc(date, h * 60 + m, "America/Los_Angeles"); };
+  const TUE = "2026-10-13", WED = "2026-10-14";
+  async function server() {
+    const store = makeDb(readFileSync(new URL("./convex/schema.ts", import.meta.url), "utf8"));
+    await store.db.insert("bellSettings", { key: "bell", timeZone: "America/Los_Angeles", updatedAt: "2026-08-17T00:00:00Z" });
+    await store.db.insert("teachers", { name: "Pat PBIS", email: "pbis@school.test", role: "pbis", ticketsAwarded: 0 });
+    for (const [sn, first] of [["12001", "Rosa"], ["12002", "Owen"], ["12003", "Leo"]]) {
+      await store.db.insert("students", { studentNumber: sn, firstName: first, lastName: "Test", grade: "9" });
+    }
+    const rt = runtime(store, convex.mods);
+    rt.signIn({ issuer: STAFF_ISSUER, email: "pbis@school.test" });
+    const log = (sn, extra) => rt.run("uniformViolations.log", { studentNumber: sn, loanerProvided: false, attemptId: "a" + Math.random(), ...extra });
+    return { store, rt, log };
+  }
+
+  console.log("\nThe server files each entry under the school day of the moment Enter was pressed");
+  {
+    const w = await server();
+    clock.set(la(TUE, "07:52"));
+    const r = await w.log("12001", { observedAt: Date.parse(la(TUE, "07:52")) });
+    check("the server sets the day: pressed and sent Tue 7:52 is a Tuesday entry, at the moment it was seen",
+      r.ok && r.row.day === TUE && r.row.at === la(TUE, "07:52") && !r.row.savedAt, JSON.stringify(r.row));
+    clock.set(la(TUE, "16:30"));          // after 4:30 PM Pacific: the UTC date is already Wednesday
+    const late = await w.log("12002", { observedAt: Date.parse(la(TUE, "16:30")) });
+    check("after school is still today, though the UTC date has rolled over", late.row.day === TUE, late.row.day);
+
+    clock.set(la(TUE, "13:00"));
+    const old = await w.log("12003", { day: WED });       // a tab on older code: no observedAt
+    const mismatch = w.store.rows("appState").find((x) => x.key === "uniform:dayMismatch")?.value;
+    check("a client day of tomorrow is ignored and counted",
+      old.row.day === TUE && mismatch?.clientDay === 1 && mismatch?.outOfWindow === 0, JSON.stringify({ day: old.row.day, mismatch }));
+
+    clock.set(la(TUE, "13:05"));
+    const forDay = await w.rt.run("uniformViolations.forDay", {});
+    check("forDay with no day answers with the server's school day and its rows",
+      forDay.day === TUE && forDay.rows.length === 3, JSON.stringify({ day: forDay.day, n: forDay.rows.length }));
+    const counts = await w.rt.run("uniformViolations.counts", { windowDays: 14 });
+    check("counts counts back from the server's day when sent only the window's length",
+      counts.today === TUE && counts.sinceDay === "2026-09-30" && counts.rows.length === 3, JSON.stringify({ today: counts.today, since: counts.sinceDay }));
+  }
+
+  console.log("\nA queued entry is filed under the day it was SEEN, however late it is sent");
+  {
+    const w = await server();
+    clock.set(la(WED, "08:10"));
+    const queued = await w.log("12001", { observedAt: Date.parse(la(TUE, "07:52")) });
+    const fresh = await w.log("12001", { observedAt: Date.parse(la(WED, "08:09")) });
+    check("an item queued Tue 07:52 and sent Wed 08:10 is filed under Tue and does not block a Wed entry",
+      queued.ok && queued.row.day === TUE && queued.row.at === la(TUE, "07:52")
+        && fresh.ok && fresh.duplicate === false && fresh.row.day === WED,
+      JSON.stringify({ q: queued.row && queued.row.day, f: fresh.row && fresh.row.day, dup: fresh.duplicate }));
+    check("...and it records when it was saved, so the list can say 'Saved late (observed Tue 7:52)'",
+      queued.row.savedAt === la(WED, "08:10") && fresh.row.savedAt === null, JSON.stringify([queued.row.savedAt, fresh.row.savedAt]));
+    const row = w.store.rows("uniformViolations").find((x) => x.day === TUE);
+    check("...the row keeps observedAt (epoch ms) and savedAt for the list's tag",
+      row.observedAt === Date.parse(la(TUE, "07:52")) && row.savedAt === la(WED, "08:10"));
+    const again = await w.log("12001", { observedAt: Date.parse(la(TUE, "07:55")) });
+    check("one entry per student per SERVER day still holds: a second Tuesday sighting is a duplicate", again.duplicate === true);
+
+    const stale = await w.log("12002", { observedAt: Date.parse(la(WED, "08:10")) - 73 * 3600e3 });
+    const mm = w.store.rows("appState").find((x) => x.key === "uniform:dayMismatch")?.value;
+    check("an observedAt older than 72 h falls back to now and is counted",
+      stale.row.day === WED && stale.row.at === la(WED, "08:10") && mm?.outOfWindow === 1, JSON.stringify({ day: stale.row.day, mm }));
+    const ahead = await w.log("12003", { observedAt: Date.parse(la(WED, "08:10")) + 6 * 60e3 });
+    check("one more than 5 minutes ahead is not believed either", ahead.row.at === la(WED, "08:10"));
+  }
+
+  console.log("\nA press that can never land is answered, not retried for ever");
+  {
+    const w = await server();
+    clock.set(la(TUE, "08:00"));
+    const fromQueue = await w.log("99999", { observedAt: Date.parse(la(TUE, "08:00")) });
+    check("from the send queue: no such student is a refusal the queue can read",
+      fromQueue.ok === false && fromQueue.refused === true && /No student has number 99999/.test(fromQueue.reason), JSON.stringify(fromQueue));
+    const oldTab = await w.log("99999", {}).then(() => "saved", (e) => String(e.message || e));
+    check("from a tab on older code it is still the error it understands", /No student has number 99999/.test(oldTab), oldTab);
+    const same = "press-1";
+    const one = await w.log("12001", { attemptId: same, observedAt: Date.parse(la(TUE, "08:00")) });
+    const retry = await w.log("12001", { attemptId: same, observedAt: Date.parse(la(TUE, "08:00")) });
+    check("a retry of the same press is answered with the row it made, never a second one",
+      one.ok && retry.deduped === true && retry.row.id === one.row.id && w.store.rows("uniformViolations").length === 1);
+  }
+
+  console.log("\nUndo: one tap before the list is made, a reason after");
+  {
+    const w = await server();
+    clock.set(la(TUE, "08:00"));
+    const a = await w.log("12001", { observedAt: Date.parse(la(TUE, "08:00")) });
+    const b = await w.log("12002", { observedAt: Date.parse(la(TUE, "08:01")) });
+    const undo = await w.rt.run("uniformViolations.voidEntry", { id: a.row.id });
+    check("before its list is made, Undo needs no reason, and says who undid it",
+      undo.ok && undo.row.voidReason === "Undone by Pat PBIS", undo.row.voidReason);
+    // The 11:45 freeze puts B's entry on a detention.
+    const unit = await w.store.db.insert("reflectionUnits", {
+      studentNumber: "12002", division: "hs", kind: "new", tardyIds: [], uniformIds: [b.row.id], lines: ["Tue 10/13: Uniform 8:01 AM"],
+      recordedAt: la(TUE, "11:45"), state: "listed", serveDay: TUE, mode: "shadow", carryCount: 0, tags: [],
+    });
+    await w.store.db.patch(b.row.id, { unitId: unit, reflectionState: "listed" });
+    clock.set(la(TUE, "12:05"));
+    const shown = (await w.rt.run("uniformViolations.forDay", {})).rows;
+    check("forDay says which entries are on a list already made, so Undo knows to ask why",
+      shown.length === 1 && shown[0].id === b.row.id && shown[0].onList === true, JSON.stringify(shown));
+    const noReason = await w.rt.run("uniformViolations.voidEntry", { id: b.row.id }).then(() => "voided", (e) => String(e.message || e));
+    check("a void after the list is made needs a reason",
+      /already been made\. Give a reason/.test(noReason) && !w.store.rows("uniformViolations").find((x) => x._id === b.row.id).voidedAt, noReason);
+    const withReason = await w.rt.run("uniformViolations.voidEntry", { id: b.row.id, reason: "Had a PE uniform pass" });
+    const u = w.store.rows("reflectionUnits")[0];
+    check("...with one it is removed, and its detention, now empty, is released ('release this student')",
+      withReason.ok && withReason.row.voidReason === "Had a PE uniform pass" && u.state === "released"
+        && /uniform entry removed \(Had a PE uniform pass\)/.test(u.releaseReason || ""), JSON.stringify({ s: u.state, r: u.releaseReason }));
+  }
+} finally {
+  clock.real();
+  convex.cleanup();
+}
+
+// ---------------------------------------------------------------------------
+// THE SEND QUEUE, ACTUALLY RUN: the shipped queue functions lifted out of
+// script.js, against a server whose answers the test controls, a fake device
+// storage and timers the test fires by hand.
+// ---------------------------------------------------------------------------
+const QUEUE_FNS = ["uniformSettingsNow", "uvSchoolDay", "uvClock", "uniformWindowStart", "commitUniformViolation",
+  "uvSessionEmail", "enqueueUniform", "storeUniformQueue", "resumeUniformQueue", "forgetUniformQueue",
+  "armUniformPump", "pumpUniformQueue", "uvNameOf", "uniformSaved", "scheduleUniformRefresh",
+  "uniformQueueLength", "oldestUniformQueuedAgeMs", "uniformQueueWords", "undoUniformViolation", "wcOrdinalSuffix"];
+function queueWorld(o) {
+  const calls = [], toasts = [], timers = [];
+  let seq = 0;
+  const pending = [];
+  const storage = o.storage || new Map();
+  const box = { value: "", focus() {} };
+  const stubs = {
+    calls, toasts, timers, storage,
+    document: { getElementById: (id) => (id === "uvPickerInput" ? box : { hidden: false, innerHTML: "" }) },
+    localStorage: o.noStorage
+      ? { getItem() { throw new Error("blocked"); }, setItem() { throw new Error("blocked"); }, removeItem() { throw new Error("blocked"); } }
+      : { getItem: (k) => (storage.has(k) ? storage.get(k) : null), setItem: (k, v) => storage.set(k, String(v)), removeItem: (k) => storage.delete(k) },
+    setTimeout: (f, ms) => { const id = ++seq; timers.push({ id, f, ms }); return id; },
+    clearTimeout: (id) => { const i = timers.findIndex((t) => t.id === id); if (i >= 0) timers.splice(i, 1); },
+    session: { idToken: "t", me: { email: o.email || "pbis@school.test" } },
+    answer: o.answer,
+    prompt: o.prompt || (async () => null),
+  };
+  stubs.window = {
+    WildcatAuth: {
+      getSession: () => stubs.session,
+      convexMutation: (path, args) => {
+        calls.push({ path, args: JSON.parse(JSON.stringify(args)) });
+        if (o.hold) return new Promise((resolve, reject) => pending.push({ resolve, reject, args }));
+        return Promise.resolve().then(() => stubs.answer(path, args, calls.length));
+      },
+    },
+    WildcatDiscipline: D,
+  };
+  const api = new Function("stubs", `
+    const window = stubs.window, document = stubs.document, localStorage = stubs.localStorage;
+    const setTimeout = stubs.setTimeout, clearTimeout = stubs.clearTimeout;
+    const console = { warn() {}, error() {}, log() {} };
+    const showToast = (m, kind) => stubs.toasts.push({ m: String(m), kind });
+    const showPrompt = (...a) => stubs.prompt(...a);
+    const enrolledStudents = () => ${JSON.stringify(o.students || [])};
+    let uniformSettings = null;
+    let _uvPick = null, _uvMatches = [], _uvHighlight = -1, _uvPickSummary = null, _uvToday = ${JSON.stringify(o.today || [])};
+    let _uvDay = "2026-10-13";
+    let _uvQueue = [], _uvQueueOwner = '', _uvQueueStored = true, _uvPumping = false, _uvPumpTimer = null, _uvPumpGen = 0, _uvBurstTimer = null;
+    const UV_QUEUE_PREFIX = 'wcUniformQueue:';
+    const UV_RETRY_MS = [2000, 5000, 10000, 20000, 30000];
+    const UV_BURST_MS = 1500;
+    let renders = 0, refreshes = 0;
+    function renderUniformViolations() { renders++; }
+    function updateUniformPicked() {}
+    async function refreshUniformData() { refreshes++; }
+    ${QUEUE_FNS.map(liftFn).join("\n")}
+    return {
+      pick(st) { _uvPick = st; }, commitUniformViolation, resumeUniformQueue, forgetUniformQueue, pumpUniformQueue,
+      undoUniformViolation, uniformQueueWords, uniformQueueLength, oldestUniformQueuedAgeMs, uvClock,
+      queue: () => _uvQueue.map((q) => ({ ...q })), owner: () => _uvQueueOwner, stored: () => _uvQueueStored,
+      counts: () => ({ renders, refreshes }),
+    };
+  `)(stubs);
+  const settle = async () => { for (let i = 0; i < 20; i++) await Promise.resolve(); await new Promise((r) => setImmediate(r)); };
+  const fire = async (pred) => {
+    const t = timers.find(pred || (() => true));
+    if (!t) return false;
+    timers.splice(timers.indexOf(t), 1);
+    clock.set(Date.now() + t.ms);      // the pause has passed
+    t.f();
+    await settle();
+    return true;
+  };
+  return { api, stubs, calls, toasts, timers, storage, pending, settle, fire };
+}
+const ROSA = { studentNumber: "12001", firstName: "Rosa", lastName: "Rodriguez", grade: "9" };
+const OWEN = { studentNumber: "11890", firstName: "Owen", lastName: "Velasquez", grade: "11" };
+const okAnswer = (path, args) => ({ ok: true, deduped: false, duplicate: false, row: { id: "r_" + args.attemptId, day: "2026-10-13", at: "2026-10-13T14:52:00.000Z" }, summary: { countInWindow: 1 } });
+
+console.log("\nA second Enter during a save is queued, never dropped");
+{
+  const w = queueWorld({ hold: true, students: [ROSA, OWEN] });
+  w.api.pick(ROSA); w.api.commitUniformViolation(false);
+  await w.settle();
+  w.api.pick(OWEN); w.api.commitUniformViolation(true);       // Enter again while Rosa is still saving
+  await w.settle();
+  const sentWhileBusy = w.calls.length;
+  w.pending.shift().resolve(okAnswer("", w.pending.length ? w.calls[0].args : w.calls[0].args));
+  await w.settle();
+  w.pending.shift()?.resolve(okAnswer("", w.calls[1]?.args || {}));
+  await w.settle();
+  const sent = w.calls.filter((c) => c.path === "uniformViolations:log").map((c) => c.args);
+  check("a second Enter during a save is queued, not dropped: both are sent, in the order typed",
+    sentWhileBusy === 1 && sent.length === 2 && sent[0].studentNumber === "12001" && sent[1].studentNumber === "11890"
+      && sent[1].loanerProvided === true && sent[0].attemptId !== sent[1].attemptId && w.api.uniformQueueLength() === 0,
+    JSON.stringify({ sentWhileBusy, sent: sent.map((a) => a.studentNumber) }));
+  check("each send carries the moment Enter was pressed, and no day of this Chromebook's",
+    sent.every((a) => Number.isFinite(a.observedAt) && !("day" in a)), JSON.stringify(sent[0]));
+  check("the list is read again once, after the burst, not after every save",
+    w.timers.filter((t) => t.ms === 1500).length === 1 && w.api.counts().refreshes === 0);
+  await w.fire((t) => t.ms === 1500);
+  check("...1.5 seconds after the last save", w.api.counts().refreshes === 1);
+}
+
+console.log("\nA failed send is tried again by itself, under the same press");
+{
+  let n = 0;
+  const w = queueWorld({ students: [ROSA], answer: (p, a) => { n++; if (n <= 3) throw new Error("Convex HTTP 503"); return okAnswer(p, a); } });
+  w.api.pick(ROSA); w.api.commitUniformViolation(false);
+  await w.settle();
+  check("after one failure the footer says it is saving, never 'log them again'",
+    w.api.uniformQueueWords() === "Saving 1…" && w.timers.some((t) => t.ms === 2000), w.api.uniformQueueWords());
+  await w.fire((t) => t.ms === 2000);
+  await w.fire((t) => t.ms === 5000);
+  check("after 3 failures: '1 not saved yet. Still trying.'", w.api.uniformQueueWords() === "1 not saved yet. Still trying.", w.api.uniformQueueWords());
+  await w.fire((t) => t.ms === 10000);
+  const ids = [...new Set(w.calls.filter((c) => c.path === "uniformViolations:log").map((c) => c.args.attemptId))];
+  check("the fourth try lands, with the SAME attemptId every time, and the queue is empty",
+    w.calls.length === 4 && ids.length === 1 && w.api.uniformQueueLength() === 0 && w.api.uniformQueueWords() === "", JSON.stringify({ calls: w.calls.length, ids }));
+  check("no toast ever asks anyone to log a student again", !w.toasts.some((t) => /log (them|it) again|log again/i.test(t.m)));
+}
+
+console.log("\nThe queue survives a reload, and goes with the person at sign-out");
+{
+  const storage = new Map();
+  const down = queueWorld({ storage, students: [ROSA], answer: () => { throw new Error("Failed to fetch"); } });
+  down.api.pick(ROSA); down.api.commitUniformViolation(true);
+  await down.settle();
+  const kept = JSON.parse(storage.get("wcUniformQueue:pbis@school.test") || "[]");
+  const pressed = down.calls[0].args;
+  check("the unsent entry is kept on this device under the signed-in person's email, student number only",
+    kept.length === 1 && kept[0].studentNumber === "12001" && kept[0].attemptId === pressed.attemptId
+      && !/Rosa|Rodriguez/.test(JSON.stringify(kept)), JSON.stringify(kept));
+  check("Logout is told about it", down.api.uniformQueueLength() === 1 && down.api.oldestUniformQueuedAgeMs() >= 0);
+
+  // The page reloads (an update, a crash, a closed lid): a fresh tab, same device.
+  const back = queueWorld({ storage, students: [ROSA], answer: okAnswer });
+  back.api.resumeUniformQueue("PBIS@school.test");
+  await back.settle();
+  const resent = back.calls.find((c) => c.path === "uniformViolations:log")?.args;
+  check("the queue survives a reload (simulated localStorage): it is sent again on sign-in, the same press, the same moment",
+    !!resent && resent.attemptId === pressed.attemptId && resent.observedAt === pressed.observedAt && resent.loanerProvided === true
+      && !storage.has("wcUniformQueue:pbis@school.test") && back.api.uniformQueueLength() === 0, JSON.stringify(resent));
+
+  const leave = queueWorld({ storage, students: [ROSA], answer: () => { throw new Error("offline"); } });
+  leave.api.pick(ROSA); leave.api.commitUniformViolation(false);
+  await leave.settle();
+  leave.api.forgetUniformQueue();
+  leave.stubs.session = { idToken: "t2", me: { email: "aide@school.test" } };
+  const before = leave.calls.length;
+  await leave.fire();
+  check("at sign-out it goes with the person: nothing more is sent, and this device keeps it for their next sign-in",
+    leave.api.uniformQueueLength() === 0 && leave.calls.length === before && storage.has("wcUniformQueue:pbis@school.test"));
+  leave.api.resumeUniformQueue("aide@school.test");
+  await leave.settle();
+  check("...and the next person's sign-in never sends it", leave.calls.length === before && leave.api.uniformQueueLength() === 0);
+
+  const priv = queueWorld({ noStorage: true, students: [ROSA], answer: () => { throw new Error("offline"); } });
+  priv.api.pick(ROSA); priv.api.commitUniformViolation(false);
+  await priv.settle();
+  check("a device that cannot store it says so, so Logout can warn it would be lost", priv.api.stored() === false && priv.api.uniformQueueLength() === 1);
+}
+
+console.log("\nA refused press stops, and says why");
+{
+  const w = queueWorld({ students: [ROSA], answer: () => ({ ok: false, refused: true, reason: "No student has number 12001." }) });
+  w.api.pick(ROSA); w.api.commitUniformViolation(false);
+  await w.settle();
+  check("a press the server will never take leaves the queue and is named in a toast",
+    w.api.uniformQueueLength() === 0 && w.toasts.some((t) => t.kind === "error" && /NOT logged: Rosa Rodriguez\. No student has number 12001\./.test(t.m)));
+}
+
+console.log("\nTimes are the school's, and Undo after the list asks why");
+{
+  const w = queueWorld({ students: [ROSA], answer: okAnswer });
+  check("the LA time format: 14:52 UTC on 10/13 reads 7:52 AM (this machine is in Tokyo)",
+    w.api.uvClock("2026-10-13T14:52:00.000Z") === "7:52 AM" && w.api.uvClock("2026-11-02T15:52:00.000Z") === "7:52 AM"
+      && w.api.uvClock("nope") === "", w.api.uvClock("2026-10-13T14:52:00.000Z"));
+  const block = js2.slice(js2.indexOf("// UNIFORM VIOLATIONS"), js2.indexOf("function wcDaysAgoLabel"))
+    .replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+  check("no uniform time is read as the UTC hour any more (both old call sites)", !/\.slice\(11,\s*16\)/.test(block));
+
+  const asked = [];
+  const onList = queueWorld({ students: [ROSA], answer: okAnswer, today: [{ id: "uv1", onList: true }, { id: "uv2", onList: false }],
+    prompt: async (m) => { asked.push(m); return asked.length === 1 ? "" : "Logged by mistake"; } });
+  await onList.api.undoUniformViolation("uv1");
+  check("a void after the list is made needs a reason: a blank one sends nothing", asked.length === 1 && onList.calls.length === 0);
+  await onList.api.undoUniformViolation("uv1");
+  const sentVoid = onList.calls.find((c) => c.path === "uniformViolations:voidEntry")?.args;
+  check("...and the reason typed is what the server is sent", sentVoid && sentVoid.id === "uv1" && sentVoid.reason === "Logged by mistake", JSON.stringify(sentVoid));
+  await onList.api.undoUniformViolation("uv2");
+  const quick = onList.calls.filter((c) => c.path === "uniformViolations:voidEntry")[1]?.args;
+  check("before the list is made, Undo is still one tap", asked.length === 2 && quick && quick.id === "uv2" && !("reason" in quick));
+}
+
+clock.real();
+
+console.log("\nThe queue is wired into the page");
+{
+  const code = js2.replace(/^\s*\/\/.*$/gm, "").replace(/\/\*[\s\S]*?\*\//g, "");
+  const busy = code.slice(code.indexOf("function screenHasUnfinishedWork()"), code.indexOf("function screenHasUnfinishedWork()") + 900);
+  check("an unsent queue counts as unfinished work on screen", /if \(_uvQueue\.length\) return true;/.test(busy));
+  check("and holds an update reload, past the busy deadline (wildcat-update.js)",
+    /unconfirmedUniform: uniformQueueLength\(\) > 0,/.test(code) && /unconfirmedUniformAgeMs: oldestUniformQueuedAgeMs\(\),/.test(code));
+  check("a staff sign-in sends what this person left unsent", /resumeUniformQueue\(me\.email\)/.test(code));
+  check("sign-out (and any session end) takes it off this tab", /forgetUniformQueue\(\);/.test(code.slice(code.indexOf("async function logout("))) && /'wildcat-auth-signout', async function \(\) \{\s*if \(typeof forgetUniformQueue === 'function'\) forgetUniformQueue\(\);/.test(code));
+  check("Logout names unsent uniform entries before anyone signs out", /uniform entr/.test(code.slice(code.indexOf("function unsavedWorkAtLogout()"), code.indexOf("function unsavedWorkAtLogout()") + 1600)));
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

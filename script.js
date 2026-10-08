@@ -411,6 +411,8 @@
         function screenHasUnfinishedWork() {
             try {
                 if (_unsavedReferrals.size || _unsavedCash.size) return true;
+                // Uniform entries the server has not confirmed (2026-10-08).
+                if (_uvQueue.length) return true;
                 // A student inside the Wildcat Digital Store: an update reload
                 // now would strand the shop's history entry behind the new page.
                 if (typeof _wpShopOpen !== 'undefined' && _wpShopOpen) return true;
@@ -580,6 +582,13 @@
                 // and nine awards never reached a balance).
                 unconfirmedMoney: unconfirmedCashForUpdate().length > 0,
                 unconfirmedMoneyAgeMs: oldestUnconfirmedCashAgeMs(),
+                // UNIFORM ENTRIES THE SERVER HAS NOT CONFIRMED (2026-10-08): the
+                // send queue, which a reload empties from memory. Held like the
+                // money above -- past the busy deadline too -- because a door
+                // burst saved into a hidden tab whose saves are failing is
+                // exactly the morning the deadline would otherwise end.
+                unconfirmedUniform: uniformQueueLength() > 0,
+                unconfirmedUniformAgeMs: oldestUniformQueuedAgeMs(),
                 hidden: document.visibilityState === 'hidden',
                 // How long this tab has known it is out of date. After the
                 // deadline, unfinished SCREEN work stops holding the update
@@ -9567,6 +9576,9 @@
                 // its sheet, its rows and its 30-second refresh leave with
                 // the person signing out (2026-10-08).
                 if (typeof forgetReflectionRoom === 'function') forgetReflectionRoom();
+                // Unsent uniform entries go with the person leaving: kept on
+                // this device under their sign-in, never sent under the next one.
+                if (typeof forgetUniformQueue === 'function') forgetUniformQueue();
                 // The same for colleagues' cash (2026-10-01): an admin's Teacher
                 // Interactions tables and the school-wide audit log stay in the
                 // DOM under a hidden tab, so they are emptied here rather than
@@ -26392,6 +26404,8 @@
          * re-register and think it was done.
          */
         window.addEventListener('wildcat-auth-signout', async function () {
+            // However the session ended: nothing more is sent under it.
+            if (typeof forgetUniformQueue === 'function') forgetUniformQueue();
             _wcPushTried = false; // the next person on this device registers again
             try {
                 if (!('serviceWorker' in navigator) || !('PushManager' in window)) return;
@@ -26419,6 +26433,9 @@
             if (me && me.kind === 'staff') {
                 wcStartPassAlertPolling();
                 wcSetupPush();
+                // Uniform entries this person pressed and never saw land --
+                // before a reload, an update or a closed lid -- are sent now.
+                if (typeof resumeUniformQueue === 'function') resumeUniformQueue(me.email);
                 // A push about a note carries the pass it is about. The teacher
                 // tapped it to see that pass, not to land on a dashboard and go
                 // looking, so it opens straight into the detail.
@@ -40641,23 +40658,100 @@
         let _uvCounts = [];          // per-student counts across the window
         let _uvLoaners = [];         // loaners handed out and not back
         let _uvTruncated = false;
-        let _uvBusy = false;
         /** The picked student's own numbers, including the term total. */
         let _uvPickSummary = null;
-        /** Ids this tab has logged and not yet had confirmed, for the retry register. */
-        const _uvUnsaved = new Map();
+        /**
+         * THE SEND QUEUE (2026-10-08, Reflection Room build step 5).
+         *
+         * A door is twenty to sixty children in a burst, typed or scanned as
+         * fast as the adult can. This used to send one at a time behind a busy
+         * flag and SILENTLY DROPPED any Enter pressed while a save was in
+         * flight -- the box had already cleared, so the student simply was
+         * never logged, and nothing said so. Now every Enter joins this queue,
+         * in order, and the queue sends them one after another.
+         *
+         * A failed send is RETRIED by itself, with a growing pause, under the
+         * SAME attemptId -- the server answers a repeated press with the row it
+         * already has, so a retry can never make a second violation. Nobody is
+         * ever asked to log anyone again.
+         *
+         * Each entry carries `observedAt`, the moment Enter was pressed: the
+         * server files it under THAT moment's school day, however late it is
+         * finally sent.
+         *
+         * KEPT ON THIS DEVICE, under the signed-in person's own email
+         * (student numbers only, never a name), so a reload, a crash or a
+         * closed lid loses nothing: it is sent again when they are next signed
+         * in here. It goes with the person at sign-out -- it is never sent
+         * under somebody else's sign-in, because the server records who logged
+         * each entry from the session that sends it.
+         */
+        let _uvQueue = [];
+        /** The email the queue belongs to: only that person's session sends it. */
+        let _uvQueueOwner = '';
+        /** The last write of the queue to this device worked (private mode: it may not). */
+        let _uvQueueStored = true;
+        let _uvPumping = false;
+        let _uvPumpTimer = null;
+        /** A send still in flight for somebody who has signed out installs nothing. */
+        let _uvPumpGen = 0;
+        let _uvBurstTimer = null;
+        /** The school day the SERVER last said it is ('' until it has said). */
+        let _uvDay = '';
+        const UV_QUEUE_PREFIX = 'wcUniformQueue:';
+        /** The pause before each retry, then the last one, forever. */
+        const UV_RETRY_MS = [2000, 5000, 10000, 20000, 30000];
+        /** The list is read again this long after the LAST save of a burst, not after every one. */
+        const UV_BURST_MS = 1500;
 
         function uniformSettingsNow() {
             return window.WildcatDiscipline.uniformSettingsOrDefault(
                 typeof uniformSettings !== 'undefined' ? uniformSettings : null);
         }
 
-        /** The first day the rolling window covers, counted back from today. */
+        /**
+         * The school day of an instant: Los Angeles, never this Chromebook's
+         * own zone. Only a stand-in until the server has said which day it is.
+         */
+        function uvSchoolDay(ms) {
+            return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Los_Angeles',
+                year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(ms));
+        }
+
+        /**
+         * "7:52 AM" in the SCHOOL's time. These rows used to show
+         * String(at).slice(11, 16) -- the UTC hour, seven ahead -- so a 7:45
+         * entry read 14:45, on screen and on a printed list.
+         */
+        function uvClock(iso) {
+            const t = Date.parse(iso || '');
+            if (!isFinite(t)) return '';
+            return new Date(t).toLocaleTimeString('en-US', { timeZone: 'America/Los_Angeles', hour: 'numeric', minute: '2-digit' });
+        }
+
+        /** "Tue 10/13" from a day key. */
+        function uvDayLabel(day) {
+            const t = Date.parse(String(day || '') + 'T12:00:00Z');
+            if (!isFinite(t)) return String(day || '');
+            const d = new Date(t);
+            return ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][d.getUTCDay()] + ' ' + (d.getUTCMonth() + 1) + '/' + d.getUTCDate();
+        }
+
+        /** The first day the rolling window covers, counted back from the server's school day. */
         function uniformWindowStart() {
             const s = uniformSettingsNow();
-            const d = new Date();
-            d.setDate(d.getDate() - (s.windowDays - 1));
-            return wcIsoDay(d);
+            const base = _uvDay || uvSchoolDay(Date.now());
+            const t = Date.parse(base + 'T12:00:00Z');
+            return new Date(t - (s.windowDays - 1) * 86400000).toISOString().slice(0, 10);
+        }
+
+        /** "Logging for Tue 10/13": the day the server says, never this Chromebook's clock. */
+        function updateUniformDayNote() {
+            const note = document.getElementById('uvDayNote');
+            if (!note) return;
+            const s = uniformSettingsNow();
+            note.textContent = 'Logging for ' + (_uvDay ? uvDayLabel(_uvDay) : 'today') +
+                '. Flagged on ' + s.habitAt + '+ in the last ' + s.windowDays + ' days.';
         }
 
         async function openUniformViolations() {
@@ -40667,11 +40761,7 @@
             set('uvConcerningAt', s.concerningAt);
             set('uvHabitAt', s.habitAt);
 
-            const note = document.getElementById('uvDayNote');
-            if (note) {
-                note.textContent = 'Logging for ' + wcIsoDay(new Date()) +
-                    '. Flagged on ' + s.habitAt + '+ in the last ' + s.windowDays + ' days.';
-            }
+            updateUniformDayNote();
             // Drawn from whatever is already in memory first: a tab that shows
             // nothing until the network answers reads as broken.
             renderUniformViolations();
@@ -40687,8 +40777,7 @@
             const auth = window.WildcatAuth;
             const session = auth && auth.getSession();
             if (!session) { renderUniformViolations(); return; }
-            const today = wcIsoDay(new Date());
-            const sinceDay = uniformWindowStart();
+            const settingsNow = uniformSettingsNow();
             try {
                 // NAMED dayRes, NOT day, and the argument is spelled out.
                 //
@@ -40701,9 +40790,13 @@
                 // stayed empty and the entry looked lost. A shorthand `{ day }`
                 // that silently resolves to the wrong binding is worth one
                 // extra word to avoid.
+                //
+                // NO DAY IS SENT (2026-10-08, step 5): the server answers with
+                // ITS school day, and counts the window back from it, so this
+                // screen never files or shows by the Chromebook's clock.
                 const [dayRes, counts, loaners] = await Promise.all([
-                    auth.convexQuery('uniformViolations:forDay', { day: today }, session.idToken),
-                    auth.convexQuery('uniformViolations:counts', { sinceDay: sinceDay, today: today }, session.idToken),
+                    auth.convexQuery('uniformViolations:forDay', {}, session.idToken),
+                    auth.convexQuery('uniformViolations:counts', { windowDays: settingsNow.windowDays }, session.idToken),
                     auth.convexQuery('uniformViolations:outstandingLoaners', {}, session.idToken)
                 ]);
                 if (dayRes && dayRes.allowed === false) {
@@ -40712,6 +40805,7 @@
                     if (list) list.innerHTML = '<p class="wc-att-foot">' + escapeHtml(dayRes.reason || '') + '</p>';
                     return;
                 }
+                if (dayRes && typeof dayRes.day === 'string' && dayRes.day) _uvDay = dayRes.day;
                 _uvToday = (dayRes && dayRes.rows) || [];
                 _uvCounts = (counts && counts.rows) || [];
                 _uvLoaners = (loaners && loaners.rows) || [];
@@ -40722,6 +40816,7 @@
                 // find.
                 console.error('[uniform] could not read the log:', (e && e.message) || e, e);
             }
+            updateUniformDayNote();
             renderUniformViolations();
         }
 
@@ -40940,19 +41035,22 @@
         }
 
         /**
-         * Log the violation.
+         * Log the violation: into the send queue, at once.
          *
-         * Optimistic, then truthful: the row appears at once, the toast says
-         * "Saving" and only then says what happened. The comment on
-         * awardCashToSelected records the version of this code that showed a
-         * green tick without reading the answer.
+         * NEVER DROPPED (step 5). A second Enter -- or a scanner's next card --
+         * while the first is still saving joins the queue behind it. The box
+         * is cleared and refocused now, not after the network answers, so the
+         * next student can be typed while this one saves.
+         *
+         * Optimistic, then truthful: the toast says "Saving" and the answer
+         * says what happened. The comment on awardCashToSelected records the
+         * version of this code that showed a green tick without reading it.
          *
          * NO CONFIRMATION DIALOG, and Undo on the row is what earns that. A
          * one-keystroke write is only safe when the mistake costs one tap to
          * reverse.
          */
-        async function commitUniformViolation(withLoaner) {
-            if (_uvBusy) return;
+        function commitUniformViolation(withLoaner) {
             const st = _uvPick;
             if (!st) { showToast('Choose a student first.', 'warn', 3000); return; }
             const auth = window.WildcatAuth;
@@ -40960,16 +41058,9 @@
             if (!session) { showToast('You are signed out. Sign in again before logging.', 'warn', 6000); return; }
 
             const name = ((st.firstName || '') + ' ' + (st.lastName || '')).trim();
-            // One per BUTTON PRESS. A dropped response and an impatient second
-            // tap resolve to the same row rather than two.
-            const attemptId = 'uv_' + Date.now() + '_' + Math.random().toString(36).slice(2, 10);
-            const day = wcIsoDay(new Date());
-            _uvBusy = true;
-            _uvUnsaved.set(attemptId, { name: name, at: Date.now() });
-            showToast('Saving ' + name + (withLoaner ? ' + loaner' : ''), 'info', 6000);
+            enqueueUniform({ studentNumber: String(st.studentNumber || ''), loaner: withLoaner === true }, session);
+            showToast('Saving ' + name + (withLoaner ? ' + loaner' : ''), 'info', 3000);
 
-            // The box is cleared and refocused NOW, not after the network
-            // answers, so the next student can be typed while this one saves.
             const box = document.getElementById('uvPickerInput');
             const results = document.getElementById('uvPickerResults');
             if (box) box.value = '';
@@ -40978,63 +41069,249 @@
             _uvPickSummary = null;
             updateUniformPicked();
             if (box) box.focus();
+        }
 
+        /** Who a session is, for the queue's owner. */
+        function uvSessionEmail(session) {
+            const me = session && session.me;
+            return String((me && me.email) || '').trim().toLowerCase();
+        }
+
+        /** One press, at the back of the queue, then send. One per BUTTON PRESS: its attemptId never changes. */
+        function enqueueUniform(entry, session) {
+            const owner = uvSessionEmail(session);
+            if (_uvQueueOwner && owner && _uvQueueOwner !== owner) forgetUniformQueue();
+            if (owner) _uvQueueOwner = owner;
+            _uvQueue.push({
+                attemptId: 'uv_' + Date.now() + '_' + Math.random().toString(36).slice(2, 10),
+                studentNumber: String(entry.studentNumber || ''),
+                loaner: entry.loaner === true,
+                // When Enter was pressed. The server files the entry under THIS
+                // moment's school day, however late it is finally sent.
+                observedAt: Date.now(),
+                tries: 0, nextAt: 0, lastError: ''
+            });
+            storeUniformQueue();
+            renderUniformViolations();
+            pumpUniformQueue();
+        }
+
+        /** The queue onto this device, under its owner's email. Student numbers only. Never throws. */
+        function storeUniformQueue() {
+            if (!_uvQueueOwner) return;
             try {
-                const res = await auth.convexMutation('uniformViolations:log', {
-                    studentNumber: String(st.studentNumber || ''),
-                    day: day,
-                    loanerProvided: withLoaner === true,
-                    attemptId: attemptId,
-                    sinceDay: uniformWindowStart()
-                }, session.idToken);
-                _uvUnsaved.delete(attemptId);
-
-                if (res && res.duplicate) {
-                    // Not an error, and not a second row. Offer the correction
-                    // the person standing there actually wants.
-                    const when = String((res.row && res.row.at) || '').slice(11, 16);
-                    if (withLoaner && res.canAddLoaner && res.row) {
-                        await auth.convexMutation('uniformViolations:setLoaner', {
-                            id: res.row.id, loanerProvided: true, sinceDay: uniformWindowStart()
-                        }, session.idToken);
-                        showToast(name + ' was already logged today. Loaner added to that entry.', 'success', 6000);
-                    } else {
-                        showToast(name + ' was already logged today at ' + when +
-                                  ((res.row && res.row.loggedByName) ? ' by ' + res.row.loggedByName : '') + '.',
-                                  'warn', 7000);
-                    }
-                } else if (res && res.deduped) {
-                    showToast(name + ' was already saved.', 'success', 3000);
+                const key = UV_QUEUE_PREFIX + _uvQueueOwner;
+                if (_uvQueue.length) {
+                    localStorage.setItem(key, JSON.stringify(_uvQueue.map(q => ({
+                        attemptId: q.attemptId, studentNumber: q.studentNumber, loaner: q.loaner === true, observedAt: q.observedAt
+                    }))));
                 } else {
-                    const n = (res && res.summary && res.summary.countInWindow) || 1;
-                    const s = uniformSettingsNow();
-                    const tier = window.WildcatDiscipline.uniformTier(n, s);
-                    showToast(name + ' logged' + (withLoaner ? ' with a loaner' : '') +
-                        (n > 1 ? ' — ' + n + wcOrdinalSuffix(n) + ' in ' + s.windowDays + ' days (' + tier.label.toLowerCase() + ')' : ''),
-                        n >= s.habitAt ? 'warn' : 'success', n >= s.habitAt ? 7000 : 3500);
+                    localStorage.removeItem(key);
                 }
-                await refreshUniformData();
-            } catch (err) {
-                // KEPT, not discarded. The register is what the footer reads,
-                // so an interventionist can see a failure without being asked
-                // to refresh anything.
-                console.error('[uniform] log failed for', name, err);
-                showToast('NOT logged: ' + name + '. ' + ((err && err.message) || 'The save failed.') +
-                          ' It is still listed as unsaved below.', 'error', 12000);
-                renderUniformViolations();
-            } finally {
-                _uvBusy = false;
+                _uvQueueStored = true;
+            } catch (e) {
+                _uvQueueStored = false;
             }
         }
 
+        /**
+         * A SIGNED-IN PERSON'S UNSENT ENTRIES COME BACK (step 5): after a reload,
+         * an update, a crash or a closed lid, from this device's copy, and are
+         * sent -- under the same attemptIds, so anything that did land before
+         * is answered with the row it made, never a second one.
+         */
+        function resumeUniformQueue(email) {
+            const owner = String(email || '').trim().toLowerCase();
+            if (!owner) return;
+            if (_uvQueueOwner && _uvQueueOwner !== owner) forgetUniformQueue();
+            _uvQueueOwner = owner;
+            let saved = [];
+            try { saved = JSON.parse(localStorage.getItem(UV_QUEUE_PREFIX + owner) || '[]'); } catch (e) { saved = []; }
+            const have = new Set(_uvQueue.map(q => q.attemptId));
+            (Array.isArray(saved) ? saved : []).forEach(q => {
+                if (!q || typeof q.attemptId !== 'string' || !q.attemptId || have.has(q.attemptId)) return;
+                if (!/^[0-9A-Za-z-]{1,20}$/.test(String(q.studentNumber || ''))) return;
+                const at = Number(q.observedAt);
+                _uvQueue.push({
+                    attemptId: q.attemptId, studentNumber: String(q.studentNumber), loaner: q.loaner === true,
+                    observedAt: isFinite(at) ? at : Date.now(), tries: 0, nextAt: 0, lastError: ''
+                });
+            });
+            _uvQueue.sort((x, y) => x.observedAt - y.observedAt);
+            if (_uvQueue.length) { renderUniformViolations(); pumpUniformQueue(); }
+        }
+
+        /**
+         * SIGN-OUT: the queue goes with the person leaving. Nothing more is sent
+         * from this tab -- the next person's session must never carry their
+         * entries -- and this device's copy stays under their own email, to be
+         * sent when they next sign in here (Logout names it first).
+         */
+        function forgetUniformQueue() {
+            _uvPumpGen++;
+            if (_uvPumpTimer) { clearTimeout(_uvPumpTimer); _uvPumpTimer = null; }
+            if (_uvBurstTimer) { clearTimeout(_uvBurstTimer); _uvBurstTimer = null; }
+            _uvQueue = [];
+            _uvQueueOwner = '';
+            _uvQueueStored = true;
+        }
+
+        function armUniformPump(ms) {
+            if (_uvPumpTimer) clearTimeout(_uvPumpTimer);
+            _uvPumpTimer = setTimeout(() => { _uvPumpTimer = null; pumpUniformQueue(); }, Math.max(0, ms));
+        }
+
+        /**
+         * Send the queue, oldest first, one at a time. A failed send waits
+         * (2 s, 5 s, 10 s, 20 s, then every 30 s) and is tried again with the
+         * same attemptId; the ones behind it wait their turn, so the order the
+         * adult typed them is the order they land.
+         */
+        async function pumpUniformQueue() {
+            if (_uvPumping) return;
+            _uvPumping = true;
+            const gen = _uvPumpGen;
+            try {
+                while (_uvQueue.length && gen === _uvPumpGen) {
+                    const item = _uvQueue[0];
+                    const wait = item.nextAt - Date.now();
+                    if (wait > 0) { armUniformPump(wait); return; }
+                    const auth = window.WildcatAuth;
+                    const session = auth && auth.getSession && auth.getSession();
+                    // ONLY UNDER THE SIGN-IN OF THE PERSON WHO PRESSED ENTER.
+                    if (!session || uvSessionEmail(session) !== _uvQueueOwner) {
+                        armUniformPump(UV_RETRY_MS[UV_RETRY_MS.length - 1]);
+                        return;
+                    }
+                    let res = null, err = null;
+                    try {
+                        res = await auth.convexMutation('uniformViolations:log', {
+                            studentNumber: item.studentNumber,
+                            loanerProvided: item.loaner === true,
+                            attemptId: item.attemptId,
+                            observedAt: item.observedAt,
+                            sinceDay: uniformWindowStart()
+                        }, session.idToken);
+                    } catch (e) { err = e; }
+                    if (gen !== _uvPumpGen) return;      // signed out while it was sending
+                    if (err || !res) {
+                        item.tries++;
+                        item.lastError = (err && err.message) || 'no answer';
+                        item.nextAt = Date.now() + UV_RETRY_MS[Math.min(item.tries - 1, UV_RETRY_MS.length - 1)];
+                        console.warn('[uniform] save failed, will try again:', item.lastError);
+                        renderUniformViolations();
+                        continue;
+                    }
+                    _uvQueue.shift();
+                    storeUniformQueue();
+                    uniformSaved(item, res, session);
+                    renderUniformViolations();
+                }
+            } finally {
+                _uvPumping = false;
+            }
+        }
+
+        /** A saved student's name, from the roster this tab holds (the queue keeps numbers only). */
+        function uvNameOf(studentNumber) {
+            const st = enrolledStudents().find(x => x && String(x.studentNumber || '') === String(studentNumber));
+            const name = st ? ((st.firstName || '') + ' ' + (st.lastName || '')).trim() : '';
+            return name || ('Student ' + studentNumber);
+        }
+
+        /** What the server said about one press, in words. */
+        function uniformSaved(item, res, session) {
+            const name = uvNameOf(item.studentNumber);
+            if (res.ok === false && res.refused) {
+                // It can never land (no such student, two records, no access):
+                // said once, plainly, and not tried again.
+                showToast('NOT logged: ' + name + '. ' + (res.reason || 'The server refused it.'), 'error', 12000);
+                return;
+            }
+            if (res.duplicate) {
+                // Not an error, and not a second row. Offer the correction
+                // the person standing there actually wants.
+                const when = res.row ? uvClock(res.row.at) : '';
+                if (item.loaner && res.canAddLoaner && res.row) {
+                    window.WildcatAuth.convexMutation('uniformViolations:setLoaner', {
+                        id: res.row.id, loanerProvided: true, sinceDay: uniformWindowStart()
+                    }, session.idToken).then(() => {
+                        showToast(name + ' was already logged today. Loaner added to that entry.', 'success', 6000);
+                        scheduleUniformRefresh();
+                    }).catch(e => {
+                        showToast('The loaner was NOT added to ' + name + '\'s entry: ' + ((e && e.message) || ''), 'error', 9000);
+                    });
+                } else {
+                    showToast(name + ' was already logged today at ' + when +
+                              ((res.row && res.row.loggedByName) ? ' by ' + res.row.loggedByName : '') + '.',
+                              'warn', 7000);
+                }
+            } else if (res.deduped) {
+                showToast(name + ' was already saved.', 'success', 3000);
+            } else {
+                const n = (res.summary && res.summary.countInWindow) || 1;
+                const s = uniformSettingsNow();
+                const tier = window.WildcatDiscipline.uniformTier(n, s);
+                showToast(name + ' logged' + (item.loaner ? ' with a loaner' : '') +
+                    (n > 1 ? ' — ' + n + wcOrdinalSuffix(n) + ' in ' + s.windowDays + ' days (' + tier.label.toLowerCase() + ')' : ''),
+                    n >= s.habitAt ? 'warn' : 'success', n >= s.habitAt ? 7000 : 3500);
+            }
+            scheduleUniformRefresh();
+        }
+
+        /** Read the list again once a burst is over: 1.5 s after the LAST save, not after every one. */
+        function scheduleUniformRefresh() {
+            if (_uvBurstTimer) clearTimeout(_uvBurstTimer);
+            _uvBurstTimer = setTimeout(() => { _uvBurstTimer = null; refreshUniformData(); }, UV_BURST_MS);
+        }
+
+        /** How many entries this tab holds that the server has not confirmed. */
+        function uniformQueueLength() {
+            return _uvQueue.length;
+        }
+
+        /** How long ago the oldest of them was pressed (0 if none), for the update hold. */
+        function oldestUniformQueuedAgeMs() {
+            let oldest = Infinity;
+            _uvQueue.forEach(q => { const t = Number(q && q.observedAt); if (isFinite(t) && t < oldest) oldest = t; });
+            return isFinite(oldest) ? Math.max(0, Date.now() - oldest) : 0;
+        }
+
+        /**
+         * The footer's word on the queue. NEVER "log them again": the queue is
+         * already trying, and asking an adult at a door to retype is exactly
+         * what it exists to stop.
+         */
+        function uniformQueueWords() {
+            const n = _uvQueue.length;
+            if (!n) return '';
+            return _uvQueue.some(q => q.tries >= 3) ? n + ' not saved yet. Still trying.' : 'Saving ' + n + '…';
+        }
+
+        /**
+         * Undo. Before its Reflection Room list is made, one tap. AFTER, a
+         * reason is asked for (the server refuses without one): the entry is on
+         * paper, and every earlier print will show it as removed after the list
+         * was made.
+         */
         async function undoUniformViolation(id) {
             const auth = window.WildcatAuth;
             const session = auth && auth.getSession();
             if (!session) { showToast('You are signed out.', 'warn', 5000); return; }
+            const row = _uvToday.find(r => String(r.id) === String(id));
+            let reason;
+            if (row && row.onList) {
+                const typed = await showPrompt('This entry is on a Reflection Room list that has already been made. ' +
+                    'Why is it being removed? Every earlier print will show it as removed after the list was made.',
+                    { placeholder: 'Reason', confirmLabel: 'Remove it' });
+                if (typed === null || typed === undefined) return;
+                reason = String(typed).trim();
+                if (!reason) { showToast('Not removed: a reason is needed once the list is made.', 'warn', 6000); return; }
+            }
             try {
                 await auth.convexMutation('uniformViolations:voidEntry',
-                    { id: id, sinceDay: uniformWindowStart() }, session.idToken);
-                showToast('Entry undone.', 'success', 3000);
+                    Object.assign({ id: id, sinceDay: uniformWindowStart() }, reason ? { reason: reason } : {}), session.idToken);
+                showToast(reason ? 'Entry removed from the list.' : 'Entry undone.', 'success', 3000);
                 await refreshUniformData();
             } catch (e) {
                 showToast('Could not undo that: ' + ((e && e.message) || ''), 'error', 8000);
@@ -41099,8 +41376,10 @@
                         '<span class="wc-att-name">' + escapeHtml(r.studentName) +
                             '<span class="wc-att-meta">Grade ' + escapeHtml(String(r.studentGrade || '?')) +
                             ' &middot; ' + escapeHtml(String(r.studentNumber)) +
-                            ' &middot; ' + escapeHtml(String(r.at || '').slice(11, 16)) +
-                            (r.loggedByName ? ' &middot; ' + escapeHtml(r.loggedByName) : '') + '</span></span>' +
+                            ' &middot; ' + escapeHtml(uvClock(r.at)) +
+                            (r.savedAt ? ' (saved late)' : '') +
+                            (r.loggedByName ? ' &middot; ' + escapeHtml(r.loggedByName) : '') +
+                            (r.onList ? ' &middot; on a Reflection Room list' : '') + '</span></span>' +
                         '<span class="wc-att-figs">' +
                             (r.loanerProvided
                                 ? '<span class="wc-uv-pill wc-uv-loaner">Loaner' +
@@ -41158,11 +41437,8 @@
 
             if (foot) {
                 const bits = [];
-                if (_uvUnsaved.size) {
-                    bits.push(_uvUnsaved.size + ' entr' + (_uvUnsaved.size === 1 ? 'y has' : 'ies have') +
-                              ' NOT saved: ' + [..._uvUnsaved.values()].map(u => u.name).join(', ') +
-                              '. Log them again.');
-                }
+                const queued = uniformQueueWords();
+                if (queued) bits.push(queued);
                 bits.push(_uvToday.length + ' logged today.');
                 if (ranked.noData.length) {
                     bits.push(ranked.noData.length + ' row(s) could not be counted and are not ranked.');
@@ -43990,6 +44266,18 @@
                 if (n) {
                     return `Not saved yet: ${n === 1 ? '1 referral' : n + ' referrals'}. ` +
                         `If you log out now, ${n === 1 ? 'it' : 'they'} will be lost from this device.`;
+                }
+                // UNIFORM ENTRIES STILL IN THE SEND QUEUE (2026-10-08). They go
+                // with the person: kept on this device under their own sign-in
+                // and sent when they next sign in here -- unless this device
+                // could not keep them, and then they are lost.
+                const u = typeof uniformQueueLength === 'function' ? uniformQueueLength() : 0;
+                if (u) {
+                    const words = u === 1 ? '1 uniform entry' : u + ' uniform entries';
+                    return typeof _uvQueueStored !== 'undefined' && _uvQueueStored
+                        ? `Not saved yet: ${words}. If you log out now, ${u === 1 ? 'it waits' : 'they wait'} on this device ` +
+                          'and will be sent the next time you sign in here.'
+                        : `Not saved yet: ${words}. If you log out now, ${u === 1 ? 'it' : 'they'} will be lost from this device.`;
                 }
                 const sending = isSyncing === true || Boolean(_saveQueue && _saveQueue.isPending());
                 return sending

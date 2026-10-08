@@ -598,9 +598,12 @@ async function clearTardy(ctx: MutationCtx, t: Doc<"reflectionTardies">, reason:
 /**
  * Every violation on a detention cleared: the detention is RELEASED ("release
  * this student" on every earlier print). The list record is never rewritten.
- * A carry made from it shares its violations, so it goes too.
+ * A carry made from it shares its violations, so it goes too. Exported for
+ * uniformViolations.voidEntry: a uniform entry voided after its list was made
+ * can leave a detention with nothing on it, and the reader never watches
+ * uniform entries.
  */
-async function recheckRelease(ctx: MutationCtx, unitId: Id<"reflectionUnits">, now: string, seen = new Set<string>()): Promise<number> {
+export async function recheckRelease(ctx: MutationCtx, unitId: Id<"reflectionUnits">, now: string, seen = new Set<string>()): Promise<number> {
   if (seen.has(unitId)) return 0;
   seen.add(unitId);
   const u = await ctx.db.get(unitId);
@@ -614,7 +617,9 @@ async function recheckRelease(ctx: MutationCtx, unitId: Id<"reflectionUnits">, n
       ...uniforms.map((x) => ({ cleared: !x || !!x.voidedAt })),
     ];
     if (unitReleased(states)) {
-      const why = tardies.find((t) => t && t.state !== "countable")?.reason ?? "every violation was cleared";
+      const voided = uniforms.find((x) => x && x.voidedAt);
+      const why = tardies.find((t) => t && t.state !== "countable")?.reason
+        ?? (voided ? `uniform entry removed${voided.voidReason ? ` (${voided.voidReason})` : ""}` : "every violation was cleared");
       await ctx.db.patch(u._id, { state: "released", releasedAt: now, releaseReason: why });
       n++;
     }

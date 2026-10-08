@@ -31,6 +31,8 @@ const LIST = "convex/reflectionList.ts";
 const PRINT_TEST = "reflection-print.test.mjs";
 const VERIFY = "scripts/reflection-verify.mjs";
 const VERIFY_TEST = "reflection-verify.test.mjs";
+const UNIFORM = "convex/uniformViolations.ts";
+const UNIFORM_TEST = "uniform-violations.test.mjs";
 
 const CASES = [
   // ---- step 1: the rules (spec 6, step 1 table)
@@ -219,7 +221,31 @@ const CASES = [
   { guard: "a tardy left off the list is filed as entered late, never as dropped", file: VERIFY, test: VERIFY_TEST,
     from: "        else c.dropped++;", to: "        else c.enteredLate++;",
     mustFail: "a tardy counted at the close but left off the list is DROPPED BY THE READER" },
+
+  // ---- step 5: the Uniform Tracker (spec 6, step 5 table)
+  { guard: "restore the busy early return (a second Enter during a save is dropped)", file: "script.js", test: UNIFORM_TEST,
+    from: "        function commitUniformViolation(withLoaner) {\n            const st = _uvPick;",
+    to: "        function commitUniformViolation(withLoaner) {\n            if (_uvPumping) return;\n            const st = _uvPick;",
+    mustFail: "a second Enter during a save is queued, not dropped: both are sent, in the order typed" },
+  { guard: "drop unconfirmedUniform from the reload decision", file: "wildcat-update.js", test: "self-update.test.mjs",
+    from: "    if (s.unconfirmedUniform) {", to: "    if (false) {",
+    mustFail: "an unsaved uniform queue blocks the update reload even on a hidden tab past the busy deadline" },
+  { guard: "trust the browser's day again (the old DAY_SLACK)", file: UNIFORM, test: UNIFORM_TEST,
+    from: "    const day = when.day;", to: "    const day = (typeof args.day === \"string\" && args.day) || when.day;",
+    mustFail: "a client day of tomorrow is ignored and counted" },
+  { guard: "ignore observedAt (file every entry under the day it is sent)", file: UNIFORM, test: UNIFORM_TEST,
+    from: "      observedAt: args.observedAt, nowIso, tz: await schoolZone(ctx), clientDay: args.day,",
+    to: "      observedAt: undefined, nowIso, tz: await schoolZone(ctx), clientDay: args.day,",
+    mustFail: "an item queued Tue 07:52 and sent Wed 08:10 is filed under Tue and does not block a Wed entry" },
+  { guard: "a void after the list is made needs no reason", file: UNIFORM, test: UNIFORM_TEST,
+    from: "    if (r.unitId && !why) {", to: "    if (false) {",
+    mustFail: "a void after the list is made needs a reason" },
 ];
+
+// A builder's shortcut, never set in npm test: REFLECTION_TEETH_ONLY=<text>
+// runs only the cases whose test file or guard contains that text.
+const ONLY = process.env.REFLECTION_TEETH_ONLY || "";
+const RUN = ONLY ? CASES.filter((c) => c.test.includes(ONLY) || c.guard.includes(ONLY)) : CASES;
 
 // ------------------------------------------------------------------ the copy
 // .md for docs/runbook.md, which the roster guard's test reads.
@@ -249,9 +275,9 @@ try {
   const has = (r, verdict, name) => lines(r).some((l) => l === `  ${verdict}  ${name}` || l.startsWith(`  ${verdict}  ${name}  (`));
 
   say("\nTHE UNBROKEN COPY: every named check passes\n");
-  for (const test of [...new Set(CASES.map((c) => c.test))]) {
+  for (const test of [...new Set(RUN.map((c) => c.test))]) {
     const r = run(test);
-    const missing = CASES.filter((c) => c.test === test && !has(r, "PASS", c.mustFail));
+    const missing = RUN.filter((c) => c.test === test && !has(r, "PASS", c.mustFail));
     if (r.status !== 0 || missing.length) {
       bad++;
       say(`  FAIL  ${test} unbroken: exit ${r.status}; checks not passing: ${missing.map((c) => JSON.stringify(c.mustFail)).join(", ") || "none"}`);
@@ -262,7 +288,7 @@ try {
   }
 
   say("\nEACH GUARD BROKEN IN TURN: its check must fail\n");
-  for (const c of CASES) {
+  for (const c of RUN) {
     const path = join(scratch, c.file);
     const original = readFileSync(path, "utf8");
     const at = original.indexOf(c.from);
@@ -288,5 +314,5 @@ try {
   rmSync(scratch, { recursive: true, force: true });
 }
 
-console.log(`\n${CASES.length - Math.min(bad, CASES.length)} of ${CASES.length} breaks caught${bad ? `; ${bad} problem(s)` : ""}\n`);
+console.log(`\n${RUN.length - Math.min(bad, RUN.length)} of ${RUN.length} breaks caught${ONLY ? ` (only "${ONLY}")` : ""}${bad ? `; ${bad} problem(s)` : ""}\n`);
 if (bad) process.exit(1);

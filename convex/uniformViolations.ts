@@ -6,11 +6,13 @@ import {
   mayLogUniform,
   mayReadUniform,
   UNIFORM_ACCESS_REASON,
-  dayVerdict,
   duplicateVerdict,
   windowStart,
   dayToEpoch,
+  dayMinus,
 } from "./uniformRules";
+import { observedAtVerdict, wallClock } from "./reflectionRules";
+import { recheckRelease } from "./reflection";
 
 /**
  * The Uniform Violations log: a Behavior Interventionist standing at a door,
@@ -62,7 +64,53 @@ function toRow(r: any) {
     loggedByEmail: r.loggedByEmail,
     voidedAt: r.voidedAt ?? null,
     voidReason: r.voidReason ?? null,
+    // ON A REFLECTION ROOM LIST ALREADY MADE: undoing it now needs a reason,
+    // and it shows on every earlier print as removed after the list was made.
+    onList: !!r.unitId,
+    // Saved more than 10 minutes after it was observed (a queued entry): the
+    // list shows "Saved late (observed Tue 7:52)".
+    savedAt: r.savedAt ?? null,
   };
+}
+
+/**
+ * THE SCHOOL'S TIME ZONE, from Settings > Bell Schedule, or Los Angeles.
+ *
+ * Not refused when the setting is blank, unlike the Reflection Room list
+ * itself: a door at 7:50 must never stop working because a setting is empty,
+ * and the school is in Los Angeles (bellSchedules.SUGGESTED_TIME_ZONE).
+ */
+async function schoolZone(ctx: any): Promise<string> {
+  const row = await ctx.db.query("bellSettings").withIndex("by_key", (q: any) => q.eq("key", "bell")).first();
+  return (row && row.timeZone) || "America/Los_Angeles";
+}
+
+/** Today in the school's time, never the browser's and never UTC. */
+async function schoolToday(ctx: any): Promise<string> {
+  const lt = wallClock(new Date().toISOString(), await schoolZone(ctx));
+  return lt.ok ? lt.dateKey : new Date().toISOString().slice(0, 10);
+}
+
+/** appState key: how often a browser's idea of the day was not believed. Counts only. */
+const DAY_MISMATCH_KEY = "uniform:dayMismatch";
+
+/**
+ * Count a disagreement, never act on it: a browser that sent a different day
+ * (an old tab, or a Chromebook on the wrong zone), or an observedAt outside
+ * [now - 72 h, now + 5 min] (a clock that is badly wrong). The health card
+ * reads the totals; no student is named.
+ */
+async function countDayMismatch(ctx: any, w: { clientDayMismatch: boolean; outOfWindow: boolean }, nowIso: string) {
+  if (!w.clientDayMismatch && !w.outOfWindow) return;
+  const row = await ctx.db.query("appState").withIndex("by_key", (q: any) => q.eq("key", DAY_MISMATCH_KEY)).first();
+  const prev = (row && row.value) || {};
+  const value = {
+    clientDay: Number(prev.clientDay || 0) + (w.clientDayMismatch ? 1 : 0),
+    outOfWindow: Number(prev.outOfWindow || 0) + (w.outOfWindow ? 1 : 0),
+    lastAt: nowIso,
+  };
+  if (row) await ctx.db.patch(row._id, { value, mirroredAt: nowIso });
+  else await ctx.db.insert("appState", { key: DAY_MISMATCH_KEY, value, mirroredAt: nowIso });
 }
 
 const live = (r: any) => !r.voidedAt;
@@ -95,17 +143,38 @@ async function summaryFor(ctx: any, studentNumber: string, sinceDay: string | nu
  * `attemptId` identifies the BUTTON PRESS, not the intent. A dropped response,
  * a flaky Chromebook and an impatient second tap all resolve to the same row
  * rather than three. That is what makes it safe for the client to retry at all,
- * and it is the studentPurchases rule verbatim.
+ * and it is the studentPurchases rule verbatim. The Uniform Tracker's send
+ * queue (step 5) leans on exactly this: it re-sends the same press, with the
+ * same attemptId, until the server answers.
+ *
+ * THE SERVER SETS THE DAY (step 5). `observedAt` is the moment the adult
+ * pressed Enter, in epoch ms, from the queue. Believed inside [now - 72 h,
+ * now + 5 min] (reflectionRules.observedAtVerdict): the row is filed under the
+ * Los Angeles day of that moment, with `at` = that moment, so a Tuesday entry
+ * that could only be sent on Wednesday is a Tuesday violation -- and does not
+ * block a Wednesday one. More than 10 minutes late, the row also records
+ * `savedAt` and the list says "Saved late (observed Tue 7:52)". Outside the
+ * window, or with no observedAt (a tab on older code), it is filed now. The
+ * `day` a browser sends is accepted so old tabs keep working, and IGNORED:
+ * a disagreement is only counted (appState uniform:dayMismatch).
  *
  * The same-day rule is a different question answered at a different layer: see
  * duplicateVerdict. A second sighting returns the row that already exists,
  * flagged, so the screen can offer to add a loaner to it instead of arguing
  * with the person holding the tablet.
+ *
+ * A REFUSAL THE QUEUE CAN READ. A press that can never land (no such student,
+ * two records, no access) is ANSWERED as { ok: false, refused: true, reason }
+ * to the send queue, which sends an observedAt -- so it stops retrying and
+ * says why, rather than retrying forever and holding every update back. A tab
+ * on older code (no observedAt) still gets the thrown error it understands.
  */
 export const log = mutation({
   args: {
     studentNumber: v.string(),
-    day: v.string(),
+    // Accepted, never used: tabs on older code still send it (see above).
+    day: v.optional(v.string()),
+    observedAt: v.optional(v.number()),
     loanerProvided: v.boolean(),
     attemptId: v.string(),
     note: v.optional(v.string()),
@@ -113,18 +182,25 @@ export const log = mutation({
   },
   handler: async (ctx, args) => {
     const staff = await requireStaff(ctx);
-    if (!mayLogUniform(staff.role)) throw new ConvexError(UNIFORM_ACCESS_REASON);
+    const fromQueue = args.observedAt !== undefined;
+    const refuse = (reason: string) => {
+      if (fromQueue) return { ok: false as const, refused: true as const, reason };
+      throw new ConvexError(reason);
+    };
+    if (!mayLogUniform(staff.role)) return refuse(UNIFORM_ACCESS_REASON);
 
     const attemptId = String(args.attemptId ?? "").trim();
-    if (!attemptId) throw new ConvexError("attemptId is required.");
+    if (!attemptId) return refuse("attemptId is required.");
 
     const nowIso = new Date().toISOString();
-    const dv = dayVerdict(args.day, nowIso);
-    if (!dv.ok || !dv.day) throw new ConvexError(dv.reason ?? "Bad day.");
-    const day = dv.day;
+    const when = observedAtVerdict({
+      observedAt: args.observedAt, nowIso, tz: await schoolZone(ctx), clientDay: args.day,
+    });
+    if (!when.ok || !when.day) return refuse(when.reason ?? "The school day could not be worked out.");
+    const day = when.day;
 
     const number = String(args.studentNumber ?? "").trim();
-    if (!number) throw new ConvexError("No student was chosen.");
+    if (!number) return refuse("No student was chosen.");
 
     // Already done, under this same press. Return it unchanged.
     const priorAttempt = await ctx.db
@@ -146,17 +222,17 @@ export const log = mutation({
       .withIndex("by_studentNumber", (q) => q.eq("studentNumber", number))
       .take(2);
     if (matches.length === 0) {
-      throw new ConvexError(`No student has number ${number}.`);
+      return refuse(`No student has number ${number}.`);
     }
     if (matches.length > 1) {
-      throw new ConvexError(
+      return refuse(
         `Two student records share number ${number}. An admin needs to merge them ` +
           `before a violation can be logged against it.`,
       );
     }
     const student: any = matches[0];
 
-    // One per student per day.
+    // One per student per day -- the SERVER's day.
     const sameDay = await ctx.db
       .query("uniformViolations")
       .withIndex("by_student_day", (q) => q.eq("studentNumber", number).eq("day", day))
@@ -172,6 +248,7 @@ export const log = mutation({
       };
     }
 
+    await countDayMismatch(ctx, when, nowIso);
     const loaner = args.loanerProvided === true;
     const id = await ctx.db.insert("uniformViolations", {
       studentId: student._id,
@@ -181,7 +258,10 @@ export const log = mutation({
       studentName: `${student.firstName ?? ""} ${student.lastName ?? ""}`.trim(),
       studentGrade: String(student.grade ?? ""),
       day,
-      at: nowIso,
+      // When it was SEEN, if that is believable; otherwise now.
+      at: when.at,
+      ...(when.source === "observed" ? { observedAt: args.observedAt } : {}),
+      ...(when.savedAt ? { savedAt: when.savedAt } : {}),
       loanerProvided: loaner,
       loanerOutstanding: loaner,
       loanerReturnedAt: null,
@@ -258,6 +338,14 @@ export const returnLoaner = mutation({
  * This is what buys the right to log with one keystroke and no confirmation
  * dialog: a mistake costs one tap to reverse. The row stays readable, so a
  * correction is on the record rather than a gap in it.
+ *
+ * ONCE ITS REFLECTION ROOM LIST IS MADE, A REASON IS REQUIRED (step 5). The
+ * entry is then on paper in a supervisor's hand; taking it off shows on every
+ * earlier print as "removed after the list was made", and the reason is what
+ * that line can say. A detention left with nothing on it is released, as a
+ * cleared tardy releases one. Before that, Undo is still one tap, and the
+ * default reason names who undid it -- not "the person who logged it", which
+ * it said even when someone else had.
  */
 export const voidEntry = mutation({
   args: { id: v.id("uniformViolations"), reason: v.optional(v.string()), sinceDay: v.optional(v.string()) },
@@ -267,13 +355,23 @@ export const voidEntry = mutation({
     const r = await ctx.db.get(id);
     if (!r) throw new ConvexError("That entry no longer exists.");
     if (r.voidedAt) return { ok: true, already: true, row: toRow(r) };
+    const why = String(reason ?? "").trim().slice(0, 300);
+    if (r.unitId && !why) {
+      throw new ConvexError(
+        "This entry is on a Reflection Room list that has already been made. Give a reason for removing it: " +
+          "it will show as removed after the list was made.",
+      );
+    }
+    const now = new Date().toISOString();
     await ctx.db.patch(id, {
-      voidedAt: new Date().toISOString(),
+      voidedAt: now,
       voidedByEmail: String(staff.email ?? ""),
-      voidReason: String(reason ?? "").trim() || "Undone by the person who logged it",
+      voidReason: why || `Undone by ${String(staff.name || staff.email || "staff")}`,
       // A voided entry holds no loaner open.
       loanerOutstanding: false,
     });
+    // Nothing left on its detention: released ("release this student").
+    if (r.unitId) await recheckRelease(ctx, r.unitId, now);
     return {
       ok: true, already: false,
       row: toRow(await ctx.db.get(id)),
@@ -282,24 +380,31 @@ export const voidEntry = mutation({
   },
 });
 
-/** Everything logged on one day, newest first. */
+/**
+ * Everything logged on one day, newest first.
+ *
+ * NO DAY, OR "today": the SERVER's school day (step 5), returned as `day`, so
+ * the Today view and its "Logging for" line never read the Chromebook's clock.
+ * A tab on older code still sends its own date and gets that day.
+ */
 export const forDay = query({
-  args: { day: v.string() },
+  args: { day: v.optional(v.string()) },
   handler: async (ctx, { day }) => {
     const staff = await requireStaff(ctx);
     if (!mayReadUniform(staff.role)) {
-      return { allowed: false, reason: UNIFORM_ACCESS_REASON, rows: [], truncated: false };
+      return { allowed: false, reason: UNIFORM_ACCESS_REASON, rows: [], truncated: false, day: null };
     }
+    const which = !day || day === "today" ? await schoolToday(ctx) : String(day);
     const raw = await ctx.db
       .query("uniformViolations")
-      .withIndex("by_day", (q) => q.eq("day", String(day)))
+      .withIndex("by_day", (q) => q.eq("day", which))
       .take(MAX_ROWS + 1);
     const truncated = raw.length > MAX_ROWS;
     const rows = (truncated ? raw.slice(0, MAX_ROWS) : raw)
       .filter(live)
       .map(toRow)
       .sort((a, b) => String(b.at).localeCompare(String(a.at)));
-    return { allowed: true, reason: null, rows, truncated };
+    return { allowed: true, reason: null, rows, truncated, day: which };
   },
 });
 
@@ -314,15 +419,19 @@ export const forDay = query({
  * line.
  */
 export const counts = query({
-  args: { sinceDay: v.optional(v.string()), today: v.string() },
-  handler: async (ctx, { sinceDay, today }) => {
+  // `today` and `sinceDay` from a tab on older code; a current tab sends only
+  // `windowDays`, and the window is counted back from the SERVER's school day.
+  args: { sinceDay: v.optional(v.string()), today: v.optional(v.string()), windowDays: v.optional(v.number()) },
+  handler: async (ctx, { sinceDay, today: asked, windowDays }) => {
     const staff = await requireStaff(ctx);
     if (!mayReadUniform(staff.role)) {
       return { allowed: false, reason: UNIFORM_ACCESS_REASON, rows: [], truncated: false, sinceDay: null };
     }
-    const from = windowStart(sinceDay ?? null, today);
+    const today = asked ?? await schoolToday(ctx);
+    const days = Number.isInteger(windowDays) && (windowDays as number) > 0 ? (windowDays as number) : null;
+    const from = windowStart(sinceDay ?? (days ? dayMinus(today, days - 1) : null), today);
     if (!from) {
-      return { allowed: true, reason: null, rows: [], truncated: false, sinceDay: null };
+      return { allowed: true, reason: null, rows: [], truncated: false, sinceDay: null, today };
     }
     const raw = await ctx.db
       .query("uniformViolations")
@@ -351,7 +460,7 @@ export const counts = query({
       if (r.day >= e.lastDay) { e.studentName = r.studentName; e.studentGrade = r.studentGrade; }
     }
     return {
-      allowed: true, reason: null, sinceDay: from, truncated,
+      allowed: true, reason: null, sinceDay: from, today, truncated,
       rows: [...by.values()].map((e) => ({
         studentNumber: e.studentNumber, studentName: e.studentName,
         studentGrade: e.studentGrade, count: e.count, days: e.days.size,

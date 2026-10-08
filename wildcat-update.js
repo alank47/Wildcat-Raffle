@@ -92,6 +92,21 @@
   var MONEY_HOLD_MAX_MS = 86400000;
 
   /**
+   * How long uniform entries this tab has not had confirmed may hold an
+   * update back (2026-10-08, the Reflection Room build).
+   *
+   * The Uniform Tracker's send queue lives in memory while it sends, and a
+   * door burst saved into a tab whose saves are failing is exactly what the
+   * busy deadline would otherwise reload away -- the same shape as the nine
+   * awards lost on 2026-09-24. So the queue holds the update even past that
+   * deadline. The queue is also kept on the device and sent again after a
+   * reload, so this is the belt to that braces; and as with money, a queue
+   * stuck for a whole day is a fault, not a slow save, and the update goes
+   * ahead.
+   */
+  var UNIFORM_HOLD_MAX_MS = 86400000;
+
+  /**
    * Should this tab reload itself right now?
    *
    * Returns a reason either way. The reason is logged rather than discarded,
@@ -134,6 +149,16 @@
       var moneyMax = typeof s.moneyHoldMaxMs === 'number' ? s.moneyHoldMaxMs : MONEY_HOLD_MAX_MS;
       if (!(isFinite(moneyAge) && moneyAge >= moneyMax)) {
         return { reload: false, reason: 'this tab holds cash the server has not confirmed yet' };
+      }
+    }
+
+    // NOR OVER UNIFORM ENTRIES THE SERVER HAS NOT CONFIRMED, for the same
+    // reason and past the same deadline. See UNIFORM_HOLD_MAX_MS.
+    var uniformAge = Number(s.unconfirmedUniformAgeMs);
+    if (s.unconfirmedUniform) {
+      var uniformMax = typeof s.uniformHoldMaxMs === 'number' ? s.uniformHoldMaxMs : UNIFORM_HOLD_MAX_MS;
+      if (!(isFinite(uniformAge) && uniformAge >= uniformMax)) {
+        return { reload: false, reason: 'this tab holds uniform entries the server has not confirmed yet' };
       }
     }
 
@@ -249,6 +274,7 @@
     RETRY_MS: RETRY_MS,
     RESUME_MAX_AGE_MS: RESUME_MAX_AGE_MS,
     MONEY_HOLD_MAX_MS: MONEY_HOLD_MAX_MS,
+    UNIFORM_HOLD_MAX_MS: UNIFORM_HOLD_MAX_MS,
     shouldAutoReload: shouldAutoReload,
     reloadUrl: reloadUrl,
     cleanUrl: cleanUrl,

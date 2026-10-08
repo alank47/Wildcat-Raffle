@@ -63,8 +63,18 @@ export function mayReadUniform(role: unknown): boolean {
  */
 export const MAX_WINDOW_DAYS = 400;
 
-/** How far a client's idea of "today" may differ from the server's, in days. */
-export const DAY_SLACK = 1;
+/**
+ * THE DAY A VIOLATION IS FILED UNDER IS THE SERVER'S CALL (2026-10-08, the
+ * Reflection Room build, step 5). It used to be the browser's: the client sent
+ * its own local date and the server accepted anything within a day of its UTC
+ * date, so a Chromebook on the wrong zone or clock could file a child's
+ * violation under tomorrow's lunch detention list -- and a test pinned
+ * "tomorrow is accepted". uniformViolations.log now turns the moment the adult
+ * pressed Enter (`observedAt`, epoch ms, which has no time zone) into the Los
+ * Angeles school day with reflectionRules.observedAtVerdict, and the day a
+ * browser still sends is ignored and only counted. DAY_SLACK and dayVerdict
+ * were removed with it, so nothing can quietly go back to trusting the client.
+ */
 
 const DAY_RE = /^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/;
 
@@ -84,51 +94,6 @@ export function dayMinus(day: unknown, days: number): string | null {
   const t = dayToEpoch(day);
   if (t === null || !Number.isFinite(days)) return null;
   return new Date(t - Math.round(days) * 86400000).toISOString().slice(0, 10);
-}
-
-/**
- * Is the day the client says it is standing in one the server will accept?
- *
- * WHY THE CLIENT SENDS THE DAY AT ALL, rather than the server deciding. A
- * server-side `new Date().toISOString().slice(0, 10)` is a UTC date, and UTC
- * rolls over at 5pm Pacific. A morning door routine would be fine; an
- * after-school sweep or an evening correction would be filed against tomorrow,
- * and "date of violation" is a required column on a record about a child.
- *
- * WHY IT IS CLAMPED RATHER THAN TRUSTED. The day is an argument, so it is
- * caller-chosen, and a wrong clock or a curious user should not be able to
- * write a violation into last term or next year. One day of slack either side
- * of the server's own UTC date covers every real timezone offset and nothing
- * else.
- */
-export function dayVerdict(
-  day: unknown,
-  serverNowIso: unknown,
-): { ok: boolean; day: string | null; reason: string | null } {
-  const t = dayToEpoch(day);
-  if (t === null) {
-    return { ok: false, day: null, reason: `"${String(day ?? "")}" is not a YYYY-MM-DD day.` };
-  }
-  const nowMs = Date.parse(String(serverNowIso ?? ""));
-  if (!Number.isFinite(nowMs)) {
-    return { ok: false, day: null, reason: "The server could not read its own clock." };
-  }
-  const serverDay = new Date(nowMs).toISOString().slice(0, 10);
-  const serverT = dayToEpoch(serverDay);
-  if (serverT === null) {
-    return { ok: false, day: null, reason: "The server could not read its own clock." };
-  }
-  const driftDays = Math.abs(t - serverT) / 86400000;
-  if (driftDays > DAY_SLACK) {
-    return {
-      ok: false,
-      day: null,
-      reason:
-        `${String(day)} is ${Math.round(driftDays)} days from the server's date ` +
-        `(${serverDay}). A violation can only be logged for today.`,
-    };
-  }
-  return { ok: true, day: String(day), reason: null };
 }
 
 /** The earliest day a count may reach, given a requested start and today. */
