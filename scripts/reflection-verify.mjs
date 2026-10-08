@@ -567,8 +567,12 @@ export function judge({ day, days, sch, exp, snap, salt }) {
     if (t.state === "review" && /^Entered very late/.test(t.reason ?? "") && t.listsBeforeSeen < (exp.settings?.lateEntryLists ?? 5)) ctl.lateTooSoon++;
   }
   // The verify's own carry fallback, for detentions PowerSchool decided.
+  // Every day, the room's presses or not (second review, 2026-10-08): the
+  // room decides only the live division's carries (carryBasis "room"), so in
+  // the MS live week the HS shadow control's carries are still PowerSchool's,
+  // and still checked, on every day the MS room records attendance.
   const d = days[day];
-  if (d && !row.roomAttendanceDone && !row.roomClosed) {
+  if (d) {
     for (const u of exp.list ?? []) {
       if (u.state !== "carried" || u.carryBasis !== "powerschool") continue;
       if (carryOf(d, sch, u.studentNumber).presentBoth) ctl.carryPresentBoth++;

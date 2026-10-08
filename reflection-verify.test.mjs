@@ -307,6 +307,25 @@ try {
       r2.controls.arrivalListed === 2 && r2.counts.disagree === 2, J({ c: r2.counts, k: r2.controls }));
   }
 
+  {
+    // HS live, its room pressed Attendance done; MS in shadow, so MS carries
+    // are PowerSchool's. P (MS) was absent at Power-Up only, in class before
+    // and after: a PowerSchool carry of P is exactly the fault the control is
+    // for, whatever the HS room pressed.
+    const w = world();
+    const sch = V.school({ codes: w.tables.attendance_code, students: w.tables.students, cc: w.tables.cc });
+    const days = { [TUE]: V.dayOf(TUE, only(w, [SN.P]), sch) };
+    const carried = (mode, carryBasis) => [{ unitId: `u-${SN.P}`, studentNumber: SN.P, division: "ms", kind: "new", state: "carried", mode, carryBasis, carryCount: 0 }];
+    const pressed = { roomAttendanceDone: true, modeByDivision: { ms: "shadow", hs: "live" } };
+    const settings = { ...exportOf({ good: true }).settings, modeByDivision: { ms: "shadow", hs: "live" } };
+    const shadow = V.judge({ day: TUE, days, sch, snap: null, salt: null,
+      exp: exportWith([], carried("shadow", "powerschool"), { settings, dayRow: pressed }) });
+    check("a PowerSchool carry of a student in class before and after Power-Up is a control on a day the OTHER division's room pressed Attendance done",
+      shadow.controls.carryPresentBoth === 1, J(shadow.controls));
+    const live = V.judge({ day: TUE, days, sch, snap: null, salt: null, exp: exportWith([], carried("live", "room"), { settings, dayRow: pressed }) });
+    check("...while a carry the room decided (ticked Not here) is the room's to answer for, not this control", live.controls.carryPresentBoth === 0, J(live.controls));
+  }
+
   // ==========================================================================
   console.log("\nWIRING\n");
   // ==========================================================================

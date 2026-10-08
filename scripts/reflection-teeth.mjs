@@ -423,6 +423,9 @@ const CASES = [
     from: "        const listable = sys && (sys.state === \"countable\" || sys.state === \"held\" || sys.state === \"review\");",
     to: "        const listable = sys && (sys.unitId || sys.state === \"countable\" || sys.state === \"held\" || sys.state === \"review\");",
     mustFail: "an arrival the system also calls an arrival, still holding the detention it was listed on, is corrected after the list was made: never an 'arrival tardy listed' or a disagreement" },
+  { guard: "the verify skips its PowerSchool carry control on any day a room pressed Attendance done", file: VERIFY, test: VERIFY_TEST,
+    from: "  const d = days[day];\n  if (d) {", to: "  const d = days[day];\n  if (d && !row.roomAttendanceDone && !row.roomClosed) {",
+    mustFail: "a PowerSchool carry of a student in class before and after Power-Up is a control on a day the OTHER division's room pressed Attendance done" },
 ];
 
 // A builder's shortcut, never set in npm test: REFLECTION_TEETH_ONLY=<text>
