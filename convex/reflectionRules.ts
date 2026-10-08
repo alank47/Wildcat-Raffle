@@ -113,6 +113,32 @@ export const DIRECT_CHECK_CAP = 50;
 export const READY_MINUTE: Record<ScheduleKind, number> = { regular: 720, wed: 690, minimum: 690, stack: 720 };
 export const POWER_UP_MINUTE: Record<ScheduleKind, number> = { regular: 751, wed: 702, minimum: 702, stack: 742 };
 export const DEFAULT_CLOSE_MINUTE: Record<ScheduleKind, number> = { regular: 705, wed: 680, minimum: 680, stack: 710 };
+/** Lunch & Power-Up ends (seedBellSchedules.ts): 13:34, 12:45, 12:45, 13:25. The block is 63 minutes. */
+export const BLOCK_END_MINUTE: Record<ScheduleKind, number> = { regular: 814, wed: 765, minimum: 765, stack: 805 };
+
+/**
+ * THE ROOM RUNS DURING LUNCH (owner, 2026-10-08). MS eats first, so MS
+ * serves in the FIRST half of Lunch & Power-Up and is pulled at the block
+ * start; HS serves in the SECOND half and is pulled out of Power-Up
+ * `hsPullLeadMinutes` (5) before the swap. Nobody has said the exact swap
+ * minute, so it is a per-schedule setting that defaults to the block's
+ * midpoint: 13:02 / 12:13 / 12:13 / 12:53, so HS is pulled at about 12:57 /
+ * 12:08 / 12:08 / 12:48. The ready time and the latest freeze do not move:
+ * MS is pulled at the block start, so the list must be ready before it.
+ */
+export function pullTimes(kind: ScheduleKind, settings: Pick<ReflectionSettings, "swapMinuteByKind" | "hsPullLeadMinutes">):
+  { msMinute: number; swapMinute: number; hsMinute: number } {
+  const start = POWER_UP_MINUTE[kind];
+  const swap = settings.swapMinuteByKind?.[kind] ?? Math.floor((start + BLOCK_END_MINUTE[kind]) / 2);
+  return { msMinute: start, swapMinute: swap, hsMinute: swap - settings.hsPullLeadMinutes };
+}
+
+/**
+ * Who a pull slip is addressed to, per division (owner, 10/8, still open for
+ * MS): the Power-Up teacher (the default for both, and the column the owner
+ * asked for), or the teacher of the class right before lunch.
+ */
+export type SlipAddressee = "powerup" | "before-lunch";
 
 /** The fixed reads of a day (LA minutes). Closing, fallback and latest-freeze are windows, not items. */
 export const OPENING_MINUTE = 450;              // 07:30
@@ -139,6 +165,10 @@ export type ReflectionSettings = {
   countPowerUpTardies: boolean;
   holdFirstClassOnPtNoRow: boolean;
   capacity: Record<Division, number | null>;
+  /** The minute MS and HS swap halves of Lunch & Power-Up; null = the block's midpoint. */
+  swapMinuteByKind: Record<ScheduleKind, number | null>;
+  hsPullLeadMinutes: number;
+  slipAddresseeByDivision: Record<Division, SlipAddressee>;
 };
 
 /** The repo default: OFF for both divisions. Turning it on is a command-line act. */
@@ -154,6 +184,9 @@ export const DEFAULT_REFLECTION_SETTINGS: ReflectionSettings = {
   countPowerUpTardies: false,
   holdFirstClassOnPtNoRow: false,
   capacity: { ms: null, hs: null },
+  swapMinuteByKind: { regular: null, wed: null, minimum: null, stack: null },
+  hsPullLeadMinutes: 5,
+  slipAddresseeByDivision: { ms: "powerup", hs: "powerup" },
 };
 
 const DAY_RE = /^\d{4}-\d{2}-\d{2}$/;
@@ -193,7 +226,17 @@ export function reflectionSettingsOrDefault(raw: unknown): ReflectionSettings {
     const x = Number(v);
     return v !== null && v !== undefined && Number.isInteger(x) && x > 0 ? x : null;
   };
+  // A swap minute must fall strictly inside the block, or it is the midpoint.
+  const swap = {} as Record<ScheduleKind, number | null>;
+  for (const k of SCHEDULE_KINDS) {
+    const x = s.swapMinuteByKind?.[k];
+    swap[k] = Number.isInteger(x) && x > POWER_UP_MINUTE[k] && x < BLOCK_END_MINUTE[k] ? x : null;
+  }
+  const addressee = (x: unknown): SlipAddressee => (x === "before-lunch" ? "before-lunch" : "powerup");
   return {
+    swapMinuteByKind: swap,
+    hsPullLeadMinutes: int(s.hsPullLeadMinutes, 0, 30, d.hsPullLeadMinutes),
+    slipAddresseeByDivision: { ms: addressee(s.slipAddresseeByDivision?.ms), hs: addressee(s.slipAddresseeByDivision?.hs) },
     modeByDivision: { ms: asMode(s.modeByDivision?.ms), hs: asMode(s.modeByDivision?.hs) },
     countFromDateByDivision: {
       ms: isDay(s.countFromDateByDivision?.ms) ? s.countFromDateByDivision.ms : null,

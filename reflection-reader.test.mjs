@@ -21,6 +21,7 @@
 //   5. A tardy first seen after five lists: admin review.
 //   6. The first day back from Thanksgiving, in standard time.
 //   7. HS switched on for Thursday: Wednesday's HS tardy never floods a list.
+//   8. The command-line settings, and the owner's 10/8 pull times.
 //
 // TEETH: scripts/reflection-teeth.mjs breaks the direct id confirmation, the
 // natural key, the lease expiry, the "unconfirmed changes nothing" rule,
@@ -253,6 +254,8 @@ try {
     check("the routine and pre-close reads ran, none in the 5 minutes before the close",
       ["routine@510", "routine@570", "routine@630", "pre-close@40", "pre-close@30", "pre-close@20", "pre-close@10"].every((k) => w.day(TUE).readsDone.includes(k))
       && !readsOf(w).some((l) => Date.parse(l.at) > Date.parse(la(TUE, "11:40")) - 1), J(w.day(TUE).readsDone));
+    const snapAt = new Set(w.store.rows("reflectionRoster").map((r) => r.snapAt));
+    check("the roster snapshot is taken once a day, by the opening read", snapAt.size === 1 && snapAt.has(la(TUE, "07:30")), J([...snapAt]));
     const h = w.tardies("H")[0];
     check("a hold resolves when the section gets marks (10:30), before the list", h.state === "countable" && h.firstCountableAt === la(TUE, "10:30") && h.wasHeld, J(h));
 
@@ -477,8 +480,10 @@ try {
     w.ctl.down = true;
     await drive(w, la(TUE, "07:30"), la(TUE, "12:20"));
     check("no read works, so no list is made at the ready time (not proved a school day); late reads try 12:00-12:15",
-      !w.day(TUE).frozenAt && readsOf(w, "late-closing").length === 4 && w.store.rows("reflectionRoster").length > 0,
-      J({ late: readsOf(w, "late-closing").length }));
+      !w.day(TUE).frozenAt && readsOf(w, "late-closing").length === 4, J({ late: readsOf(w, "late-closing").length }));
+    check("...the opening read is retried every 5 minutes, but the roster (no PowerSchool needed) is copied once",
+      readsOf(w, "opening").length === 12 && new Set(w.store.rows("reflectionRoster").map((r) => r.snapAt)).size === 1
+      && w.store.rows("reflectionRoster")[0].snapAt === la(TUE, "07:30"), J({ opening: readsOf(w, "opening").length }));
     await drive(w, la(TUE, "12:25"), la(TUE, "12:25"));
     check("the latest freeze records noList (nothing may make the list from 12:21)",
       w.day(TUE).noList && w.day(TUE).noList.at === la(TUE, "12:25") && !w.day(TUE).frozenAt, J(w.day(TUE)));
@@ -568,6 +573,38 @@ try {
       hs.ok && w.tardies("X2")[0]?.state === "before-start" && J(w.listed(WED)) === J(["N"]), J({ x2: w.tardies("X2"), l: w.listed(WED) }));
     check("...while HS is on, so the list's division modes are recorded on the day",
       J(w.day(WED).modeByDivision) === J({ ms: "shadow", hs: "shadow" }), J(w.day(WED).modeByDivision));
+  }
+
+  // ==========================================================================
+  console.log("\n8. THE COMMAND-LINE SETTINGS, AND WHEN EACH DIVISION IS PULLED\n");
+  // ==========================================================================
+  {
+    const d = R.reflectionSettingsOrDefault({});
+    const hhmm = (m) => `${Math.floor(m / 60)}:${String(m % 60).padStart(2, "0")}`;
+    const pt = (k, st = d) => { const p = R.pullTimes(k, st); return [p.msMinute, p.swapMinute, p.hsMinute].map(hhmm).join(" "); };
+    check("MS is pulled at the block start; the swap defaults to the block's midpoint; HS 5 minutes before it (owner, 10/8)",
+      pt("regular") === "12:31 13:02 12:57" && pt("wed") === "11:42 12:13 12:08" && pt("minimum") === "11:42 12:13 12:08"
+      && pt("stack") === "12:22 12:53 12:48", ["regular", "wed", "stack"].map((k) => pt(k)).join(" | "));
+    check("slips go to the Power-Up teacher in both divisions until someone says otherwise",
+      J(d.slipAddresseeByDivision) === J({ ms: "powerup", hs: "powerup" }) && d.hsPullLeadMinutes === 5);
+
+    const w = await world({ students: {}, settings: { modeByDivision: { ms: "shadow", hs: "off" }, countFromDateByDivision: { ms: "2026-10-12", hs: null } } });
+    clock.set(la("2026-10-13", "18:00"));
+    const saved = await w.rt.run("reflection.saveSettings", {
+      swapMinuteByKind: { regular: 790, stack: 850 }, hsPullLeadMinutes: 7, slipAddresseeByDivision: { ms: "before-lunch" },
+      closeMinuteByKind: { regular: 707 }, holdFirstClassOnPtNoRow: true,
+    });
+    const st = saved.settings;
+    check("saveSettings takes a swap minute inside the block, the HS lead, and the MS slip addressee",
+      st.swapMinuteByKind.regular === 790 && st.hsPullLeadMinutes === 7 && st.slipAddresseeByDivision.ms === "before-lunch"
+      && st.slipAddresseeByDivision.hs === "powerup" && st.holdFirstClassOnPtNoRow === true && pt("regular", st) === "12:31 13:10 13:03", J(st));
+    check("...refuses what does not make sense, and says so: a swap outside the block, a close that is not a 5-minute step",
+      st.swapMinuteByKind.stack === null && st.closeMinuteByKind.regular === 705
+      && saved.refused.includes("swapMinuteByKind") && saved.refused.includes("closeMinuteByKind") && !saved.refused.includes("hsPullLeadMinutes"),
+      J(saved.refused));
+    check("...never touches the switch (only setMode moves it), and writes reflectionAudit",
+      st.modeByDivision.ms === "shadow" && st.countFromDateByDivision.ms === "2026-10-12"
+      && w.store.rows("reflectionAudit").some((r) => r.action === "save-settings"), J(st.modeByDivision));
   }
 
   // ==========================================================================

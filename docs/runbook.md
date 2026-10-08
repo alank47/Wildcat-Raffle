@@ -161,11 +161,19 @@ carries do not move into live. Every mode change is written to
 `reflectionAudit`.
 
 Other settings (close minutes, `lateEntryLists`, `maxCarries`, counting
-ditching or Power-Up tardies, `holdFirstClassOnPtNoRow`, capacity) are changed
-the same way, never from a screen in v1:
+ditching or Power-Up tardies, `holdFirstClassOnPtNoRow`, capacity, the swap
+minute, the HS pull lead and the slip addressee) are changed the same way,
+never from a screen in v1. A value that does not make sense falls back to the
+default and is named in the answer's `refused`:
 
 ```
 npx convex run --prod reflection:saveSettings '{"holdFirstClassOnPtNoRow":true}'
+# The room runs during lunch, MS first (owner, 10/8). MS is pulled at the block
+# start; HS 5 minutes before the swap, which defaults to the block's midpoint
+# (13:02 regular, 12:13 Wednesday and Minimum, 12:53 Stack) until it is known:
+npx convex run --prod reflection:saveSettings '{"swapMinuteByKind":{"regular":785},"hsPullLeadMinutes":5}'
+# Who a slip is addressed to, per division: "powerup" (default) or "before-lunch"
+npx convex run --prod reflection:saveSettings '{"slipAddresseeByDivision":{"ms":"before-lunch"}}'
 npx convex run --prod reflection:status '{}'          # today's state: reads done, last good read, list made?
 npx convex run --prod reflection:rosterStatus '{}'    # snapshot age and the term banner
 ```

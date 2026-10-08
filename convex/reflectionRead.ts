@@ -306,8 +306,10 @@ export const read = internalAction({
     try { tok = await token(host, id, secret); } catch (e: any) { tokError = String(e?.message || e); }
 
     // The snapshot first: it needs no PowerSchool, so a morning when
-    // PowerSchool is down still gets today's Power-Up teachers.
-    if (a.reads.roster || !c.rosterMeta) {
+    // PowerSchool is down still gets today's Power-Up teachers. ONCE A DAY:
+    // an opening read retried every 5 minutes does not copy it again, but
+    // one refused (a sync mid-run, say) is tried again by the retry.
+    if ((a.reads.roster && c.rosterMeta?.snapDay !== a.date) || !c.rosterMeta) {
       const term = tok ? await readTerm(host, tok, schoolid, yearid, process.env.PS_TERM_ID, deadline) : { termId: process.env.PS_TERM_ID };
       try {
         stats.roster = await takeRosterSnapshot(ctx, term);

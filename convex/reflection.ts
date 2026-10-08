@@ -1143,20 +1143,31 @@ export const saveSettings = internalMutation({
     countPowerUpTardies: v.optional(v.boolean()),
     holdFirstClassOnPtNoRow: v.optional(v.boolean()),
     capacity: v.optional(v.object({ ms: v.optional(v.union(v.number(), v.null())), hs: v.optional(v.union(v.number(), v.null())) })),
+    // The owner's 10/8 answers: the room runs during lunch, MS first.
+    swapMinuteByKind: v.optional(v.object({
+      regular: v.optional(v.union(v.number(), v.null())), wed: v.optional(v.union(v.number(), v.null())),
+      minimum: v.optional(v.union(v.number(), v.null())), stack: v.optional(v.union(v.number(), v.null())),
+    })),
+    hsPullLeadMinutes: v.optional(v.number()),
+    slipAddresseeByDivision: v.optional(v.object({
+      ms: v.optional(v.union(v.literal("powerup"), v.literal("before-lunch"))),
+      hs: v.optional(v.union(v.literal("powerup"), v.literal("before-lunch"))),
+    })),
   },
   handler: async (ctx, a): Promise<Record<string, any>> => {
     const raw = (await readState(ctx, SETTINGS_KEY)) ?? {};
     const current = reflectionSettingsOrDefault(raw);
     const next: Record<string, any> = { ...raw };
+    const NESTED = ["closeMinuteByKind", "capacity", "swapMinuteByKind", "slipAddresseeByDivision"];
     for (const [k, val] of Object.entries(a)) {
       if (val === undefined) continue;
-      next[k] = k === "closeMinuteByKind" || k === "capacity" ? { ...(current as any)[k], ...(val as object) } : val;
+      next[k] = NESTED.includes(k) ? { ...(current as any)[k], ...(val as object) } : val;
     }
     next.modeByDivision = current.modeByDivision;
     next.countFromDateByDivision = current.countFromDateByDivision;
     const settled = reflectionSettingsOrDefault(next);
     const refused = Object.keys(a).filter((k) => (a as any)[k] !== undefined
-      && JSON.stringify((settled as any)[k]) !== JSON.stringify(k === "closeMinuteByKind" || k === "capacity" ? next[k] : (a as any)[k]));
+      && JSON.stringify((settled as any)[k]) !== JSON.stringify(NESTED.includes(k) ? next[k] : (a as any)[k]));
     await writeState(ctx, SETTINGS_KEY, settled);
     await audit(ctx, { byEmail: "command line", action: "save-settings", reason: `Changed: ${Object.keys(a).join(", ")}` });
     return { ok: true, settings: settled, refused };
