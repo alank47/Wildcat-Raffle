@@ -466,6 +466,27 @@ console.log("\nThe production comparison (CLI) returns counts and booleans only"
   const d2 = makeDb(seedWith(blank, { students: [{ legacyId: "L1", studentNumber: NUMS.hisp[100] }] }));
   const c2 = await M.agg.compareByRace.handler({ db: d2.db }, {});
   check("a referral with no number is counted, and shows the lists would differ", c2.withoutNumber === 1 && c2.resolvedByLookup === 1 && c2.listsIdentical === false);
+
+  // ITS PBIS FIGURES ARE THE ONES byRace SERVES PBIS (review, 2026-10-07).
+  // 39 students referred by staff, and a 40th referred by PBIS: PBIS's own
+  // filing is left out, so PBIS's picture stops at 30, not 40. Nothing tested
+  // that the comparison leaves it out too, or the count of rows it left out.
+  const pbisFiled = referral(NUMS.hisp[150]);
+  pbisFiled.insertedByRole = "pbis";
+  const seed3 = seedWith([...BASE.slice(0, 39), pbisFiled], { students: [] });
+  const c3 = await M.agg.compareByRace.handler({ db: makeDb(seed3).db }, {});
+  const { res: served } = await call(PBIS, {}, seed3);
+  check("a referral PBIS filed is reported as such", c3.pbisRowsFiledByPbis === 1, J(c3));
+  check("...and the snapshot it reports is the one byRace serves PBIS (30 students, not 40)",
+    c3.pbisSnapshotStudents === served.snapshotStudents && served.snapshotStudents === 30, `${c3.pbisSnapshotStudents} vs ${served.snapshotStudents}`);
+  check("...its rows split into in and after the snapshot, PBIS's own left out of both",
+    c3.pbisRowsInSnapshot === 30 && c3.pbisRowsAfterSnapshot === 9);
+  check("...and its shown and withheld cells are PBIS's",
+    c3.pbisCellsShown === served.rows.filter((r) => !r.countSuppressed).length && c3.pbisCellsWithheld === served.groupsWithheld);
+  const allRows = load({ disciplineAggregates: (src) => src.replace("const countable = pbisCountable(referrals);", "const countable = referrals;") });
+  const t3 = await allRows.agg.compareByRace.handler({ db: makeDb(seed3).db }, {});
+  check("TEETH: a comparison that counts PBIS's own filings reports a snapshot PBIS never sees",
+    t3.pbisSnapshotStudents === 40 && t3.pbisRowsFiledByPbis === 0);
 }
 
 console.log("\nThe source");
