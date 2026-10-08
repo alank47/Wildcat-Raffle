@@ -187,6 +187,20 @@ export function numbersSince(referrals: Array<{ payload: unknown }>, sinceIso?: 
  * its make-up would leak through WHEN it moves instead. Closing it means
  * coarser figures (rounded counts or bands, or term reports) or keyed noise,
  * each of which changes what PBIS sees; that choice belongs to the owner.
+ *
+ * NOR A WITHDRAWAL (review, 2026-10-07; also the owner's to decide). Only the
+ * referrals are frozen. Race comes from psRestricted, which every sync
+ * replaces with the students enrolled that day, so when a referred child
+ * leaves, their referrals stop matching a race record: one cell drops by one
+ * and `unmatched` rises by one, and PBIS, who can see who left, learns that
+ * child's group. The enrolment figures move the same way for any child who
+ * joins or leaves. Today every PBIS cell is withheld (the snapshot holds ten
+ * students), so it shows nothing yet; it starts to once a cell is shown.
+ * Closing it means keeping a withdrawn child's race (a retained copy of the
+ * race fields, or the categories stamped on the referral row when it is
+ * stored) and freezing or dropping the enrolment figures for PBIS -- a
+ * decision to hold a protected field after the SIS has let it go, which the
+ * full-replace sync was built not to do (sisStats.ts replaceRestricted).
  */
 export function pbisSnapshot<T extends { payload: unknown; _creationTime: number }>(referrals: T[]) {
   const ordered = referrals.slice().sort((a, b) => a._creationTime - b._creationTime);
