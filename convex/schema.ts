@@ -1796,6 +1796,9 @@ export default defineSchema({
     clearedAt: v.optional(v.string()),
     classTeacher: v.optional(v.string()),
     unitId: v.optional(v.id("reflectionUnits")),
+    // A second PowerSchool row for the same key, seen after the tardy was
+    // already on a list: it stays on that detention, and this notes when.
+    collisionSeenAt: v.optional(v.string()),
     resolvedBy: v.optional(v.string()),
     resolvedAt: v.optional(v.string()),
     resolution: v.optional(v.string()),
@@ -1863,6 +1866,9 @@ export default defineSchema({
     reviewReason: v.optional(v.string()),
     releasedAt: v.optional(v.string()),
     releaseReason: v.optional(v.string()),
+    // The state it was released from: a tardy that counts again after the
+    // room ran puts the detention back as it was (reflection.rejoinDetention).
+    releasedFromState: v.optional(v.string()),
     expiredAt: v.optional(v.string()),
     expireReason: v.optional(v.string()),
     resolvedBy: v.optional(v.string()),

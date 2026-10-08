@@ -201,6 +201,56 @@ try {
   check("...and the list's settings are never reachable from a browser at all (internal, command line only)",
     /export const saveSettings = internalMutation\(/.test(read("./convex/reflection.ts")) && /export const setMode = internalMutation\(/.test(read("./convex/reflection.ts")));
 
+  // ADMIN REVIEW NEVER REACHES A GRANT HOLDER, on screen or on paper (review,
+  // 2026-10-08): a detention sent to review after its list was made, then
+  // dismissed with a reason only the roles should read.
+  const reviewed = await store.db.insert("reflectionUnits", { studentNumber: "12003", division: "hs", kind: "new", tardyIds: [], uniformIds: [],
+    lines: ["Tue 10/13: Tardy P3"], recordedAt: la(TODAY, "11:45"), state: "review", serveDay: TODAY, mode: "shadow", carryCount: 0, tags: [],
+    reviewReason: "Attendance unknown at Power-Up" });
+  const rowOf = (res, sn) => res.sections.flatMap((x) => x.rows).find((r) => r.studentNumber === sn);
+  const aideWaiting = await tryRun("aide", "reflectionList.listForDay", { day: TODAY });
+  const adminWaiting = await tryRun("admin", "reflectionList.listForDay", { day: TODAY });
+  check("a detention waiting in admin review: the roles see why, a grant holder sees only that an administrator will decide",
+    rowOf(aideWaiting, "12003")?.after === "Waiting for an administrator's decision" && !/Attendance unknown/.test(J(aideWaiting))
+      && rowOf(adminWaiting, "12003")?.after === "In admin review: Attendance unknown at Power-Up", J([rowOf(aideWaiting, "12003"), rowOf(adminWaiting, "12003")]));
+  const SECRET = "SENSITIVE-ADMIN-REASON family matter per counselor";
+  const dismissed = await tryRun("admin", "reflectionRoom.resolveReview", { kind: "detention", id: reviewed, action: "dismiss", reason: SECRET });
+  const aideAfter = await tryRun("aide", "reflectionList.listForDay", { day: TODAY });
+  const hsCount = aideAfter.sections.find((x) => x.division === "hs").count;
+  check("a grant holder's list never carries the reason an admin typed, or why it was in review",
+    dismissed.ok && !/SENSITIVE-ADMIN-REASON|family matter|Attendance unknown/.test(J(aideAfter)), J(rowOf(aideAfter, "12003")));
+  const tickDismissed = await tryRun("aide", "reflectionRoom.markRoom", { unitId: reviewed, notHere: true });
+  check("...and a dismissed detention is off the list like a released one: not counted, no Not here box",
+    rowOf(aideAfter, "12003")?.state === "released" && rowOf(aideAfter, "12003").released.reason === "Dismissed in admin review"
+      && hsCount === 1 && tickDismissed.ok === false, J({ row: rowOf(aideAfter, "12003"), hsCount, tickDismissed }));
+  const adminAfter = await tryRun("admin", "reflectionList.listForDay", { day: TODAY });
+  check("...while the roles still read the decision and its reason", rowOf(adminAfter, "12003")?.after === `Review closed (dismissed): ${SECRET}`,
+    rowOf(adminAfter, "12003")?.after);
+
+  // A VOID'S REASON STAYS WITH THE UNIFORM LOG: the aide's print, then an
+  // admin voids the entry with a private reason.
+  const uv = await store.db.insert("uniformViolations", { studentNumber: "12004", studentName: "-", studentGrade: "9", day: TODAY, at: la(TODAY, "07:52"),
+    loanerProvided: false, loanerOutstanding: false, loggedByEmail: "admin@school.test", loggedByName: "-", loggedByRole: "admin", attemptId: "uv-1",
+    voidedAt: null, voidReason: null });
+  const uvUnit = await store.db.insert("reflectionUnits", { studentNumber: "12004", division: "hs", kind: "new", tardyIds: [], uniformIds: [uv],
+    lines: ["Tue 10/13: Uniform 7:52 AM"], recordedAt: la(TODAY, "11:45"), state: "listed", serveDay: TODAY, mode: "shadow", carryCount: 0, tags: [] });
+  await store.db.patch(uv, { unitId: uvUnit, reflectionState: "listed" });
+  clock.set(la(TODAY, "12:41"));
+  const beforeVoid = await tryRun("aide", "reflectionList.listForDay", { day: TODAY });
+  const live = beforeVoid.sections.flatMap((x) => x.rows).filter((r) => r.state !== "released");
+  await tryRun("aide", "reflectionList.recordPrint", { day: TODAY, kind: "master", unitIds: live.map((r) => r.unitId).filter(Boolean),
+    studentNumbers: live.map((r) => r.studentNumber), listVersion: String(beforeVoid.listVersion) });
+  clock.set(la(TODAY, "12:42"));
+  const voided = await tryRun("admin", "uniformViolations.voidEntry", { id: uv, reason: "SENSITIVE-VOID-REASON medical exemption on file" });
+  clock.set(la(TODAY, "12:43"));
+  const aideVoid = await tryRun("aide", "reflectionList.listForDay", { day: TODAY });
+  const rel = (aideVoid.myPrintChanges?.release ?? []).find((x) => x.studentNumber === "12004");
+  check("a uniform entry voided after the list was made: the release a grant holder sees and prints says only what happened",
+    voided.ok && rel?.reason === "uniform entry removed after the list was made" && rowOf(aideVoid, "12004")?.released?.reason === rel?.reason
+      && !/SENSITIVE-VOID-REASON|medical exemption/.test(J(aideVoid))
+      && store.rows("uniformViolations").find((x) => x._id === uv).voidReason === "SENSITIVE-VOID-REASON medical exemption on file",
+    J({ rel, row: rowOf(aideVoid, "12004") }));
+
   // The aide is made a teacher: the grant goes with the old role.
   const moved = await tryRun("admin", "staffInvites.setStaffRole", { email: "aide@school.test", role: "teacher" });
   const after = store.rows("teachers").find((t) => t.email === "aide@school.test");

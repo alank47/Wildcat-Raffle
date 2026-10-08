@@ -643,9 +643,12 @@ try {
       /already been made\. Give a reason/.test(noReason) && !w.store.rows("uniformViolations").find((x) => x._id === b.row.id).voidedAt, noReason);
     const withReason = await w.rt.run("uniformViolations.voidEntry", { id: b.row.id, reason: "Had a PE uniform pass" });
     const u = w.store.rows("reflectionUnits")[0];
+    // The reason typed stays on the uniform row, which only the uniform roles
+    // read; the release says only what happened, because every viewer of the
+    // list sees it and it prints (review, 2026-10-08).
     check("...with one it is removed, and its detention, now empty, is released ('release this student')",
       withReason.ok && withReason.row.voidReason === "Had a PE uniform pass" && u.state === "released"
-        && /uniform entry removed \(Had a PE uniform pass\)/.test(u.releaseReason || ""), JSON.stringify({ s: u.state, r: u.releaseReason }));
+        && u.releaseReason === "uniform entry removed after the list was made", JSON.stringify({ s: u.state, r: u.releaseReason }));
   }
 } finally {
   clock.real();

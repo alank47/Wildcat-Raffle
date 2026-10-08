@@ -406,6 +406,18 @@ console.log("\n3.6 THE CLOSING READ, THE FALLBACK, THE LATEST TIME\n");
     day: { date: MON, rowCounts: { 1: 150 }, lastGoodReadAt: at(MON, "11:35") },
     lease: { runId: "r1", kind: "closing", startedAt: at(MON, "11:57"), expiresAt: at(MON, "12:01") } });
   check("...at most 8 times", held9.do === "none");
+  // "Read PowerSchool now" pressed at 11:28 on a Wednesday is an after-close
+  // read: it can never make the list. The fallback must not wait on it
+  // through its whole 2-minute window (review, 2026-10-08).
+  const manual = R.decideTick({ nowIso: at(WED, "11:30"), tz: TZ, settings: ON,
+    day: { date: WED, rowCounts: { 1: 150 }, lastGoodReadAt: at(WED, "11:15") },
+    lease: { runId: "m1", kind: "after-close", startedAt: at(WED, "11:28"), expiresAt: at(WED, "11:32") } });
+  check("the fallback does not wait for a manual after-close read: a Wednesday still gets its list at 11:30",
+    manual.do === "fallback-freeze", J(manual));
+  const lateLease = R.decideTick({ nowIso: at(MON, "12:05"), tz: TZ, settings: ON,
+    day: { date: MON, rowCounts: { 1: 150 }, lastGoodReadAt: at(MON, "11:35") },
+    lease: { runId: "l1", kind: "late-closing", startedAt: at(MON, "12:03"), expiresAt: at(MON, "12:07") } });
+  check("...but it does wait for a late closing read, which may make the list itself", lateLease.do === "retry", J(lateLease));
 
   const lateMade = runDay({ date: MON, readWorks: (m) => m >= 725, counts: () => ({ 1: 150, 2: 80 }) });
   check("regular day with no evidence until a read succeeds at 12:05 is made late",
@@ -474,6 +486,24 @@ const claim = (dayKey, { tardies = [], uniforms = [], units = [], days = {}, set
   check("a division that is switched off has no list", off.rows.length === 0);
   const unplaced = claim(MON, { tardies: [tardy({ id: "q" })], divisionOf: {} });
   check("a student with no division is reported, never guessed", unplaced.rows.length === 0 && J(unplaced.unplaced) === J([S]));
+
+  // MS live from Tuesday 10/13 (it was the pilot before). Everything below is
+  // claimable by the old rules; only Tuesday's own tardy may be listed.
+  const LIVE = R.reflectionSettingsOrDefault({ modeByDivision: { ms: "live", hs: "off" }, countFromDateByDivision: { ms: TUE, hs: null } });
+  const pilotCarry = { id: "PC", studentNumber: "10002", division: "ms", kind: "carry", state: "pending", recordedAt: at(TUE, "07:30"),
+    carryCount: 1, mode: "shadow", carriedFromDay: MON, tags: [], lines: [] };
+  const oldCarry = { id: "OC", studentNumber: "10003", division: "ms", kind: "carry", state: "pending", recordedAt: at(TUE, "07:30"),
+    carryCount: 1, mode: "live", carriedFromDay: MON, tags: [], lines: [] };
+  const atSwitch = claim(TUE, {
+    settings: LIVE, divisionOf: { [S]: "ms", 10004: "ms", 10005: "ms" },
+    tardies: [tardy({ id: "friArrivalNowCounted", attDate: MON, slot: 3 }), tardy({ id: "today", studentNumber: "10005", attDate: TUE, slot: 2 })],
+    uniforms: [uni({ id: "queuedFri", studentNumber: "10004", day: MON })],
+    units: [pilotCarry, oldCarry],
+  });
+  check("at the moment of claiming: a tardy or uniform entry dated before countFromDate, a pilot carry, and a carry from before the start are parked, never listed",
+    J(atSwitch.rows.map((r) => r.studentNumber)) === J(["10005"]) && J(atSwitch.parked.tardyIds) === J(["friArrivalNowCounted"])
+      && J(atSwitch.parked.uniformIds) === J(["queuedFri"]) && J(atSwitch.parked.unitIds.sort()) === J(["OC", "PC"]),
+    J({ rows: atSwitch.rows.map((r) => r.studentNumber), parked: atSwitch.parked }));
 
   const carry = { id: "C1", studentNumber: S, division: "ms", kind: "carry", state: "pending", recordedAt: at("2026-10-09", "15:45"), carryCount: 1,
     tags: ["Carried over from Fri 10/9 (absent)"], lines: ["Thu 10/8: Tardy P1 (Lee)"] };
@@ -765,6 +795,29 @@ console.log("\n3.10 KEYS AND CORRECTIONS\n");
   check("cleared, before-start and review items are never reclassified",
     ["cleared", "before-start", "review"].every((st) => R.reclassify({ ...item, state: st }, counted, { confirmedFull: true }).changed === false));
   check("every violation cleared releases the detention", R.unitReleased([{ cleared: true }, { cleared: true }]) && !R.unitReleased([{ cleared: true }, { cleared: false }]));
+}
+
+// ===========================================================================
+console.log("\nTHE LAST-READ BANNER, AND A TARDY BACK AFTER ITS RELEASE\n");
+{
+  const banner = (hhmm, last, err) => R.lastReadBanner({ nowIso: at(TUE, hhmm), tz: TZ, date: TUE, closeMinute: 705,
+    lastGoodReadAt: last ? at(TUE, last) : null, lastReadErrorAt: err ? at(TUE, err) : null });
+  check("between scheduled reads it is information, with the next read: 12:35 after the 11:45 closing read",
+    J(banner("12:35", "11:45")) === J({ level: "info", text: "Last good PowerSchool read 11:45. Next read 1:00." }), J(banner("12:35", "11:45")));
+  check("...and 10:50, an hour-long gap that is the schedule's own, is not red", banner("10:50", "10:30").level === "info");
+  check("a scheduled read more than 15 minutes overdue is red: the 1:00 read never ran by 1:20",
+    J(banner("13:20", "11:45")) === J({ level: "alert", text: "Last good PowerSchool read 11:45: the 1:00 read is overdue." }), J(banner("13:20", "11:45")));
+  check("a read that failed after the last good one is red at once",
+    J(banner("13:02", "11:45", "13:01")) === J({ level: "alert", text: "Last good PowerSchool read 11:45: the latest read failed." }));
+  check("no read yet at 07:40 is not an alarm; still none at 07:50 is",
+    banner("07:40").level === "info" && J(banner("07:50")) === J({ level: "alert", text: "No PowerSchool read has worked yet today." }));
+  check("outside school hours there is no banner", banner("06:30") === null && banner("16:30") === null);
+
+  const pull = R.pullInstant(TUE, "regular", "ms", ON, TZ);
+  check("a tardy back after its detention was released AFTER the pull rejoins it; released before the pull, it does not",
+    pull === at(TUE, "12:31") && R.pullInstant(TUE, "regular", "hs", ON, TZ) === at(TUE, "12:57")
+      && R.rejoinsReleasedDetention({ releasedAt: at(TUE, "13:00"), pullAt: pull })
+      && !R.rejoinsReleasedDetention({ releasedAt: at(TUE, "12:10"), pullAt: pull }));
 }
 
 // ===========================================================================

@@ -27,13 +27,25 @@
 //      student with every violation dated, prints recorded with ids and
 //      numbers only, and each viewer's changes since their OWN print.
 //  10. "No list today" and a red last-read banner, on screen.
+//  11-14. The room's own attendance, Room did not run, the review queue's
+//      decisions and the admin buttons, and "This is a school day".
+//  15. The pilot going live over a weekend: a pilot carry decided after the
+//      switch, a Friday arrival re-judged on Monday and a queued Friday
+//      uniform entry all stay off the first live list (review, 2026-10-08).
+//  16. One tardy, one list: a mark typed back after the room ran rejoins its
+//      detention; one deleted before the pull is still owed; a second mark
+//      for a listed tardy never sends it to a second list.
+//  17. A Power-Up absence taken back just before the close: the closing read
+//      decides yesterday's carry before it makes today's list.
+//  18. The last-read banner, judged against the reader's own schedule.
 //
 // TEETH: scripts/reflection-teeth.mjs breaks the direct id confirmation, the
 // natural key, the lease expiry, the "unconfirmed changes nothing" rule,
 // countFromDate, the fallback's fence and the school-day lookback -- and, for
 // the list screen, the access check, per-print changes, the slips refusal,
-// "tomorrow so far", the role-only banners and the appAuditLog rule -- one at
-// a time, and requires the check named for each to FAIL.
+// "tomorrow so far", the role-only banners and the appAuditLog rule, and each
+// guard the 2026-10-08 review added (worlds 15-18) -- one at a time, and
+// requires the check named for each to FAIL.
 import { readdirSync, readFileSync } from "node:fs";
 import { clock, loadConvex, makeDb, runtime } from "./fake-convex.mjs";
 import { fakePowerSchool, REFLECTION_CODES } from "./fake-powerschool.mjs";
@@ -51,7 +63,7 @@ const J = (x) => JSON.stringify(x);
 const realLog = console.log;
 console.log = (...a) => { if (!(typeof a[0] === "string" && a[0].startsWith("[reflection]"))) realLog(...a); };
 
-const loaded = await loadConvex(new URL("./", import.meta.url), ["reflection", "reflectionRead", "reflectionRules", "reflectionList", "reflectionRoom"], {
+const loaded = await loadConvex(new URL("./", import.meta.url), ["reflection", "reflectionRead", "reflectionRules", "reflectionList", "reflectionRoom", "uniformViolations"], {
   transform: (name, src) => (name === "attendanceDays" ? src.replace("const RETRY_PAUSE_MS = 1000;", "const RETRY_PAUSE_MS = 1;") : src),
 });
 const { mods } = loaded;
@@ -321,9 +333,13 @@ try {
 
     await drive(w, la(TUE, "15:05"), la(TUE, "15:45"), [[la(TUE, "15:20"), () => { zAgain = w.mark(TUE, "Z", 3, "T"); }]]);
     check("the after-school read ran with the lookback and the sweep", w.day(TUE).readsDone.includes("after-school"));
-    check("a tardy deleted (confirmed) and entered again later is judged afresh, never lost: off its released detention, for the next list",
-      w.tardies("Z").length === 1 && w.tardies("Z")[0].state === "countable" && !w.tardies("Z")[0].unitId
-      && J(w.tardies("Z")[0].psRowIds) === J([String(zAgain)]), J(w.tardies("Z")));
+    // Z was released at 15:00, after the room ran at 12:31 with Z on its
+    // list: the same PowerSchool mark back again is that detention, never a
+    // second one (spec 3.10, "updated, not doubled"; review, 2026-10-08).
+    check("a tardy deleted (confirmed) after the room ran and entered again is back on its own detention, never served twice",
+      w.tardies("Z").length === 1 && w.tardies("Z")[0].state === "countable" && w.tardies("Z")[0].unitId === w.units("Z")[0]._id
+      && J(w.tardies("Z")[0].psRowIds) === J([String(zAgain)]) && w.units("Z").length === 1 && w.units("Z")[0].state === "listed"
+      && !w.units("Z")[0].releasedAt && !w.units("Z")[0].releaseReason, J({ t: w.tardies("Z"), u: w.units("Z") }));
     check("...it cleared Y's deleted Monday mark (a direct id read behind it) and released Y",
       w.tardies("Y")[0].state === "cleared" && w.units("Y")[0].state === "released", J(w.tardies("Y")));
     check("...a section that never took attendance is taken as present at 15:45: H2's hold is released, for the next list",
@@ -356,15 +372,15 @@ try {
     const wed = w.day(WED);
     check("Wednesday closes at 11:20 and the closing read makes the list",
       wed.frozenAt && wed.freezeKind === "closing" && wed.closingReadStartedAt === la(WED, "11:20") && wed.kind === "wed", J(wed));
-    check("Wednesday's list: Tuesday's P6, the late entry, the hold released after school, A's carry, N, and Z entered again",
-      J(w.listed(WED)) === J(["A", "H2", "L", "N", "S6", "Z"]), J(w.listed(WED)));
+    check("Wednesday's list: Tuesday's P6, the late entry, the hold released after school, A's carry, and N",
+      J(w.listed(WED)) === J(["A", "H2", "L", "N", "S6"]), J(w.listed(WED)));
     const tag = (sn) => w.units(sn).find((u) => u.serveDay === WED).tags;
     check("...each tagged with why it is on this list",
       tag("S6").includes("From Tue 10/13 P6 (after Power-Up)") && tag("L").includes("Entered late in PowerSchool (Tue 10/13 P2)")
       && tag("H2").includes("Held for attendance (Tue 10/13 P2)") && tag("A").includes("Carried over from Tue 10/13 (absent)"),
       J({ S6: tag("S6"), L: tag("L"), H2: tag("H2"), A: tag("A") }));
-    check("...and nobody is listed twice: not R (re-entered), not M (moved), not K (carry cancelled)",
-      !["R", "M", "K", "C", "Y", "Q"].some((s) => w.listed(WED).includes(s)));
+    check("...and nobody is listed twice: not R (re-entered), not M (moved), not K (carry cancelled), not Z (entered again after serving)",
+      !["R", "M", "K", "C", "Y", "Q", "Z"].some((s) => w.listed(WED).includes(s)));
     check("S7's Wednesday P6 waits for the next list", w.tardies("S7")[0].state === "countable" && !w.tardies("S7")[0].unitId);
 
     await drive(w, la(WED, "11:25"), la(WED, "15:45"));
@@ -380,7 +396,7 @@ try {
     check("switching on never reaches back: a countFromDate before today is refused", past.ok === false && /before today/.test(past.reason));
     const st = await w.rt.run("reflection.status", { date: WED });
     check("status says what happened, with no student named",
-      st.frozenAt === wed.frozenAt && st.onTheList === 6 && !/"(A|K|N|S6|H2|L|Z)"/.test(J(st)), J(st));
+      st.frozenAt === wed.frozenAt && st.onTheList === 5 && !/"(A|K|N|S6|H2|L|Z)"/.test(J(st)), J(st));
   }
 
   // ==========================================================================
@@ -578,9 +594,14 @@ try {
     const hs = await w.rt.run("reflection.setMode", { division: "hs", mode: "shadow", countFromDate: "2026-10-15" });
     w.mark(WED, "N", 2, "T");
     w.mark(WED, "X2", 2, "T");
-    await drive(w, la(WED, "07:30"), la(WED, "11:20"));
+    await drive(w, la(WED, "07:30"), la(WED, "07:30"));
+    // Stored before-start the moment it is first seen -- not merely kept off
+    // the list later by the freeze's own check (reflectionRules.beforeStartAtClaim).
+    const storedAs = w.tardies("X2")[0]?.state;
+    await drive(w, la(WED, "07:35"), la(WED, "11:20"));
     check("before-start on switching on: an HS tardy dated before HS's countFromDate is stored, never listed",
-      hs.ok && w.tardies("X2")[0]?.state === "before-start" && J(w.listed(WED)) === J(["N"]), J({ x2: w.tardies("X2"), l: w.listed(WED) }));
+      hs.ok && storedAs === "before-start" && w.tardies("X2")[0]?.state === "before-start" && J(w.listed(WED)) === J(["N"]),
+      J({ storedAs, x2: w.tardies("X2"), l: w.listed(WED) }));
     check("...while HS is on, so the list's division modes are recorded on the day",
       J(w.day(WED).modeByDivision) === J({ ms: "shadow", hs: "shadow" }), J(w.day(WED).modeByDivision));
   }
@@ -766,6 +787,8 @@ try {
       vAdmin.printsToday?.length === 3 && J(vAdmin.printsToday.map((p) => [p.by, p.kind, p.final, p.changes.release])) === J([
         ["pbis@school.test", "master", false, 2], ["admin@school.test", "master", true, 2], ["granted@school.test", "slips", true, 1]])
       && vAide.printsToday === null && vAide.roles === false, J(vAdmin.printsToday));
+    check("...each print says whether it predates the list and is out of date, as its holder is told",
+      J(vAdmin.printsToday.map((p) => [p.beforeFreeze, p.outOfDate])) === J([[true, true], [false, true], [false, true]]), J(vAdmin.printsToday));
 
     const prints = w.store.rows("reflectionPrints");
     const FIELDS = ["_creationTime", "_id", "at", "day", "final", "kind", "listVersion", "mode", "printedByEmail", "studentNumbers", "unitIds"];
@@ -1086,6 +1109,175 @@ try {
     await drive(w, la(TUE, "10:05"), la(TUE, "12:00"));
     check("...so the list is made at the ready time without PowerSchool (the fallback), instead of no list",
       w.day(TUE).freezeKind === "fallback" && w.day(TUE).frozenAt === la(TUE, "12:00") && !w.day(TUE).noList, J({ k: w.day(TUE).freezeKind, n: w.day(TUE).noList }));
+  }
+
+  // ==========================================================================
+  console.log("\n15. FROM THE PILOT TO LIVE OVER A WEEKEND: NOTHING FROM BEFORE REACHES THE FIRST LIVE LIST\n");
+  // ==========================================================================
+  // setMode parks what is waiting at the moment of the switch. Three things
+  // become claimable only AFTER it, and each must still never be listed
+  // (review, 2026-10-08): a Friday pilot detention whose carry is decided on
+  // Monday, a Friday arrival Monday's re-read turns into a counted tardy,
+  // and a Friday uniform entry that reaches the server on Monday.
+  {
+    const FRI = "2026-11-06", MON = "2026-11-09";
+    const ms = { grade: 7, sections: MS };
+    const w = await world({
+      students: { A: ms, B: ms, E: ms },
+      days: [{ date: FRI, slots: TUE_SLOTS }, { date: MON, slots: MON_SLOTS }],
+      settings: { modeByDivision: { ms: "shadow", hs: "off" }, countFromDateByDivision: { ms: "2026-10-21", hs: null } },
+    });
+    await w.store.db.insert("teachers", { name: "Pat PBIS", ticketsAwarded: 0, email: "pbis@school.test", role: "pbis" });
+    await w.store.db.insert("students", { studentNumber: "U1", firstName: "Una", lastName: "Test", grade: "7" });
+    w.mark(FRI, "A", 3, "T");                                   // late to P2, at school all day: served on Friday's pilot list
+    const bPt = w.mark(FRI, "B", 1, "A"), bP2 = w.mark(FRI, "B", 3, "A");
+    w.mark(FRI, "B", 5, "T");                                   // absent at Promise Time and P2, late to P4: an arrival
+    await drive(w, la(FRI, "07:30"), la(FRI, "15:45"));
+    check("Friday's pilot list holds A (B arrived late to school), and A served it",
+      J(w.listed(FRI)) === J(["A"]) && w.units("A")[0].mode === "shadow" && w.units("A")[0].state === "listed"
+        && w.tardies("B")[0].state === "arrival", J({ l: w.listed(FRI), a: w.units("A"), b: w.tardies("B") }));
+    clock.set(la(FRI, "17:00"));
+    const live = await w.rt.run("reflection.setMode", { division: "ms", mode: "live", countFromDate: MON });
+    check("MS goes live from Monday; nothing is waiting at the switch", live.ok && live.parked === 0, J(live));
+
+    // Monday 07:00: A's Friday Power-Up and P6 absences are entered late, and
+    // B's Friday absences are taken back.
+    clock.set(la(MON, "07:00"));
+    w.mark(FRI, "A", 9, "A"); w.mark(FRI, "A", 7, "A");
+    w.unmark(bPt); w.unmark(bP2);
+    w.mark(MON, "E", 2, "T");                                   // a Monday tardy: the live list's own
+    await drive(w, la(MON, "07:30"), la(MON, "07:30"));
+    const aCarry = w.units("A").find((u) => u.kind === "carry");
+    check("a Friday pilot detention whose carry is decided on Monday, once MS is live, carries as before-start, never pending",
+      w.units("A")[0].state === "carried" && aCarry?.state === "before-start" && aCarry.mode === "shadow", J(w.units("A")));
+    check("a Friday arrival that Monday's re-read of Friday counts is before-start, never countable",
+      w.tardies("B")[0].state === "before-start" && !w.tardies("B")[0].unitId, J(w.tardies("B")));
+    clock.set(la(MON, "07:45"));
+    w.rt.signIn({ issuer: STAFF_ISSUER, email: "pbis@school.test" });
+    const queued = await w.rt.run("uniformViolations.log", { studentNumber: "U1", loanerProvided: false, attemptId: "q-fri", observedAt: Date.parse(la(FRI, "13:00")) });
+    const uRow = w.store.rows("uniformViolations").find((x) => x.studentNumber === "U1");
+    check("a queued Friday uniform entry that reaches the server on Monday, once MS counts from Monday, is stored before-start",
+      queued.ok && uRow?.day === FRI && uRow.reflectionState === "before-start", J(uRow));
+    await drive(w, la(MON, "07:35"), la(MON, "11:45"));
+    check("Monday's first live list holds Monday's own tardy and nothing from the pilot: not A's carry, not B, not the Friday uniform entry",
+      w.day(MON).freezeKind === "closing" && J(w.listed(MON)) === J(["E"]) && w.units("E")[0].mode === "live", J(w.listed(MON)));
+  }
+
+  // ==========================================================================
+  console.log("\n16. A MARK DELETED AND TYPED BACK, A SECOND MARK FOR THE SAME PERIOD: ONE TARDY, ONE LIST\n");
+  // ==========================================================================
+  {
+    const TUE = "2026-10-13", WED = "2026-10-14";
+    const ms = { grade: 7, sections: MS };
+    const w = await world({
+      students: { Z2: ms, A2: ms, A3: ms },
+      days: [{ date: TUE, slots: TUE_SLOTS }, { date: WED, slots: WED_SLOTS }],
+      settings: { modeByDivision: { ms: "live", hs: "off" }, countFromDateByDivision: { ms: "2026-10-12", hs: null } },
+    });
+    const staff = { admin: { email: "admin@school.test", role: "admin" }, pbis: { email: "pbis@school.test", role: "pbis" } };
+    for (const t of Object.values(staff)) await w.store.db.insert("teachers", { name: "Staff", ticketsAwarded: 0, ...t });
+    const as = (who) => { w.rt.signIn({ issuer: STAFF_ISSUER, email: staff[who].email }); return w.rt; };
+    const z2Row = w.mark(TUE, "Z2", 3, "T");
+    w.mark(TUE, "A2", 3, "T");
+    await drive(w, la(TUE, "07:30"), la(TUE, "11:45"));
+    check("Tuesday's list holds Z2 and A2", J(w.listed(TUE)) === J(["A2", "Z2"]), J(w.listed(TUE)));
+
+    // 12:05 Z2's mark is deleted; an admin reads PowerSchool at 12:10, before
+    // the 12:31 pull, so Z2 is released before the room runs.
+    clock.set(la(TUE, "12:05"));
+    w.unmark(z2Row);
+    clock.set(la(TUE, "12:10"));
+    const now = await as("admin").run("reflectionRoom.readNow", {});
+    await runJobs(w, Date.parse(la(TUE, "12:11")));
+    check("released before the pull: Z2's detention is released at 12:10",
+      now.ok && w.units("Z2")[0].state === "released" && w.units("Z2")[0].releasedAt === la(TUE, "12:10"), J({ now, u: w.units("Z2") }));
+    // 12:58 a second T row for A2's same period, after the room ran.
+    await drive(w, la(TUE, "12:15"), la(TUE, "15:45"), [
+      [la(TUE, "12:58"), () => w.mark(TUE, "A2", 3, "T")],
+      [la(TUE, "13:58"), () => w.mark(TUE, "Z2", 3, "T")],
+    ]);
+    const tA2 = w.tardies("A2");
+    check("a second PowerSchool mark for a tardy already on a list leaves it on its detention: not sent to review, never on a second list",
+      tA2.length === 1 && tA2[0].state === "countable" && tA2[0].unitId === w.units("A2")[0]._id && tA2[0].psRowIds.length === 2
+        && !!tA2[0].collisionSeenAt && w.units("A2")[0].state === "listed", J({ tA2, u: w.units("A2") }));
+    check("a mark deleted BEFORE the room ran and typed back is still owed: off its released detention, for the next list",
+      w.tardies("Z2")[0].state === "countable" && !w.tardies("Z2")[0].unitId && w.units("Z2")[0].state === "released", J(w.tardies("Z2")));
+    await drive(w, la(WED, "07:30"), la(WED, "11:20"));
+    check("...so Wednesday's list holds Z2, and not A2",
+      J(w.listed(WED)) === J(["Z2"]) && w.units("Z2").filter((u) => u.serveDay === WED).length === 1, J(w.listed(WED)));
+
+    // An item already in review that sits on a standing detention: "Add to
+    // next list" keeps it there, never on a second list.
+    const u3 = await w.store.db.insert("reflectionUnits", { studentNumber: "A3", division: "ms", kind: "new", tardyIds: [], uniformIds: [],
+      lines: ["Tue 10/13: Tardy P2 (Ms Ng)"], recordedAt: la(TUE, "11:45"), state: "listed", serveDay: TUE, mode: "live", carryCount: 0, tags: [] });
+    const t3 = await w.store.db.insert("reflectionTardies", { studentNumber: "A3", attDate: TUE, periodId: 853, slot: 3, psRowIds: ["1", "2"], code: "T",
+      division: "ms", state: "review", reason: "PowerSchool has 2 marks for this period", firstSeenAt: la(TUE, "11:45"), listsBeforeSeen: 0,
+      lastSeenAt: la(TUE, "13:00"), unitId: u3 });
+    clock.set(la(WED, "12:40"));
+    const add = await as("pbis").run("reflectionRoom.resolveReview", { kind: "tardy", id: t3, action: "add" });
+    const after3 = w.store.rows("reflectionTardies").find((t) => t._id === t3);
+    check("Add to next list on a tardy already on a standing detention keeps it there",
+      add.ok && after3.state === "countable" && after3.unitId === u3 && after3.resolution === "added", J(after3));
+  }
+
+  // ==========================================================================
+  console.log("\n17. A POWER-UP ABSENCE TAKEN BACK JUST BEFORE THE CLOSE\n");
+  // ==========================================================================
+  {
+    const TUE = "2026-10-13", WED = "2026-10-14";
+    const ms = { grade: 7, sections: MS };
+    const w = await world({
+      students: { K: ms, N: ms },
+      days: [{ date: TUE, slots: TUE_SLOTS }, { date: WED, slots: WED_SLOTS }],
+      settings: { modeByDivision: { ms: "shadow", hs: "off" }, countFromDateByDivision: { ms: "2026-10-12", hs: null } },
+    });
+    w.mark(TUE, "K", 3, "T");
+    const kPu = w.mark(TUE, "K", 9, "A");
+    w.mark(TUE, "K", 7, "A");
+    w.mark(WED, "N", 2, "T");
+    await drive(w, la(TUE, "07:30"), la(TUE, "15:45"));
+    check("K, absent at Power-Up and P6, carries from Tuesday (pending)",
+      w.units("K")[0].state === "carried" && w.units("K").find((u) => u.kind === "carry")?.state === "pending", J(w.units("K")));
+    // 11:15 Wednesday, after the last pre-close read: K's Power-Up absence is
+    // taken back. Only the 11:20 closing read sees it.
+    await drive(w, la(WED, "07:30"), la(WED, "11:20"), [[la(WED, "11:15"), () => w.unmark(kPu)]]);
+    const kCarry = w.units("K").find((u) => u.kind === "carry");
+    check("the closing read decides yesterday's carry BEFORE it makes the list: K's carry is withdrawn, and K is not listed",
+      w.day(WED).freezeKind === "closing" && J(w.listed(WED)) === J(["N"]) && kCarry?.state === "expired"
+        && w.units("K")[0].state === "listed" && !w.units("K")[0].carriedToUnitId, J({ l: w.listed(WED), k: w.units("K") }));
+  }
+
+  // ==========================================================================
+  console.log("\n18. THE LAST-READ BANNER ON A HEALTHY DAY, AND WHEN A READ FAILS\n");
+  // ==========================================================================
+  {
+    const TUE = "2026-10-13";
+    const w = await world({
+      students: { A: { grade: 7, sections: MS } },
+      days: [{ date: TUE, slots: TUE_SLOTS }],
+      settings: { modeByDivision: { ms: "live", hs: "off" }, countFromDateByDivision: { ms: "2026-10-12", hs: null } },
+    });
+    await w.store.db.insert("teachers", { name: "Staff", ticketsAwarded: 0, email: "pbis@school.test", role: "pbis" });
+    w.mark(TUE, "A", 3, "T");
+    const seen = [];
+    const look = (hhmm) => [la(TUE, hhmm), async () => {
+      w.rt.signIn({ issuer: STAFF_ISSUER, email: "pbis@school.test" });
+      const r = await w.rt.run("reflectionList.listForDay", { day: "today" });
+      seen.push([hhmm, r.banners.find((b) => b.id === "last-read")]);
+    }];
+    const healthy = ["08:00", "08:20", "09:00", "09:20", "10:00", "10:50", "12:10", "12:35", "13:40", "14:30"];
+    await drive(w, la(TUE, "07:30"), la(TUE, "15:10"), [
+      ...healthy.map(look),
+      [la(TUE, "14:55"), () => { w.ctl.down = true; }],          // the 15:00 read fails
+      look("15:07"),
+    ]);
+    const levels = seen.filter(([t]) => healthy.includes(t));
+    check("on a healthy day the last-read banner is never red between scheduled reads (08:00 to 14:30, all of lunch)",
+      levels.length === healthy.length && levels.every(([, b]) => b && b.level === "info"), J(levels));
+    check("...and it says when the next read is",
+      levels.find(([t]) => t === "12:35")?.[1]?.text === "Last good PowerSchool read 11:45. Next read 1:00.", J(levels.find(([t]) => t === "12:35")));
+    const failed = seen.find(([t]) => t === "15:07")?.[1];
+    check("a read that failed turns it red at once", failed && failed.level === "alert" && /the latest read failed/.test(failed.text), J(failed));
   }
 
   // ==========================================================================

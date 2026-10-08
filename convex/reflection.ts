@@ -6,12 +6,12 @@ import { v } from "convex/values";
 import {
   absentThisMorning, admitState, blankSections, buildCodeBook, carriedUnit, carryVerdict, claimAtFreeze,
   dayTimes, decideTick, decodeRows, divisionOfGrade, fallbackDayReview, freezeBanner, freezeVerdict, idSetHash,
-  initialTardyState, LEASE_MS, listsBeforeSeen, nextSchoolDayGuess, noListBanner, provesNoSchool, QUEUED_TAG,
-  reclassify, reconcileDate, reflectionSettingsOrDefault, removalVerdict, rosterAgeBanner, rosterSnapshotVerdict,
-  scheduleKindFor, schoolDayVerdict, studentMap, summarizeDay, tardyCandidates, tardyKey, termBanner,
-  unitReleased, wallClock,
+  initialTardyState, LEASE_MS, listsBeforeSeen, nextSchoolDayGuess, noListBanner, provesNoSchool, pullInstant, QUEUED_TAG,
+  reclassify, reconcileDate, reflectionSettingsOrDefault, rejoinsReleasedDetention, removalVerdict, rosterAgeBanner,
+  rosterSnapshotVerdict, SCHEDULE_KINDS, scheduleKindFor, schoolDayVerdict, studentMap, summarizeDay, tardyCandidates,
+  tardyKey, termBanner, unitReleased, wallClock,
   type CarryVerdict, type DayState, type DaySummary, type Division, type Marked, type ReflectionSettings,
-  type RosterMeta, type RosterSnap, type TardyItem, type UniformItem, type UnitItem,
+  type RosterMeta, type RosterSnap, type ScheduleKind, type TardyItem, type UniformItem, type UnitItem,
 } from "./reflectionRules";
 
 /**
@@ -279,6 +279,7 @@ export const uniformItemOf = (u: Doc<"uniformViolations">): UniformItem => ({
 export const unitItemOf = (u: Doc<"reflectionUnits">): UnitItem => ({
   id: u._id, studentNumber: u.studentNumber, division: u.division, kind: u.kind, state: u.state,
   serveDay: u.serveDay ?? null, recordedAt: u.recordedAt, carryCount: u.carryCount, tags: u.tags, lines: u.lines,
+  mode: u.mode, carriedFromDay: u.carriedFromDay ?? null,
 });
 
 export function puSnapshotOf(snap: RosterSnap | null): Doc<"reflectionUnits">["puSnapshot"] {
@@ -424,6 +425,14 @@ async function freezeDay(ctx: MutationCtx, f: {
     if (row.division === "ms") ms++;
     else hs++;
   }
+  // FROM BEFORE THE START (reflectionRules.beforeStartAtClaim): waiting, but
+  // dated before its division started counting, or made under another mode
+  // (a pilot carry once the division is live). Never listed; marked, so it
+  // stops waiting.
+  const parkWhy = "Dated before the list started counting in its current mode";
+  for (const id of claim.parked.tardyIds) await ctx.db.patch(id as Id<"reflectionTardies">, { state: "before-start", reason: parkWhy });
+  for (const id of claim.parked.uniformIds) await ctx.db.patch(id as Id<"uniformViolations">, { reflectionState: "before-start" });
+  for (const id of claim.parked.unitIds) await ctx.db.patch(id as Id<"reflectionUnits">, { state: "before-start", reviewReason: parkWhy });
   const day = await ensureDay(ctx, date, nowIso);
   await ctx.db.patch(day._id, {
     frozenAt: nowIso,
@@ -604,6 +613,9 @@ export const itemsForDates = internalQuery({
   },
 });
 
+/** Why a tardy re-judged into counting is still never listed. */
+const BEFORE_START_AGAIN = "Counts now, but is dated before the list started counting";
+
 /** A tardy that is no longer on any list's terms: cleared, and its detention released if nothing is left on it. */
 async function clearTardy(ctx: MutationCtx, t: Doc<"reflectionTardies">, reason: string, now: string, touched: Set<Id<"reflectionUnits">>): Promise<boolean> {
   if (t.state === "cleared") return false;
@@ -635,15 +647,69 @@ export async function recheckRelease(ctx: MutationCtx, unitId: Id<"reflectionUni
     ];
     if (unitReleased(states)) {
       const voided = uniforms.find((x) => x && x.voidedAt);
+      // A VOID'S OWN REASON STAYS ON THE UNIFORM ROW (review, 2026-10-08).
+      // Whatever an admin typed when voiding ("medical exemption on file")
+      // is read there only by the uniform roles; the release reason goes to
+      // every viewer of the list, grant holders included, and onto paper
+      // ("Release this student: ... -- <reason>"). So it says only what
+      // happened, in fixed words.
       const why = tardies.find((t) => t && t.state !== "countable")?.reason
-        ?? (voided ? `uniform entry removed${voided.voidReason ? ` (${voided.voidReason})` : ""}` : "every violation was cleared");
-      await ctx.db.patch(u._id, { state: "released", releasedAt: now, releaseReason: why });
+        ?? (voided ? UNIFORM_VOID_RELEASE : "every violation was cleared");
+      // The state it was released from is kept, so a tardy that counts again
+      // after the room ran can put the detention back as it was
+      // (rejoinDetention).
+      await ctx.db.patch(u._id, { state: "released", releasedAt: now, releaseReason: why, releasedFromState: u.state });
       n++;
     }
   }
   if (u.carriedToUnitId) n += await recheckRelease(ctx, u.carriedToUnitId, now, seen);
   return n;
 }
+
+/** The release reason of a detention whose uniform entry was voided after its list was made. */
+export const UNIFORM_VOID_RELEASE = "uniform entry removed after the list was made";
+
+const RESTORABLE = new Set(["pending", "listed", "carried", "review", "queued-forward"]);
+
+/** Put back a detention released at `releasedAt`, and the carry released with it, as each was. */
+async function unrelease(ctx: MutationCtx, unitId: Id<"reflectionUnits">, releasedAt: string, seen = new Set<string>()): Promise<void> {
+  if (seen.has(unitId)) return;
+  seen.add(unitId);
+  const u = await ctx.db.get(unitId);
+  if (!u || u.state !== "released" || u.releasedAt !== releasedAt) return;
+  const was = u.releasedFromState && RESTORABLE.has(u.releasedFromState) ? u.releasedFromState : "listed";
+  await ctx.db.patch(u._id, {
+    state: was as Doc<"reflectionUnits">["state"], releasedAt: undefined, releaseReason: undefined, releasedFromState: undefined,
+  });
+  if (u.carriedToUnitId) await unrelease(ctx, u.carriedToUnitId, releasedAt, seen);
+}
+
+/**
+ * WHAT A TARDY THAT COUNTS AGAIN RIDES ON (review, 2026-10-08). Its own
+ * detention, if that still stands. If that detention was RELEASED at or after
+ * the student's pull time (reflectionRules.rejoinsReleasedDetention), the
+ * room had already run with the student on its list: the detention is put
+ * back as it was, and the tardy stays on it -- one PowerSchool mark is never
+ * served on two lists. Released before the pull, or with no detention at
+ * all: none, and the next list claims it.
+ */
+async function rejoinDetention(ctx: MutationCtx, unitId: Id<"reflectionUnits"> | undefined, settings: ReflectionSettings, tz: string):
+  Promise<"kept" | "restored" | "none"> {
+  const u = unitId ? await ctx.db.get(unitId) : null;
+  if (!u) return "none";
+  if (u.state !== "released") return "kept";
+  if (!u.serveDay || !u.releasedAt) return "none";
+  const dRow = await getDay(ctx, u.serveDay);
+  const kind = (SCHEDULE_KINDS as string[]).includes(String(dRow?.kind)) ? dRow!.kind as ScheduleKind
+    : scheduleKindFor({ date: u.serveDay, marked: await markedOf(ctx, u.serveDay), scheduleKinds: settings.scheduleKinds, rowCounts: dRow?.rowCounts ?? null }).kind;
+  const pullAt = pullInstant(u.serveDay, kind, u.division, settings, tz);
+  if (!rejoinsReleasedDetention({ releasedAt: u.releasedAt, pullAt })) return "none";
+  await unrelease(ctx, u._id, u.releasedAt);
+  return "restored";
+}
+
+/** Why a carry decided after its division changed mode waits for nothing. */
+const CARRY_OTHER_MODE = "Carried from a list made in another mode (a pilot list); never moves into the new mode";
 
 /**
  * CARRIES for the detentions on date `d`'s list, once d's marks are final
@@ -686,15 +752,25 @@ async function decideCarries(ctx: MutationCtx, c: {
     }
     if (verdict.verdict === "carry") {
       let carryId = carry && carry.state === "pending" ? carry._id : null;
+      // A PILOT DETENTION NEVER CARRIES INTO LIVE (spec 3.9; review,
+      // 2026-10-08). Decided after the division changed mode -- a Friday
+      // shadow list whose Power-Up absences are entered on Monday, once MS
+      // is live -- the carry is recorded, as the pilot's own record, but
+      // made before-start: nothing from the pilot is pulled.
+      const otherMode = u.mode !== c.settings.modeByDivision[u.division];
       if (carryId) {
         const fresh = carriedUnit(unitItemOf(u), verdict, carry!.recordedAt);
-        await ctx.db.patch(carryId, { tags: fresh.tags ?? [], carryCount: fresh.carryCount, carryBasis: verdict.basis });
+        await ctx.db.patch(carryId, {
+          tags: fresh.tags ?? [], carryCount: fresh.carryCount, carryBasis: verdict.basis,
+          ...(otherMode ? { state: "before-start" as const, reviewReason: CARRY_OTHER_MODE } : {}),
+        });
       } else {
         const fresh = carriedUnit(unitItemOf(u), verdict, c.now);
         carryId = await ctx.db.insert("reflectionUnits", {
           studentNumber: u.studentNumber, division: u.division, kind: "carry",
           tardyIds: u.tardyIds, uniformIds: u.uniformIds, lines: fresh.lines ?? u.lines,
-          recordedAt: c.now, state: "pending", mode: u.mode,
+          recordedAt: c.now, state: otherMode ? "before-start" : "pending", mode: u.mode,
+          ...(otherMode ? { reviewReason: CARRY_OTHER_MODE } : {}),
           carryFromUnitId: u._id, carriedFromDay: c.d, carryCount: fresh.carryCount, carryBasis: verdict.basis,
           tags: fresh.tags ?? [],
         });
@@ -770,9 +846,11 @@ const directRow = v.object({
  *     read behind them, and never on a closing read; a CONFIRMED FULL read
  *     also re-classifies (arrival / held / countable) and resolves holds;
  *   - detentions whose every violation was cleared are released;
+ *   - carries for earlier dates read in full, BEFORE any freeze, so a
+ *     closing read never claims a carry its own read has just undone;
  *   - a closing or late-closing read makes the list if freezeVerdict still
  *     says so NOW (the clock moved while it read);
- *   - carries, for every date read in full whose marks are final.
+ *   - today's carries, at the after-school read.
  * On a day already made (or with no list) new items simply wait, unclaimed,
  * for the next list.
  */
@@ -921,6 +999,16 @@ export const applyRead = internalMutation({
         const reason = "PowerSchool has 2 marks for this period";
         if (existing) {
           handled.add(existing._id);
+          // ALREADY ON A LIST (review, 2026-10-08): a second PowerSchool row
+          // for a tardy whose detention stands does not take the tardy off
+          // it. Sent to review, an "Add to next list" would put the same
+          // tardy on a second list. It stays where it is; the collision is
+          // noted on it, and counted on the day's banner.
+          const onList = existing.unitId ? await ctx.db.get(existing.unitId) : null;
+          if (existing.state === "countable" && onList && onList.state !== "released" && onList.state !== "expired") {
+            await ctx.db.patch(existing._id, { psRowIds: col.psRowIds, collisionSeenAt: existing.collisionSeenAt ?? a.startedAt });
+            continue;
+          }
           // An admin's review decision stands: a collision already resolved
           // ("Add to next list") is not sent back to the queue.
           if (existing.state !== "review" && existing.state !== "cleared" && !existing.resolvedAt) {
@@ -1005,14 +1093,21 @@ export const applyRead = internalMutation({
           if (t.state === "cleared") {
             // TARDY AGAIN IN POWERSCHOOL (deleted and entered again after the
             // deletion was confirmed, or changed back from D): judged afresh,
-            // never lost. It stays on its detention if that still stands;
-            // if the detention was released, it waits for the next list.
-            const unit = t.unitId ? await ctx.db.get(t.unitId) : null;
-            const state = c.verdict === "counted" ? "countable" : c.verdict === "held" ? "held" : "arrival";
+            // never lost. It stays on its detention if that still stands, or
+            // was released only after the room ran with the student on it
+            // (rejoinDetention: never served twice); otherwise it waits for
+            // the next list -- unless its date is before its division started
+            // counting (admitState), when it is before-start.
+            let state: Doc<"reflectionTardies">["state"] = c.verdict === "counted" ? "countable" : c.verdict === "held" ? "held" : "arrival";
+            const rides = state === "countable" ? await rejoinDetention(ctx, t.unitId, settings, tz) : "none";
+            if (rides === "none" && (state === "countable" || state === "held") && admitState(t.attDate, t.division ?? divisionOf(t.studentNumber), settings)) {
+              state = "before-start";
+            }
             await ctx.db.patch(t._id, {
-              state, reason: state === "countable" ? undefined : c.reason, holdReason: state === "held" ? c.reason : undefined,
+              state, reason: state === "countable" ? undefined : state === "before-start" ? BEFORE_START_AGAIN : c.reason,
+              holdReason: state === "held" ? c.reason : undefined,
               clearedAt: undefined, firstCountableAt: state === "countable" ? (t.firstCountableAt ?? a.startedAt) : t.firstCountableAt,
-              lastSeenAt: a.startedAt, ...(unit && unit.state !== "released" ? {} : { unitId: undefined }),
+              lastSeenAt: a.startedAt, ...(rides === "none" ? { unitId: undefined } : {}),
             });
             counts.reclassified++;
             continue;
@@ -1028,11 +1123,21 @@ export const applyRead = internalMutation({
           };
           if (r.state === "held") next.wasHeld = true;
           if (r.state === "countable" && !t.firstCountableAt) next.firstCountableAt = a.startedAt;
-          if (r.state === "countable" && t.unitId) {
-            // Its old detention was released while it did not count: it goes
-            // to the next list instead of riding a released one.
-            const u = await ctx.db.get(t.unitId);
-            if (u?.state === "released") next.unitId = undefined;
+          // Its detention was released while it did not count: back on it if
+          // the room had already run with the student on it, otherwise off it
+          // and on to the next list (rejoinDetention).
+          const rides = r.state === "countable" && t.unitId ? await rejoinDetention(ctx, t.unitId, settings, tz) : t.unitId ? "kept" : "none";
+          if (rides === "none") next.unitId = undefined;
+          // NOW COUNTABLE, OR HELD, AND WAITING: dated before its division
+          // started counting, it is before-start, exactly as if it had been
+          // seen like this the first time (review, 2026-10-08: a Friday
+          // arrival re-judged on Monday must not reach a list that starts
+          // on Monday).
+          if (rides === "none" && (r.state === "countable" || r.state === "held")
+            && admitState(t.attDate, t.division ?? divisionOf(t.studentNumber), settings)) {
+            next.state = "before-start";
+            next.reason = BEFORE_START_AGAIN;
+            next.holdReason = undefined;
           }
           await ctx.db.patch(t._id, next);
           if (r.afterList && t.unitId) touched.add(t.unitId);
@@ -1049,7 +1154,28 @@ export const applyRead = internalMutation({
     let released = 0;
     for (const u of touched) released += await recheckRelease(ctx, u, now);
 
-    // ---- 4. The freeze. Re-checked NOW: the read took time, and the list
+    // ---- 4. Carries for EARLIER dates read in full, BEFORE the freeze
+    // (review, 2026-10-08). A Power-Up mark or a room tick for yesterday
+    // changes yesterday's carry until today's list claims it. A closing read
+    // that saw such a change must decide the carry first, and only then make
+    // today's list -- the other way round it claims the stale carry, and the
+    // decision after it can only note that the carry "stands".
+    const carries = { carried: 0, served: 0, review: 0 };
+    const carriesDecided = new Set<string>();
+    const decideFor = async (d: { date: string }) => {
+      const r = await decideCarries(ctx, {
+        d: d.date, summary: summaries[d.date], roster, settings, now,
+        enrolled: (sn) => !!roster[sn] || enrolledSn.has(sn),
+      });
+      carries.carried += r.carried; carries.served += r.served; carries.review += r.review;
+      carriesDecided.add(d.date);
+    };
+    for (const d of reads) {
+      if (!d.full || d.date >= today) continue;
+      await decideFor(d);
+    }
+
+    // ---- 5. The freeze. Re-checked NOW: the read took time, and the list
     // may have been made (fallback), given up (latest freeze), or passed its
     // latest time while it ran.
     let froze: Record<string, any> | null = null;
@@ -1064,7 +1190,7 @@ export const applyRead = internalMutation({
         : { why: fv.why };
     }
 
-    // ---- 5. "Absent this morning", for today's detentions (display only).
+    // ---- 6. "Absent this morning", for today's detentions (display only).
     if (summaries[today]) {
       const listed = await ctx.db.query("reflectionUnits").withIndex("by_serveDay", (q) => q.eq("serveDay", today)).collect();
       for (const u of listed) {
@@ -1073,18 +1199,14 @@ export const applyRead = internalMutation({
       }
     }
 
-    // ---- 6. Carries, for every date read in full whose marks are final.
-    const carries = { carried: 0, served: 0, review: 0 };
+    // ---- 7. Carries for the rest read in full whose marks are final: today's,
+    // at the after-school read.
     for (const d of reads) {
-      if (!d.full || !(d.date < today || a.kind === "after-school")) continue;
-      const r = await decideCarries(ctx, {
-        d: d.date, summary: summaries[d.date], roster, settings, now,
-        enrolled: (sn) => !!roster[sn] || enrolledSn.has(sn),
-      });
-      carries.carried += r.carried; carries.served += r.served; carries.review += r.review;
+      if (!d.full || carriesDecided.has(d.date) || !(d.date < today || a.kind === "after-school")) continue;
+      await decideFor(d);
     }
 
-    // ---- 7. Today's hold count, for the banner.
+    // ---- 8. Today's hold count, for the banner.
     const held = await ctx.db.query("reflectionTardies")
       .withIndex("by_state_attDate", (q) => q.eq("state", "held").eq("attDate", today)).collect();
     await ctx.db.patch(day._id, { heldCount: held.length, updatedAt: now });

@@ -88,7 +88,8 @@ export const markRoom = mutation({
     if (!canReadReflection(staff, today)) return { ok: false as const, reason: READ_REFUSED };
     if (!tz) return { ok: false as const, reason: "No school time zone is set in Settings > Bell Schedule." };
     const u = await ctx.db.get(unitId);
-    if (!u || !u.serveDay || !ON_LIST.has(u.state)) {
+    // A detention dismissed in admin review is off the list, like a released one.
+    if (!u || !u.serveDay || !ON_LIST.has(u.state) || (u.state === "review" && u.resolution === "dismissed")) {
       return { ok: false as const, reason: "That detention is not on a list the room is taking attendance for." };
     }
     const { w } = await roomStateOf(ctx, u.serveDay, nowIso, tz);
@@ -216,8 +217,14 @@ export const resolveReview = mutation({
       const t = await ctx.db.get(a.id as Id<"reflectionTardies">);
       if (!t || t.state !== "review" || t.resolvedAt) return { ok: false as const, reason: "That item is no longer waiting in review." };
       if (a.action === "add") {
+        // ALREADY ON A DETENTION THAT STANDS: it stays on it. "Add to next
+        // list" must never put one tardy on a second list (review,
+        // 2026-10-08); the reader no longer sends such a tardy here, and this
+        // holds even for one that reached review before it stopped.
+        const onList = t.unitId ? await ctx.db.get(t.unitId) : null;
+        const keep = !!onList && ["pending", "listed", "carried", "review"].includes(onList.state);
         await ctx.db.patch(t._id, {
-          state: "countable", reason: undefined, unitId: undefined, firstCountableAt: t.firstCountableAt ?? now, ...done("added"),
+          state: "countable", reason: undefined, ...(keep ? {} : { unitId: undefined }), firstCountableAt: t.firstCountableAt ?? now, ...done("added"),
         });
       } else {
         await ctx.db.patch(t._id, done("dismissed"));

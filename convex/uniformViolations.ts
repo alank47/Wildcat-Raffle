@@ -11,8 +11,8 @@ import {
   dayToEpoch,
   dayMinus,
 } from "./uniformRules";
-import { observedAtVerdict, wallClock } from "./reflectionRules";
-import { recheckRelease } from "./reflection";
+import { admitState, divisionOfGrade, observedAtVerdict, wallClock } from "./reflectionRules";
+import { loadSettings, recheckRelease } from "./reflection";
 
 /**
  * The Uniform Violations log: a Behavior Interventionist standing at a door,
@@ -249,6 +249,13 @@ export const log = mutation({
     }
 
     await countDayMismatch(ctx, when, nowIso);
+    // BEFORE THE LIST STARTED COUNTING, it never will (review, 2026-10-08).
+    // A queued Friday entry that reaches the server on Monday is filed under
+    // Friday; if the student's division only counts from Monday (switched on,
+    // or gone from the pilot to live, over the weekend), it is stored
+    // before-start, exactly as a Friday tardy first seen on Monday is, and no
+    // list ever claims it. Likewise for a division switched off.
+    const beforeStart = admitState(day, divisionOfGrade(student.grade), await loadSettings(ctx));
     const loaner = args.loanerProvided === true;
     const id = await ctx.db.insert("uniformViolations", {
       studentId: student._id,
@@ -275,6 +282,7 @@ export const log = mutation({
       voidedAt: null,
       voidedByEmail: null,
       voidReason: null,
+      ...(beforeStart ? { reflectionState: beforeStart } : {}),
     });
 
     const row = await ctx.db.get(id);

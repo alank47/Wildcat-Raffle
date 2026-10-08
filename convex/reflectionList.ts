@@ -9,7 +9,7 @@ import {
   tardyItemOf, uniformItemOf, unitItemOf,
 } from "./reflection";
 import {
-  beforeLunchClass, claimAtFreeze, clockText, dayLabel, dayTimes, freezeBanner, idSetHash, nextSchoolDayGuess, noListBanner,
+  beforeLunchClass, claimAtFreeze, clockText, dayLabel, dayTimes, freezeBanner, idSetHash, lastReadBanner, nextSchoolDayGuess, noListBanner,
   provesNoSchool, pullTimes, QUEUED_TAG, roomWindow, rosterAgeBanner, scheduleKindFor, schoolDayVerdict, studentMap, tardyKey, tardyLine,
   termBanner, uniformLine, unitReleased, wallClock,
   type ClaimResult, type Division, type Mode, type ReflectionSettings, type RosterMeta, type RosterSnap, type ScheduleKind, type UnitItem,
@@ -38,8 +38,6 @@ import {
 const DAY_KEY = /^\d{4}-\d{2}-\d{2}$/;
 /** On the day's list: listed, carried from it afterwards, or sent to review afterwards. Released is shown, but not to pull. */
 const ON_LIST = new Set(["listed", "carried", "review"]);
-/** "Last good PowerSchool read" turns red after this long, during school hours. */
-const READ_STALE_MS = 15 * 60 * 1000;
 /** A print records at most this many ids: about ten times the largest list measured (46). */
 const PRINT_MAX = 600;
 
@@ -118,9 +116,23 @@ function puOf(snap: RosterSnap | null | undefined, frozen?: Doc<"reflectionUnits
   return { teacher: snap.puTeacherName, course: snap.puCourse, flag: snap.puFlag, check: snap.puCheck };
 }
 
-/** The rows of a list already made (or given up), from its detentions. */
+/** What a detention dismissed in admin review says on the list, to everyone: never the admin's reason. */
+const DISMISSED_RELEASE = "Dismissed in admin review";
+
+/**
+ * The rows of a list already made (or given up), from its detentions.
+ *
+ * ADMIN REVIEW IS THE ROLES' ALONE (spec 4.6, B3; review, 2026-10-08). A
+ * detention sent to review after its list was made shows why ("In admin
+ * review: attendance unknown at Power-Up"), and once decided, the decision
+ * and the reason the admin typed. Only `roles` (admin, superadmin, PBIS) get
+ * those words. A grant holder -- and any sheet they print -- gets neutral
+ * ones, never reviewReason or resolutionReason. A detention DISMISSED in
+ * review is off the list, like a released one: not counted, not printed, no
+ * Not here box, no slip, and "release this student" on every earlier print.
+ */
 async function rowsOfMadeList(ctx: Ctx, date: string, tz: string, gradeOf: Record<string, string>, frozenAt: string | null,
-  slips?: { settings: ReflectionSettings; rowCounts: Record<string, number> | null }): Promise<ListRowOut[]> {
+  roles: boolean, slips?: { settings: ReflectionSettings; rowCounts: Record<string, number> | null }): Promise<ListRowOut[]> {
   const units = await ctx.db.query("reflectionUnits").withIndex("by_serveDay", (q) => q.eq("serveDay", date)).collect();
   const roster = await rosterFor(ctx, units.map((u) => u.studentNumber));
   const out: ListRowOut[] = [];
@@ -140,18 +152,28 @@ async function rowsOfMadeList(ctx: Ctx, date: string, tz: string, gradeOf: Recor
       ...tardies.map((t) => ({ cleared: t.state !== "countable" })),
       ...uniforms.map((x) => ({ cleared: !!x.voidedAt })),
     ]) && (tardies.length + uniforms.length === u.tardyIds.length + u.uniformIds.length);
+    const dismissed = u.state === "review" && u.resolution === "dismissed";
     const released = u.state === "released"
       ? { at: u.releasedAt ?? null, reason: u.releaseReason ?? "every violation was cleared" }
-      : allGone ? { at: [...cleared.map((c) => c.at), ...voided.map((x) => x.at)].filter(Boolean).sort().pop() ?? null, reason: "every violation was cleared" }
-        : null;
+      : dismissed ? { at: u.resolvedAt ?? null, reason: DISMISSED_RELEASE }
+        : allGone ? { at: [...cleared.map((c) => c.at), ...voided.map((x) => x.at)].filter(Boolean).sort().pop() ?? null, reason: "every violation was cleared" }
+          : null;
     let after: string | null = null;
     if (u.state === "carried" && u.carriedToUnitId) {
       const carry = await ctx.db.get(u.carriedToUnitId);
-      if (carry) after = carry.tags?.[0] ? `Carries to the next list: ${carry.tags[0]}` : "Carries to the next list";
+      // A pilot list's carry is the pilot's record only: it never reaches a
+      // live list (reflection.decideCarries, setMode).
+      if (carry) {
+        after = carry.state === "before-start"
+          ? `Not carried to a later list: it is from before the list started counting${carry.tags?.[0] ? ` (${carry.tags[0]})` : ""}`
+          : carry.tags?.[0] ? `Carries to the next list: ${carry.tags[0]}` : "Carries to the next list";
+      }
     } else if (u.state === "review") {
-      after = u.resolvedAt
-        ? `Review closed (${u.resolution ?? "decided"}): ${u.resolutionReason ?? u.reviewReason ?? ""}`.replace(/: $/, "")
-        : `In admin review: ${u.reviewReason ?? "waiting for a decision"}`;
+      after = !roles
+        ? (u.resolvedAt ? "Decided by an administrator" : "Waiting for an administrator's decision")
+        : u.resolvedAt
+          ? `Review closed (${u.resolution ?? "decided"}): ${u.resolutionReason ?? u.reviewReason ?? ""}`.replace(/: $/, "")
+          : `In admin review: ${u.reviewReason ?? "waiting for a decision"}`;
     }
     const snap = roster[u.studentNumber] ?? null;
     const lunch = slips && slips.settings.slipAddresseeByDivision[u.division] === "before-lunch"
@@ -375,7 +397,7 @@ export const listForDay = query({
   args: { day: v.string() },
   handler: async (ctx, { day }) => {
     const staff = await requireStaff(ctx);
-    const { tz, nowIso, today, minute } = await schoolNow(ctx);
+    const { tz, nowIso, today } = await schoolNow(ctx);
     // THE CHECK COMES FIRST: nothing below is read for someone refused.
     if (!canReadReflection(staff, today)) return { allowed: false as const, reason: REFUSED };
     if (!tz) {
@@ -421,7 +443,7 @@ export const listForDay = query({
     let view: "made" | "so-far" | "no-list" | "no-school" | "not-made";
     if (row?.frozenAt) {
       view = "made";
-      rows = await rowsOfMadeList(ctx, date, tz, gradeOf, row.frozenAt, { settings, rowCounts: row.rowCounts ?? null });
+      rows = await rowsOfMadeList(ctx, date, tz, gradeOf, row.frozenAt, roles, { settings, rowCounts: row.rowCounts ?? null });
     } else if (date === today && todayOpen) {
       view = "so-far";
       rows = (await soFar(ctx, { first: null, target: today, tz, settings, gradeOf, nowIso })).rows;
@@ -511,11 +533,18 @@ export const listForDay = query({
     let printsToday: Array<Record<string, any>> | null = null;
     if (roles) {
       const prints = await ctx.db.query("reflectionPrints").withIndex("by_day", (q) => q.eq("day", date)).collect();
+      // OUT OF DATE IS SAID THE SAME WAY HERE AS TO THE PERSON WHO PRINTED
+      // (review, 2026-10-08): a print taken before the list was made is out
+      // of date even when the final list holds the same students, because
+      // that paper says NOT FINAL -- the printer's own banner tells them to
+      // print again, and the PBIS lead must not read "still current" here.
       printsToday = prints.map((p) => {
         const c = changesSince(p, rows);
+        const beforeFreeze = frozen && !!row?.frozenAt && p.at < row.frozenAt;
         return {
           by: p.printedByEmail, at: p.at, kind: p.kind, final: p.final, students: p.studentNumbers.length,
           changes: { added: c.added.length, release: c.release.length, cleared: c.cleared.length, voided: c.voided.length },
+          beforeFreeze, outOfDate: changeCount(c) > 0 || beforeFreeze,
         };
       });
     }
@@ -557,17 +586,15 @@ export const listForDay = query({
           : `NOT FINAL: ${dayLabel(date)} so far. Violations recorded before its list is made still join it.`,
       });
     }
-    if (date === today && todaySd.verdict !== "no") {
-      const last = row?.lastGoodReadAt ?? null;
-      const inHours = minute !== null && minute >= 450 && minute <= 945;
-      const stale = inHours && (!last || Date.parse(nowIso) - Date.parse(last) > READ_STALE_MS);
-      if (inHours) {
-        banners.push({
-          id: "last-read", level: stale ? "alert" : "info",
-          text: last ? `Last good PowerSchool read ${clock(last)}${stale ? ": more than 15 minutes ago." : "."}`
-            : "No PowerSchool read has worked yet today.",
-        });
-      }
+    if (date === today && todaySd.verdict !== "no" && times.ok) {
+      // Red only when a scheduled read is overdue or the latest one failed
+      // (reflectionRules.lastReadBanner), never merely for the gap between
+      // two reads on a healthy day.
+      const lr = lastReadBanner({
+        nowIso, tz, date, closeMinute: times.closeMinute,
+        lastGoodReadAt: row?.lastGoodReadAt ?? null, lastReadErrorAt: row?.lastReadErrorAt ?? null,
+      });
+      if (lr) banners.push({ id: "last-read", level: lr.level, text: lr.text });
     }
     if (myPrintChanges?.outOfDate) {
       const at = clock(myPrintChanges.printAt);

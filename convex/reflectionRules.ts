@@ -1137,6 +1137,11 @@ export type DayState = {
 
 export type Lease = { runId: string; kind: string; startedAt: string; expiresAt: string } | null | undefined;
 
+/** A lease held by a read that may make the day's list: a closing or a late closing read. */
+export function closingLease(lease: Lease): boolean {
+  return !!lease && (lease.kind === "closing" || lease.kind === "late-closing");
+}
+
 export type ReadPlan = { maps: boolean; roster: boolean; today: boolean; lookback: boolean; sweep: boolean; final: boolean };
 export type TickDecision =
   | { do: "none"; why: string }
@@ -1238,7 +1243,13 @@ export function decideTick(input: {
         // a school day: make the list now from the last good read, at the
         // owner's ready time. It takes the lease, so a straggling read is
         // fenced out and its items become pending for the next list.
-        if (leaseHeld) return waitOr(t.lastFreezeMs, "Fallback freeze");
+        // It waits only for a CLOSING read (one that may itself make the
+        // list). Any other read still holding the lease -- "Read PowerSchool
+        // now" pressed just before the ready time is an after-close read --
+        // can never make the list, so waiting on it could only run the clock
+        // to the latest time and leave the day with no list (review,
+        // 2026-10-08). The fallback fences it out instead.
+        if (leaseHeld && closingLease(input.lease)) return waitOr(t.lastFreezeMs, "Fallback freeze");
         return { do: "fallback-freeze", why: "No closing read worked by the ready time." };
       }
       if (inLateWindow(now, t) && !done.has("closing")) {
@@ -1658,6 +1669,10 @@ export type UnitState = "pending" | "listed" | "carried" | "queued-forward" | "r
 export type UnitItem = {
   id: string; studentNumber: string; division: Division; kind: "new" | "carry" | "queued";
   state: UnitState; serveDay?: string | null; recordedAt: string; carryCount: number; tags?: string[]; lines?: string[];
+  /** The mode of the list it came from (a carry keeps its list's mode). */
+  mode?: Mode;
+  /** For a carry: the day of the list it carries from. */
+  carriedFromDay?: string | null;
 };
 
 export type ListRow = {
@@ -1686,6 +1701,11 @@ export type ClaimResult = {
   claimedUnitIds: string[];
   /** Students whose division is unknown (no roster row and no grade): reported, never guessed. */
   unplaced: string[];
+  /**
+   * Waiting, but from before the division started counting in its current
+   * mode (claimParking): never listed. The freeze marks them before-start.
+   */
+  parked: { tardyIds: string[]; uniformIds: string[]; unitIds: string[] };
 };
 
 /**
@@ -1705,6 +1725,35 @@ export function uniformClaimable(u: UniformItem, day: string): boolean {
   if (u.voided || u.unitId) return false;
   if (u.reflectionState === "review" || u.reflectionState === "before-start") return false;
   return u.day <= day;
+}
+
+/**
+ * FROM BEFORE THE START, ASKED AGAIN AT THE MOMENT OF CLAIMING (review,
+ * 2026-10-08). setMode parks what is waiting at the moment a division is
+ * switched on, or goes from shadow to live -- but only what is waiting THEN.
+ * Three things become claimable later and would have reached the first live
+ * list: a pilot detention whose carry is decided after the switch (a shadow
+ * carry), a Friday arrival that Monday's re-read of Friday turns into a
+ * counted tardy, and a Friday uniform entry queued on a Chromebook that
+ * reaches the server on Monday. So every freeze asks once more, item by item:
+ *   - a tardy or uniform entry dated before its division's countFromDate, or
+ *     of a division switched off, is before-start;
+ *   - a waiting detention made under another mode than the division's now (a
+ *     shadow carry once the division is live), or carried from a list dated
+ *     before countFromDate, is before-start.
+ * Such an item is never listed. The freeze marks it, so it stops waiting.
+ */
+export function beforeStartAtClaim(
+  item: { date?: string | null; mode?: Mode; carriedFromDay?: string | null },
+  division: Division | null | undefined, settings: ReflectionSettings,
+): boolean {
+  if (!division) return false;
+  const mode = settings.modeByDivision[division];
+  if (mode === "off") return true;
+  if (item.mode && item.mode !== mode) return true;
+  const from = settings.countFromDateByDivision[division];
+  const date = item.date ?? item.carriedFromDay ?? null;
+  return !!date && (!from || date < from);
 }
 
 /** "Tue 10/13" from a date key. */
@@ -1792,11 +1841,24 @@ export function claimAtFreeze(input: {
     if (!per.has(sn)) per.set(sn, { tardies: [], uniforms: [], units: [] });
     return per.get(sn)!;
   };
-  for (const t of input.tardies) if (tardyClaimable(t, day)) slot(t.studentNumber).tardies.push(t);
-  for (const u of input.uniforms) if (uniformClaimable(u, day)) slot(u.studentNumber).uniforms.push(u);
-  for (const u of input.units) if (u.state === "pending" && !u.serveDay) slot(u.studentNumber).units.push(u);
+  const parked: ClaimResult["parked"] = { tardyIds: [], uniformIds: [], unitIds: [] };
+  for (const t of input.tardies) {
+    if (!tardyClaimable(t, day)) continue;
+    if (beforeStartAtClaim({ date: t.attDate }, input.divisionOf[t.studentNumber], settings)) parked.tardyIds.push(t.id);
+    else slot(t.studentNumber).tardies.push(t);
+  }
+  for (const u of input.uniforms) {
+    if (!uniformClaimable(u, day)) continue;
+    if (beforeStartAtClaim({ date: u.day }, input.divisionOf[u.studentNumber], settings)) parked.uniformIds.push(u.id);
+    else slot(u.studentNumber).uniforms.push(u);
+  }
+  for (const u of input.units) {
+    if (u.state !== "pending" || u.serveDay) continue;
+    if (beforeStartAtClaim({ mode: u.mode, carriedFromDay: u.carriedFromDay }, u.division, settings)) parked.unitIds.push(u.id);
+    else slot(u.studentNumber).units.push(u);
+  }
 
-  const out: ClaimResult = { rows: [], claimedTardyIds: [], claimedUniformIds: [], claimedUnitIds: [], unplaced: [] };
+  const out: ClaimResult = { rows: [], claimedTardyIds: [], claimedUniformIds: [], claimedUnitIds: [], unplaced: [], parked };
   for (const [sn, got] of [...per.entries()].sort((a, b) => a[0].localeCompare(b[0]))) {
     const division = got.units[0]?.division ?? input.divisionOf[sn] ?? null;
     if (!division) { out.unplaced.push(sn); continue; }
@@ -2019,6 +2081,76 @@ export function roomWindow(input: {
     return { tick: false, closeRoom: true, why: `Room attendance opens at Lunch & Power-Up (${clockText(new Date(input.powerUpMs).toISOString(), input.tz, true)}).` };
   }
   return { tick: true, closeRoom: true, why: null };
+}
+
+/**
+ * WHEN A DIVISION IS PULLED on day D, as an instant: MS at the block start,
+ * HS at the swap minus the lead (pullTimes).
+ */
+export function pullInstant(dateKey: string, kind: ScheduleKind, division: Division, settings: ReflectionSettings, tz: string): string | null {
+  const p = pullTimes(kind, settings);
+  return laWallToUtc(dateKey, division === "ms" ? p.msMinute : p.hsMinute, tz);
+}
+
+/**
+ * A TARDY THAT COUNTS AGAIN after its detention was released -- a mark
+ * deleted and typed back, D changed back to T, a counted tardy re-judged an
+ * arrival and then counted again: does it go back on that detention, or on
+ * the next list? (review, 2026-10-08)
+ *
+ * BACK ON IT when the release came at or after the student's pull time on
+ * the detention's day. The student was on the list when the room ran, so
+ * they served it (or it carried); putting the same PowerSchool mark on the
+ * next list would serve it twice, and spec 3.10 says a mark deleted and
+ * entered again "is updated, not doubled". Released BEFORE the pull, the
+ * student was told not to come, so the detention is still owed and the
+ * tardy goes on the next list.
+ */
+export function rejoinsReleasedDetention(input: { releasedAt: string | null | undefined; pullAt: string | null }): boolean {
+  if (!input.releasedAt || !input.pullAt) return false;
+  return Date.parse(input.releasedAt) >= Date.parse(input.pullAt);
+}
+
+/** A scheduled read later than this is overdue, and the last-read banner turns red. */
+export const READ_OVERDUE_MIN = 15;
+
+/**
+ * THE LAST-READ BANNER, judged against the reader's own schedule (review,
+ * 2026-10-08). The reads run hourly in the morning (07:30, 08:30, 09:30,
+ * 10:30), then 40 to 10 minutes before the close, at the close, and at 13:00,
+ * 14:00, 15:00 and 15:45. A flat "older than 15 minutes" was red for most of
+ * a healthy day -- all of 12:00 to 13:00, while the room supervisor uses the
+ * screen -- so a real outage looked just like an ordinary 10:50, and staff
+ * learn to ignore red. Now it is red only when a read that should have run
+ * is more than 15 minutes overdue, or the latest read failed; otherwise it
+ * is information, with the time of the next read. School hours only.
+ */
+export function lastReadBanner(input: {
+  nowIso: string; tz: string; date: string; closeMinute: number;
+  lastGoodReadAt: string | null | undefined; lastReadErrorAt: string | null | undefined;
+}): { level: "alert" | "info"; text: string } | null {
+  const lt = wallClock(input.nowIso, input.tz);
+  if (!lt.ok || lt.dateKey !== input.date) return null;
+  const minute = lt.minuteOfDay;
+  if (minute < OPENING_MINUTE || minute > AFTER_SCHOOL_MINUTE) return null;
+  const minutes = [...new Set([...scheduleItems(input.closeMinute).map((i) => i.minute), input.closeMinute])].sort((a, b) => a - b);
+  const due = minutes.filter((m) => m <= minute - READ_OVERDUE_MIN).pop();
+  const dueAt = due === undefined ? null : laWallToUtc(input.date, due, input.tz);
+  const last = input.lastGoodReadAt ?? null;
+  const failed = !!input.lastReadErrorAt && (!last || Date.parse(input.lastReadErrorAt) > Date.parse(last));
+  const overdue = !!dueAt && (!last || Date.parse(last) < Date.parse(dueAt));
+  const next = minutes.find((m) => m > minute);
+  const nextAt = next === undefined ? null : laWallToUtc(input.date, next, input.tz);
+  const nextText = nextAt ? ` Next read ${clockText(nextAt, input.tz)}.` : "";
+  if (!last) {
+    return failed || overdue
+      ? { level: "alert", text: "No PowerSchool read has worked yet today." }
+      : { level: "info", text: `No PowerSchool read yet today.${nextText}` };
+  }
+  const lastText = `Last good PowerSchool read ${clockText(last, input.tz)}`;
+  if (failed) return { level: "alert", text: `${lastText}: the latest read failed.` };
+  if (overdue) return { level: "alert", text: `${lastText}: the ${clockText(dueAt!, input.tz)} read is overdue.` };
+  return { level: "info", text: `${lastText}.${nextText}` };
 }
 
 /**
