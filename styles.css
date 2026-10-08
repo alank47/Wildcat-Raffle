@@ -10167,6 +10167,22 @@ body:has(.wc-preview-bar) .app-content { padding-bottom: 64px; }
     font-size: 44px; font-weight: 800; color: rgba(122, 75, 0, .10); transform: rotate(-24deg);
     pointer-events: none; text-align: center; white-space: pre-wrap;
 }
+/* A TEST LIST (2026-10-08): built from one day's real marks to show staff
+   what the list looks like. Red and unmissable: a banner at the top of the
+   screen, a chip on each section, and on paper a banner under each heading,
+   the header row that repeats on every page, and "TEST — not for
+   assignment" across the page. The watermark is position: fixed, which
+   Chrome prints on EVERY page, where a section's own ::before would land
+   only once, in the middle of a section two pages long. */
+.rr-banner-test { background: #FDECEC; border: 2px solid #C62828; color: #8A1C1C; font-size: 16px; font-weight: 800; }
+.rr-test-chip { font-size: 11.5px; font-weight: 800; padding: 2px 8px; border-radius: 999px; background: #FDECEC; color: #8A1C1C; border: 1px solid #C62828; }
+.rr-test-banner { margin: 0 0 8px; padding: 6px 10px; border: 2px solid #C62828; color: #8A1C1C; font-size: 14px; font-weight: 800; }
+.rr-test .print-table th.rr-watermark { background: #FDECEC; color: #8A1C1C; font-size: 15px; font-weight: 800; }
+.rr-test-watermark {
+    position: fixed; left: 0; right: 0; top: 42%; z-index: 1; pointer-events: none;
+    text-align: center; white-space: nowrap; transform: rotate(-28deg);
+    font-size: 56px; font-weight: 900; letter-spacing: .02em; color: rgba(198, 40, 40, .16);
+}
 
 @media print {
     body.wc-printing > *:not(#wcPrintSheet) { display: none !important; }
@@ -10176,6 +10192,14 @@ body:has(.wc-preview-bar) .app-content { padding-bottom: 64px; }
     body.wc-printing .print-page:last-child { break-after: auto; page-break-after: auto; }
     body.wc-printing .print-table tr { break-inside: avoid; page-break-inside: avoid; }
     body.wc-printing .print-table thead { display: table-header-group; }
+}
+/* A TEST list on paper: the watermark a little darker, and the red banner and
+   header row kept red even where the browser drops background colours. */
+@media print {
+    body.wc-printing .rr-test-watermark { color: rgba(198, 40, 40, .22); }
+    body.wc-printing .rr-test-banner, body.wc-printing .rr-test .print-table th.rr-watermark {
+        -webkit-print-color-adjust: exact; print-color-adjust: exact;
+    }
 }
 
 /* =====================================================================

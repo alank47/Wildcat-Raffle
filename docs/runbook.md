@@ -255,6 +255,30 @@ save that fails, keeps unsent entries on the device for the person who
 entered them, and holds an app update while any are unsent. Undo needs a
 reason once the entry's list is made.
 
+### A TEST list, to show staff what the list looks like (`reflectionDemo`)
+
+For showing administrators the list in the Hub before it counts (owner,
+2026-10-08). It reads one day from PowerSchool (the real reader's confirmed
+read: the day, and the previous school day for its P5 and P6 tardies), works
+out the list with the shipped rules as if it closed at that moment, and
+stores it in `reflectionDemoLists` only. Discipline > Reflection Room shows it
+for that day under a red "TEST ONLY — built from today's PowerSchool marks at
+H:MM" banner, and every printed page says "TEST — not for assignment". It is
+shown only while that day has no real list made (a real list always wins),
+no print of it is recorded, and slips and "Print changes only" are off.
+Tardies only: no uniform entries, carries or queued detentions.
+
+It is refused for a day the real list counts (a division switched on from on
+or before that day), a day whose real list is made, and a future day.
+Building it again replaces it. Clear it once it has been shown:
+
+```
+npx convex run --prod reflectionDemo:build '{"day":"2026-10-08"}'   # counts only in the answer
+npx convex run --prod reflectionDemo:clear '{"day":"2026-10-08"}'
+```
+
+Never at 13:25-14:00 or 19:25-20:00 UTC (the attendance rebuild's windows).
+
 ### Checking the list during the pilot (`scripts/reflection-verify.mjs`)
 
 A second, independent reading of PowerSchool, with its own copy of the rules,

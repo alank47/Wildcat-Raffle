@@ -41972,8 +41972,23 @@
             return out.join('');
         }
 
+        /**
+         * A TEST LIST (owner, 2026-10-08): built on the command line from one
+         * day's real PowerSchool marks, to show staff what the list will look
+         * like before it counts. The server sends it (demo: true) only for a
+         * day with no real list made. It says so in red at the top of the
+         * screen and on every printed page, with the time it was built.
+         */
+        const RR_TEST_MARK = 'TEST \u2014 not for assignment';
+        function rrDemoBannerText(res) {
+            return 'TEST ONLY \u2014 built from ' + (res && res.isToday ? 'today\'s' : (res && res.dayLabel ? res.dayLabel + '\'s' : 'that day\'s'))
+                + ' PowerSchool marks at ' + rrClock(res && res.demoBuiltAt) + '. Not a real list. Do not assign.';
+        }
+
         function rrBannersHtml(res) {
-            return (res.banners || []).map(b => '<div class="rr-banner rr-banner-' + escapeHtml(b.level) + '" data-rr-banner="'
+            const test = res.demo === true
+                ? '<div class="rr-banner rr-banner-test" data-rr-banner="demo" role="alert">' + escapeHtml(rrDemoBannerText(res)) + '</div>' : '';
+            return test + (res.banners || []).map(b => '<div class="rr-banner rr-banner-' + escapeHtml(b.level) + '" data-rr-banner="'
                 + escapeHtml(b.id) + '">' + escapeHtml(b.text) + '</div>').join('');
         }
 
@@ -41989,10 +42004,13 @@
             const changes = document.getElementById('rrChangesBtn');
             const pill = document.getElementById('rrReviewPill');
             const listView = _rrView !== 'review';
+            // A TEST list prints its TEST copy only: no slips (a slip sends
+            // someone to a classroom) and no changes-only sheet.
+            const test = !!res && res.demo === true;
             if (btn) btn.disabled = !res || _rrPrinting || !listView;
             const liveRows = res && Array.isArray(res.sections) ? res.sections.flatMap(s => s.rows).filter(r => !r.released) : [];
-            if (slips) slips.disabled = !listView || !res || res.frozen !== true || !liveRows.length || _rrPrinting;
-            if (changes) changes.hidden = !listView || !res || !res.myPrintChanges || !(res.myPrintChanges.count > 0);
+            if (slips) slips.disabled = !listView || !res || test || res.frozen !== true || !liveRows.length || _rrPrinting;
+            if (changes) changes.hidden = !listView || !res || test || !res.myPrintChanges || !(res.myPrintChanges.count > 0);
             if (pill && res && typeof res.roles === 'boolean') pill.hidden = res.roles !== true;
         }
 
@@ -42058,7 +42076,8 @@
                 return;
             }
             const byNumber = rrStudentIndex();
-            const made = res.frozen
+            const made = res.demo === true ? 'TEST ONLY: built at ' + rrClock(res.demoBuiltAt) + ', not a real list'
+                : res.frozen
                 ? 'Final: made at ' + rrClock(res.frozenAt) + (res.freezeKind === 'closing' ? '' : ' (' + res.freezeKind + ')')
                 : (res.view === 'so-far' ? 'NOT FINAL: so far' : '');
             if (note) {
@@ -42079,7 +42098,8 @@
                     + ' <span class="wc-chip">' + section.count + cap + ' student' + (section.count === 1 && !cap ? '' : 's') + '</span>'
                     + (section.mode === 'off' ? ' <span class="print-note">switched off</span>'
                         : ' <span class="print-note">pull at about ' + escapeHtml(section.pullAt) + '</span>')
-                    + (section.mode === 'shadow' ? ' <span class="rr-pilot">PILOT: do not assign</span>' : '')
+                    + (res.demo === true ? ' <span class="rr-test-chip">TEST: do not assign</span>'
+                        : section.mode === 'shadow' ? ' <span class="rr-pilot">PILOT: do not assign</span>' : '')
                     // The count against the room's capacity for this sitting.
                     + (section.overCapacity ? ' <span class="rr-over">over capacity</span>' : '')
                     + '</h4>';
@@ -42154,8 +42174,9 @@
             }
         }
 
-        /** What Chrome names the saved PDF: the list's day, never a student. */
+        /** What Chrome names the saved PDF: the list's day, never a student -- and TEST for a TEST list. */
         function reflectionSheetTitle(res) {
+            if (res && res.demo === true) return 'Reflection Room TEST list ' + String(res.date || '') + ' - not for assignment';
             return 'Reflection Room list ' + String(res && res.date || '');
         }
 
@@ -42174,15 +42195,22 @@
             const counts = sections.map(s => ({ s: s, rows: live(s) }));
             const total = counts.reduce((n, c) => n + c.rows.length, 0);
             const final = !!res.frozen;
+            // A TEST LIST says so on every printed page, three ways: the
+            // header row that repeats on each page, a red banner under each
+            // heading, and "TEST — not for assignment" across the page (a
+            // fixed element, which Chrome prints on every page). Never PILOT
+            // or NOT FINAL as well: it is neither, it is not a list at all.
+            const test = res.demo === true;
             const asOf = rrClock(res.asOf);
-            const head = 'As of ' + asOf + ' · ' + (final ? 'Final' : 'NOT FINAL') + ' · ' + total + ' student' + (total === 1 ? '' : 's')
+            const head = 'As of ' + asOf + ' · ' + (test ? 'TEST ONLY' : final ? 'Final' : 'NOT FINAL') + ' · ' + total + ' student' + (total === 1 ? '' : 's')
                 + ' (' + counts.map(c => c.s.division.toUpperCase() + ' ' + c.rows.length + (c.s.capacity ? ' of ' + c.s.capacity : '')).join(', ') + ')';
             const foot = 'Printed by ' + (o.printedBy || 'staff') + ' at ' + rrClock(o.printedAt || res.asOf) + ' on ' + res.dayLabel;
             const cols = ['Served'].concat(RR_COLS.map(c => c.label));
             const pages = counts.map(c => {
                 const marks = [];
-                if (c.s.mode === 'shadow') marks.push('PILOT: do not assign');
-                if (!final) marks.push('NOT FINAL: do not pull');
+                if (test) marks.push(RR_TEST_MARK);
+                if (!test && c.s.mode === 'shadow') marks.push('PILOT: do not assign');
+                if (!test && !final) marks.push('NOT FINAL: do not pull');
                 // Printed from the browser's menu off an answer over a minute
                 // old: every page says so, and how to get a fresh one.
                 if (o.stale) marks.push('STALE: as of ' + o.stale + '. Use the Print button');
@@ -42200,9 +42228,10 @@
                         + '<td>' + (r.absentMorning ? 'Absent this morning: check if arrived' : '') + '</td>'
                         + '</tr>').join('')
                     : '<tr><td colspan="' + cols.length + '" class="print-empty">Nobody on this list.</td></tr>';
-                return '<section class="print-page rr-print-page' + (marks.length ? ' rr-marked' : '') + '"'
+                return '<section class="print-page rr-print-page' + (test ? ' rr-test' : marks.length ? ' rr-marked' : '') + '"'
                     + (marks.length ? ' data-rr-mark="' + escapeHtml(marks.join(' · ')) + '"' : '') + '>'
                     + '<h2>' + escapeHtml('Reflection Room — ' + c.s.label + ' — ' + res.dayLabel) + '</h2>'
+                    + (test ? '<p class="rr-test-banner" data-rr-test>' + escapeHtml(rrDemoBannerText(res)) + '</p>' : '')
                     + '<p class="print-sub">' + escapeHtml(head) + ' · pull at about ' + escapeHtml(c.s.pullAt) + '</p>'
                     + '<table class="print-table"><thead>' + markRow + '<tr>'
                     + cols.map(l => '<th>' + escapeHtml(l) + '</th>').join('') + '</tr></thead>'
@@ -42212,15 +42241,18 @@
             });
             const toolbar = '<div class="print-toolbar" data-rr-sheet>'
                 + '<div class="print-toolbar-row">'
-                + '<strong>Reflection Room list: ' + escapeHtml(res.dayLabel) + (final ? '' : ' (NOT FINAL)') + '</strong>'
+                + '<strong>Reflection Room list: ' + escapeHtml(res.dayLabel) + (test ? ' (TEST ONLY)' : final ? '' : ' (NOT FINAL)') + '</strong>'
                 + '<button type="button" class="btn" onclick="printReflectionList()"><svg class="wc-icon" aria-hidden="true" focusable="false"><use href="#wci-printer"></use></svg> Print again</button>'
                 + '<button type="button" class="btn btn-secondary" onclick="closeReflectionSheet()">Close</button>'
                 + '</div>'
-                + '<p class="receipt-meta">' + (o.fromMenu
+                + '<p class="receipt-meta">' + (test
+                    ? escapeHtml(rrDemoBannerText(res)) + ' A TEST list is never recorded as printed.'
+                    : o.fromMenu
                     ? 'Printed from the browser menu, from the list on screen (' + escapeHtml(asOf) + '). This print is not recorded: use the Print button.'
                     : 'Read from the server just now (' + escapeHtml(asOf) + '). To get a PDF: press Print, then choose “Save as PDF”.') + '</p>'
                 + '</div>';
-            return toolbar + '<div class="print-pages">' + (pages.length ? pages.join('')
+            const watermark = test ? '<div class="rr-test-watermark" aria-hidden="true" data-rr-test-watermark>' + escapeHtml(RR_TEST_MARK) + '</div>' : '';
+            return toolbar + watermark + '<div class="print-pages">' + (pages.length ? pages.join('')
                 : '<p class="print-empty">Both divisions are switched off, so there is no list.</p>') + '</div>';
         }
 
@@ -42240,6 +42272,16 @@
                 const res = await loadReflectionList();
                 if (!res || res.allowed === false || res.ok === false || !Array.isArray(res.sections)) {
                     showAlert('ℹ️ The list could not be read just now, so nothing was printed. ' + (_rrWhy || 'Try again in a moment.'));
+                    return;
+                }
+                // A TEST LIST IS PRINTED, NEVER RECORDED (2026-10-08): the
+                // server refuses to record a print of it, because it is not a
+                // list anyone serves. Its TEST copy says so on every page.
+                if (res.demo === true) {
+                    openReflectionSheet(res, null);
+                    beginReflectionPrint(res);
+                    try { window.print(); }
+                    catch (e) { console.warn('[reflection] print failed:', e && e.message); endReflectionPrint(); }
                     return;
                 }
                 const auth = window.WildcatAuth;
@@ -42543,6 +42585,10 @@
                     showAlert('ℹ️ The list could not be read just now, so no slips were printed. ' + (_rrWhy || 'Try again in a moment.'));
                     return;
                 }
+                if (answer.demo === true) {
+                    showAlert('ℹ️ This is a TEST list, so there are no slips for it: nobody is pulled from a TEST list.');
+                    return;
+                }
                 if (answer.frozen !== true) {
                     showAlert('ℹ️ Slips print only once the list is final. The master list, marked NOT FINAL, can be printed now.');
                     return;
@@ -42563,6 +42609,10 @@
                 const answer = await loadReflectionList();
                 if (!answer || answer.allowed === false || answer.ok === false || !Array.isArray(answer.sections)) {
                     showAlert('ℹ️ The list could not be read just now, so nothing was printed. ' + (_rrWhy || 'Try again in a moment.'));
+                    return;
+                }
+                if (answer.demo === true) {
+                    showAlert('ℹ️ This is a TEST list: no print of it is recorded, so there are no changes to print.');
                     return;
                 }
                 if (!answer.myPrintChanges || !(answer.myPrintChanges.count > 0)) {

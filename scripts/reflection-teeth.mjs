@@ -37,6 +37,7 @@ const ACCESS = "convex/accessRules.ts";
 const ACCESS_TEST = "reflection-access.test.mjs";
 const DEMO_RULES = "convex/reflectionDemoRules.ts";
 const DEMO_TEST = "reflection-demo.test.mjs";
+const SCREEN = "script.js";
 
 const CASES = [
   // ---- step 1: the rules (spec 6, step 1 table)
@@ -202,7 +203,7 @@ const CASES = [
     from: "                const res = await loadReflectionList();", to: "                const res = _rrData;",
     mustFail: "Print waits for a fresh read: the sheet is drawn from a new listForDay answer, never the list on screen" },
   { guard: "drop the NOT FINAL mark from a list not yet made", file: "script.js", test: PRINT_TEST,
-    from: "                if (!final) marks.push('NOT FINAL: do not pull');", to: "",
+    from: "                if (!test && !final) marks.push('NOT FINAL: do not pull');", to: "",
     mustFail: "PILOT and NOT FINAL watermarks: a pilot list not yet final says both on every MS page, NOT FINAL on HS" },
   { guard: "read times off the Chromebook's own clock", file: "script.js", test: PRINT_TEST,
     from: "            return t.toLocaleTimeString('en-US', { timeZone: RR_TZ, hour: 'numeric', minute: '2-digit' });",
@@ -279,8 +280,8 @@ const CASES = [
     from: "    if (lease && Date.parse(lease.expiresAt) > now) {", to: "    if (false) {",
     mustFail: "...a second press while that read holds the lease is refused (never two readers)" },
   { guard: "enable the slips button before the list is final", file: "script.js", test: PRINT_TEST,
-    from: "if (slips) slips.disabled = !listView || !res || res.frozen !== true || !liveRows.length || _rrPrinting;",
-    to: "if (slips) slips.disabled = !listView || !res || !liveRows.length || _rrPrinting;",
+    from: "if (slips) slips.disabled = !listView || !res || test || res.frozen !== true || !liveRows.length || _rrPrinting;",
+    to: "if (slips) slips.disabled = !listView || !res || test || !liveRows.length || _rrPrinting;",
     mustFail: "slips are disabled while the list is not final: the button is off, and pressing it prints and records nothing" },
   { guard: "print slips from a list that is not final", file: "script.js", test: PRINT_TEST,
     from: "                if (answer.frozen !== true) {", to: "                if (false) {",
@@ -521,6 +522,19 @@ const CASES = [
     from: "    const pendingUnits = await ctx.db.query(\"reflectionUnits\")",
     to: "    const demos = await ctx.db.query(\"reflectionDemoLists\").collect();\n    const pendingUnits = await ctx.db.query(\"reflectionUnits\")",
     mustFail: "no other module references reflectionDemoLists: only the schema, the file that writes it, and the list's reader" },
+  { guard: "a printed TEST page drops its TEST mark", file: SCREEN, test: PRINT_TEST,
+    from: "                if (test) marks.push(RR_TEST_MARK);\n", to: "",
+    mustFail: "printed TEST pages carry the watermark and the banner: 'TEST — not for assignment' across every page, in every page's header row, and the red banner under every heading" },
+  { guard: "'Print changes only' is offered for a TEST list", file: SCREEN, test: PRINT_TEST,
+    from: "if (changes) changes.hidden = !listView || !res || test || ", to: "if (changes) changes.hidden = !listView || !res || ",
+    mustFail: "slips and 'Print changes only' are off for a TEST list (even with a print it could be compared with); Print is on" },
+  { guard: "a TEST list's PDF is named like a real list's", file: SCREEN, test: PRINT_TEST,
+    from: "            if (res && res.demo === true) return 'Reflection Room TEST list ' + String(res.date || '') + ' - not for assignment';\n", to: "",
+    mustFail: "title has no names: the PDF is named 'Reflection Room TEST list 2026-10-13 - not for assignment', and the title comes back after" },
+  { guard: "a TEST list's print goes through recordPrint like a real one", file: SCREEN, test: PRINT_TEST,
+    from: "                if (res.demo === true) {\n                    openReflectionSheet(res, null);",
+    to: "                if (false) {\n                    openReflectionSheet(res, null);",
+    mustFail: "Print prints the TEST copy from a fresh read, and records nothing (the server refuses a TEST list's print)" },
 ];
 
 // A builder's shortcut, never set in npm test: REFLECTION_TEETH_ONLY=<text>

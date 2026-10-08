@@ -15,14 +15,21 @@
 //      page title: "Reflection Room list 2026-10-13", never a student.
 //   4. THE WRONG CLOCK. "As of 11:46" is the school's time, whatever zone the
 //      Chromebook is set to.
+//   5. A TEST LIST TAKEN FOR A REAL ONE (2026-10-08). A TEST list built from
+//      a day's real marks (reflectionDemo.ts) says TEST ONLY in red on the
+//      screen, "TEST — not for assignment" on every printed page and in the
+//      PDF's name, offers no slips or changes-only sheet, and is never
+//      recorded as printed (section 11).
 //
 // It runs the SHIPPED screen code: the Reflection Room block and the shared
 // sort helpers are lifted out of script.js and run against a small fake DOM
 // and a fake server. A regex over the source would pass with the code broken.
 //
 // TEETH: scripts/reflection-teeth.mjs prints from the array on screen without
-// the fresh read, drops the NOT FINAL mark, and drops the school's time zone,
-// one at a time, and requires the check named for each to FAIL.
+// the fresh read, drops the NOT FINAL mark, and drops the school's time zone
+// -- and for a TEST list drops its TEST mark, offers "Print changes only",
+// names its PDF like a real list's and records its print -- one at a time,
+// and requires the check named for each to FAIL.
 
 // THE CHROMEBOOK IS IN TOKYO for this whole file: every time on screen and on
 // paper must still read as Los Angeles time.
@@ -543,6 +550,84 @@ console.log("\n10. WHO HAS PRINTED: A PRINT FROM BEFORE THE LIST WAS MADE IS OUT
   check("the roles' panel says a print from before the list was made is out of date, not 'still current'",
     items.some((t) => /^11:31 AM · granted@school\.test · master \(NOT FINAL\) · out of date: list made final at 11:45 AM$/.test(t))
       && items.some((t) => /^11:46 AM · pbis@school\.test · master · still current$/.test(t)), J(items));
+}
+
+// ======================================================================
+console.log("\n11. A TEST LIST: SAID IN RED, ON SCREEN AND ON EVERY PAGE, AND NEVER A RECORD\n");
+// ======================================================================
+{
+  // reflectionDemo:build (2026-10-08): a TEST list for a day with no real
+  // list, built at 11:46 from that day's PowerSchool marks. The server sends
+  // demo: true, and no PILOT or NOT FINAL banner.
+  const DEMO = () => {
+    const r = RES({ view: "demo", demo: true, demoBuiltAt: "2026-10-13T18:46:00.000Z", banners: [], times: null,
+      mode: { ms: "shadow", hs: "shadow" },
+      myPrintChanges: { printAt: "2026-10-13T18:31:07.000Z", kind: "master", final: false, count: 1, outOfDate: true, added: ["1009"], release: [], cleared: [], voided: [] } });
+    r.sections = r.sections.map((s) => ({ ...s, mode: "shadow", rows: s.rows.filter((x) => !x.released).map((x) => ({ ...x, mode: "shadow", state: "listed", key: "demo:" + x.studentNumber })) }));
+    return r;
+  };
+  const BANNER = "TEST ONLY — built from today's PowerSchool marks at 11:46 AM. Not a real list. Do not assign.";
+  const BANNER_HTML = BANNER.replace("'", "&#39;");
+  const recorded = [];
+  const w = makeWorld(scriptSrc, { query: () => DEMO(), mutation: (a) => { recorded.push(a); return { ok: true, at: "2026-10-13T18:47:00.000Z" }; } });
+  await w.app.loadReflectionList();
+  const banners = w.fixed.rrBanners.innerHTML;
+  check("the screen shows the red TEST ONLY banner first, with the time it was built in school time",
+    banners.startsWith('<div class="rr-banner rr-banner-test" data-rr-banner="demo" role="alert">' + BANNER_HTML + "</div>"), banners.slice(0, 200));
+  const list = w.fixed.rrList.innerHTML;
+  check("...each section says TEST, never PILOT, and the day line says it is not a real list",
+    (list.match(/rr-test-chip">TEST: do not assign</g) || []).length === 2 && !/PILOT/.test(list)
+      && /TEST ONLY: built at 11:46 AM, not a real list/.test(w.fixed.rrDayNote.textContent), w.fixed.rrDayNote.textContent);
+  check("slips and 'Print changes only' are off for a TEST list (even with a print it could be compared with); Print is on",
+    w.fixed.rrSlipsBtn.disabled === true && w.fixed.rrChangesBtn.hidden === true && w.fixed.rrPrintBtn.disabled === false,
+    J({ slips: w.fixed.rrSlipsBtn.disabled, changes: w.fixed.rrChangesBtn.hidden }));
+
+  w.calls.length = 0;
+  await w.app.printReflectionList();
+  const p = w.prints[0] || {};
+  const pages = sheetPages(p.sheet || "");
+  check("Print prints the TEST copy from a fresh read, and records nothing (the server refuses a TEST list's print)",
+    w.prints.length === 1 && w.calls.map((c) => c.path).join() === "reflectionList:listForDay" && recorded.length === 0, J(w.calls.map((c) => c.path)));
+  const thead = (pg) => (/<th colspan="8" class="rr-watermark">([^<]*)<\/th>/.exec(pg) || [])[1] || "";
+  check("printed TEST pages carry the watermark and the banner: 'TEST — not for assignment' across every page, in every page's header row, and the red banner under every heading",
+    pages.length === 2 && (p.sheet.match(/class="rr-test-watermark" aria-hidden="true" data-rr-test-watermark>TEST — not for assignment<\/div>/g) || []).length === 1
+      && pages.every((pg) => thead(pg) === "TEST — not for assignment" && /^ rr-print-page rr-test"/.test(pg)
+        && pg.includes('<p class="rr-test-banner" data-rr-test>' + BANNER_HTML + "</p>")),
+    J({ marks: pages.map(thead), watermarks: (p.sheet.match(/rr-test-watermark/g) || []).length, banner: (/<p class="rr-test-banner"[^<]*</.exec(p.sheet) || [])[0] }));
+  check("...and never PILOT or NOT FINAL as well: each page heads 'TEST ONLY'",
+    !/PILOT|NOT FINAL/.test(p.sheet) && pages.every((pg) => /As of 11:31 AM · TEST ONLY · 4 students/.test(pg)), pages.map((pg) => (/<p class="print-sub">([^<]*)</.exec(pg) || [])[1]).join(" | "));
+  const names = STUDENTS.flatMap((s) => [s.firstName, s.lastName]);
+  check("title has no names: the PDF is named 'Reflection Room TEST list 2026-10-13 - not for assignment', and the title comes back after",
+    p.title === "Reflection Room TEST list 2026-10-13 - not for assignment" && /TEST/.test(p.title) && !names.some((n) => p.title.includes(n)) && p.printing === true,
+    p.title);
+  w.fire("afterprint");
+  check("...the app's own title comes back when the print dialog closes", w.document.title === "Wildcat Hub");
+  w.app.closeReflectionSheet();
+
+  w.alerts.length = 0;
+  const callsBefore = w.calls.length;
+  await w.app.printReflectionSlips();
+  await w.app.printReflectionChanges();
+  check("slips and 'Print changes only', pressed anyway, print and record nothing for a TEST list, and say why",
+    w.prints.length === 1 && recorded.length === 0 && w.calls.slice(callsBefore).every((c) => c.kind === "query")
+      && /TEST list, so there are no slips/.test(w.alerts[0] || "") && /TEST list: no print of it is recorded/.test(w.alerts[1] || ""), J(w.alerts));
+
+  w.app.setLoadedAt(Date.now() - 5000);
+  w.fire("beforeprint");
+  const menu = w.sheet()?.innerHTML || "";
+  check("the browser's own print menu prints the TEST copy too, watermark and banner on every page",
+    /data-rr-test-watermark>TEST — not for assignment/.test(menu) && sheetPages(menu).length === 2
+      && sheetPages(menu).every((pg) => /data-rr-test>TEST ONLY/.test(pg)) && w.document.title === "Reflection Room TEST list 2026-10-13 - not for assignment");
+  w.fire("afterprint");
+
+  // A REAL day is drawn exactly as before.
+  const real = makeWorld(scriptSrc, { query: () => RES(), mutation: () => ({ ok: true }) });
+  const realHtml = real.app.reflectionSheetHtml(RES(), { byNumber: real.app.rrStudentIndex(), printedBy: "Pat" });
+  await real.app.loadReflectionList();
+  check("the PILOT watermark logic is unchanged for real days: PILOT and NOT FINAL as before, no TEST anywhere, the real title",
+    sheetPages(realHtml).map(thead).join(" | ") === "PILOT: do not assign · NOT FINAL: do not pull | NOT FINAL: do not pull"
+      && !/TEST|rr-test/.test(realHtml) && !/TEST|rr-test/.test(real.fixed.rrBanners.innerHTML + real.fixed.rrList.innerHTML)
+      && real.app.reflectionSheetTitle(RES()) === "Reflection Room list 2026-10-13", sheetPages(realHtml).map(thead).join(" | "));
 }
 
 console.log(`\n${pass} passed, ${fail} failed\n`);
