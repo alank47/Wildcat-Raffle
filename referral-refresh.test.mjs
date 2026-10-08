@@ -174,12 +174,6 @@ function liftLet(src, name) {
   if (!m) throw new Error("missing let " + name);
   return m[0].trim();
 }
-/** The same for a module-level `const`. */
-function liftConst(src, name) {
-  const m = new RegExp("\\n        const " + name + " = [^\\n]*;").exec(src);
-  if (!m) throw new Error("missing const " + name);
-  return m[0].trim();
-}
 
 /**
  * The pull, lifted, against a fake server. `G.rows` is what the server holds;
@@ -205,11 +199,9 @@ function loadPull(src, G) {
     ${liftFn(src, "serverOwnsReferralClose")}
     ${liftLet(src, "_referralPullBusy")}
     ${liftLet(src, "_referralPullAt")}
-    // What the pull records as on the server, and whose sign-in it is
-    // (review, 2026-10-07; referral-close-gate.test.mjs tests both).
+    // Whose sign-in it is (review, 2026-10-07; referral-close-gate.test.mjs
+    // tests the pull that comes back after a sign-out).
     ${liftLet(src, "_signInGeneration")}
-    ${liftConst(src, "_disciplineOnServer")}
-    ${liftFn(src, "noteDisciplineOnServer")}
     async function loadLegacyDocsFromConvex(names) {
       G.reads.push(names.slice());
       await new Promise((r) => setTimeout(r, G.delay || 5));
