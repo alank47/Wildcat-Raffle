@@ -1014,6 +1014,26 @@
   }
 
   /**
+   * A detention id, minted the way a referral's is (review, 2026-10-07).
+   *
+   * 'detention_' + detentionIdCounter++ came from a counter no device ever
+   * learned from another: the save's max against the server read a peek that
+   * did not carry it, and the load read it from a slice no save writes. So two
+   * admins' devices handed out the same detention_N, the server kept the
+   * first (the stored copy wins a tie) and dropped the second without a word,
+   * and marking the second one served then wrote that child over the first
+   * child's detention. A counter shared between devices cannot be made safe
+   * without asking the server for each id; a minted one needs nothing shared.
+   *
+   * The 'detention_' prefix stays, so the card's ID (the part after the
+   * underscore) still reads, now as the date and seven characters. Old
+   * detentions keep their ids.
+   */
+  function newDetentionId(now, random) {
+    return 'detention_' + newReferralId(now, random).slice('REF-'.length);
+  }
+
+  /**
    * Ids appearing more than once in a referral list.
    *
    * Returns them rather than throwing: the caller decides whether a duplicate
@@ -1654,6 +1674,7 @@
     riskScore: riskScore,
     riskRanking: riskRanking,
     newReferralId: newReferralId,
+    newDetentionId: newDetentionId,
     duplicateReferralIds: duplicateReferralIds,
     SMALL_GROUP: SMALL_GROUP,
     MIN_REFERRALS_FOR_INDEX: MIN_REFERRALS_FOR_INDEX,

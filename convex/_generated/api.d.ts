@@ -74,6 +74,8 @@ import type * as pushSend from "../pushSend.js";
 import type * as raceRollup from "../raceRollup.js";
 import type * as readHeadroom from "../readHeadroom.js";
 import type * as readHeadroomRules from "../readHeadroomRules.js";
+import type * as referralAccess from "../referralAccess.js";
+import type * as referralAccessRules from "../referralAccessRules.js";
 import type * as referralMail from "../referralMail.js";
 import type * as referralMailRules from "../referralMailRules.js";
 import type * as referralPing from "../referralPing.js";
@@ -183,6 +185,8 @@ declare const fullApi: ApiFromModules<{
   raceRollup: typeof raceRollup;
   readHeadroom: typeof readHeadroom;
   readHeadroomRules: typeof readHeadroomRules;
+  referralAccess: typeof referralAccess;
+  referralAccessRules: typeof referralAccessRules;
   referralMail: typeof referralMail;
   referralMailRules: typeof referralMailRules;
   referralPing: typeof referralPing;

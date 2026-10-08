@@ -2919,6 +2919,15 @@
             // First, so nothing still in flight for the person leaving can
             // install its answer after this (pullReferralsOnce, saveData).
             _signInGeneration++;
+            // THE SAVE QUEUE FORGETS THEM TOO (review, 2026-10-07). Its
+            // pending pass belongs to the person leaving and cannot land once
+            // they have gone (Logout says so before "Log out anyway"). Kept,
+            // it retried on the login screen, and a direct save at the next
+            // sign-in did not clear it, so the next person's Logout warned
+            // them about work they never did.
+            if (typeof _saveQueue !== 'undefined' && _saveQueue && typeof _saveQueue.discard === 'function') {
+                _saveQueue.discard();
+            }
             sessionStorage.removeItem('currentUser');
             sessionStorage.removeItem('currentStudent');
             sessionStorage.removeItem('lastActivity');
@@ -3520,6 +3529,13 @@
                         lastSaveTimestamp: s.lastSaveTimestamp,
                         currentWeek: s.currentWeek,
                         currentCycle: { cycleNumber: s.cycleNumber },
+                        // The two id counters saveData takes its max against
+                        // (review, 2026-10-07). appData:freshness has always
+                        // returned them and this dropped them, so that max
+                        // compared against 1 and a tab sent its own counter,
+                        // lower than the server's, over the server's.
+                        referralIdCounter: s.referralIdCounter,
+                        detentionIdCounter: s.detentionIdCounter,
                     }),
                 };
             } catch (e) {
@@ -4201,6 +4217,10 @@
                         // and new detentions were handed ids that already existed.
                         // Max, so a tab that has already issued ids this session
                         // does not go backwards and reissue them.
+                        // NO ID IS MADE FROM IT ANY MORE (review, 2026-10-07):
+                        // no save writes this slice, so it never synced, and
+                        // detention ids are now minted (newDetentionId). It is
+                        // still carried for the tabs that predate that.
                         detentionIdCounter = Math.max(
                             Number(detentionIdCounter) || 1,
                             Number(secondaryData.detentionIdCounter) || 1);
@@ -6073,6 +6093,27 @@
                                 if (res.status === 'rejected') {
                                     console.error(`❌ secondary.${secondaryNames[i]} save failed:`,
                                         res.reason?.message || res.reason);
+                                    // A DETENTION THAT DID NOT LAND IS A SAVE THAT
+                                    // FAILED (review, 2026-10-07). This was a red
+                                    // console line and nothing else: the save
+                                    // returned true, the queue went idle, nothing
+                                    // retried it, and Logout asked only "Are you
+                                    // sure?" before taking it off the device. Also
+                                    // the case for every detention made in a tab
+                                    // whose 'secondary' read failed at page start,
+                                    // which mergeLegacySlice refuses to write.
+                                    // Counted, so the queue keeps it pending and
+                                    // retries it, and Logout names it. Only when
+                                    // the tab holds a detention: a teacher's list
+                                    // is always empty, and an empty one refused
+                                    // in that unread tab loses nothing, but
+                                    // counted it would fail every save the tab
+                                    // made and keep every referral on the "not
+                                    // saved yet" bar.
+                                    if (secondaryNames[i] === 'detentions' && (detentions || []).length) {
+                                        writesFailed.push('secondary.detentions');
+                                        if (isUnauthorized(res.reason)) sawUnauthorized = true;
+                                    }
                                 }
                             });
                             if (secondaryNames.length === 0) {
@@ -44109,7 +44150,7 @@
                 const today = new Date().toISOString().split('T')[0];
                 const totalDays = Math.max(1, Math.min(20, parseInt(days, 10) || 1));
                 detentions.push({
-                    id: 'detention_' + detentionIdCounter++,
+                    id: window.WildcatDiscipline.newDetentionId(),   // minted: see newDetentionId
                     studentId: r.studentId,
                     studentName: r.studentName,
                     grade: student.grade,
@@ -45305,7 +45346,8 @@
             
             // Create detention record
             const detention = {
-                id: 'detention_' + detentionIdCounter++,
+                // Minted, not counted (review, 2026-10-07): see newDetentionId.
+                id: window.WildcatDiscipline.newDetentionId(),
                 studentId: studentId,
                 studentName: `${student.firstName} ${student.lastName}`,
                 grade: student.grade,
@@ -45319,6 +45361,9 @@
                 status: 'active', // 'active' or 'completed'
                 assignedBy: currentUser.name,
                 assignedAt: new Date().toISOString(),
+                // What the server's merge compares, as editDetention and
+                // markDetentionDay stamp it.
+                updatedAt: new Date().toISOString(),
                 servedDates: [], // Array of dates when detention was served
                 completedAt: null
             };
@@ -45535,7 +45580,15 @@
                 detention.status = 'active';
                 detention.completedAt = null;
             }
-            
+            // STAMPED, OR THE EDIT NEVER REACHES THE SERVER (review,
+            // 2026-10-07). legacyData:mergeSlice replaces a stored detention
+            // only with a copy whose touchedAt (updatedAt, closedAt and the
+            // like) is newer, and nothing changed above is one of those. The
+            // server answered "updated 0" without an error, so the save
+            // counted as landed, the toast said "Detention updated", and a
+            // reload, or any other admin's screen, showed the old days.
+            detention.updatedAt = new Date().toISOString();
+
             requestSave('Detention edited');       // the queue: see assignDetention
             updateDetentionLists();
             showSuccessToast(`✅ Detention updated for ${detention.studentName}`);

@@ -732,5 +732,80 @@ console.log("\nAn award made WHILE a save is in flight still reaches a counter")
     /else rememberCashBase\(st\);/.test(code));
 }
 
+console.log("\nA detention that did not land is a save that failed (review, 2026-10-07)");
+{
+  // The step of saveData that settles the secondary writes, cut out and run.
+  // A rejected detentions write was a console line and nothing else: the save
+  // returned true, the queue went idle, and Logout asked only "Are you sure?"
+  // before signing out took the detention off the device.
+  const liftFn = (src, name) => {
+    const m = new RegExp("\\n        (?:async )?function " + name + "\\(").exec(src);
+    if (!m) throw new Error("missing function " + name);
+    return src.slice(m.index + 1, src.indexOf("\n        }\n", m.index + 1) + 10);
+  };
+  const settleStep = (src) => {
+    const a = src.indexOf("const secondaryResults = await Promise.allSettled(secondaryWrites);");
+    const b = src.indexOf("if (secondaryNames.length === 0) {", a);
+    if (a < 0 || b < 0) throw new Error("the secondary settle step moved");
+    return new Function("secondaryWrites", "secondaryNames", "detentions",
+      "const console = { error() {}, log() {} };\n" + liftFn(src, "isUnauthorized") +
+      "\nreturn (async () => { const writesFailed = []; let sawUnauthorized = false;\n" + src.slice(a, b) +
+      "\nreturn { writesFailed, sawUnauthorized }; })();");
+  };
+  const HELD = [{ id: "detention_x" }];
+  const run = (src, outcomes, held = HELD) => settleStep(src)(outcomes.map(([, p]) => p), outcomes.map(([n]) => n), held);
+  const no = (msg) => Promise.reject(new Error(msg));
+  const ok = () => Promise.resolve({ inserted: 1 });
+
+  const failed = await run(script, [["detentions", no("network")], ["hallPasses", ok()]]);
+  check("a detentions write that failed is counted, so the save returns false",
+    JSON.stringify(failed.writesFailed) === JSON.stringify(["secondary.detentions"]) && !failed.sawUnauthorized);
+  const refused = await run(script, [["detentions", no("[CONVEX] 401 Unauthorized")]]);
+  check("...and a 401 on it renews the sign-in like any other refused write", refused.sawUnauthorized === true);
+  const landed = await run(script, [["detentions", ok()]]);
+  check("control: a detentions write that landed counts nothing", landed.writesFailed.length === 0);
+
+  // The persistent case: 'secondary' could not be read at page start, so
+  // mergeLegacySlice refuses every detention this tab makes, and sends none.
+  let sent = 0;
+  const merge = new Function("window", "unreadLegacyDocs", liftFn(script, "mergeLegacySlice") + "\nreturn mergeLegacySlice;")(
+    { WildcatAuth: { getSession: () => ({ idToken: "t" }), convexMutation: async () => { sent++; return {}; } } },
+    new Set(["secondary"]));
+  const unread = await run(script, [["detentions", merge("secondary", "detentions", [{ id: "detention_x" }], "id")]]);
+  check("a detention in a tab that could not read 'secondary' is not sent, and is counted as not saved",
+    sent === 0 && unread.writesFailed.includes("secondary.detentions"));
+  // ...but a tab holding no detention (every teacher's) loses nothing when its
+  // empty list is refused, and counting it would fail every save it made.
+  const empty = await run(script, [["detentions", merge("secondary", "detentions", [], "id")]], []);
+  check("an empty detention list refused in that tab counts nothing", sent === 0 && empty.writesFailed.length === 0);
+
+  check("success is still the absence of failures", /saveSucceeded = writesFailed\.length === 0;/.test(save));
+  const uncounted = script.replace("                                        writesFailed.push('secondary.detentions');\n", "");
+  if (uncounted === script) throw new Error("teeth: the detentions push moved");
+  const t = await run(uncounted, [["detentions", no("network")]]);
+  check("TEETH: without the count a failed detention save reports nothing", t.writesFailed.length === 0);
+}
+
+console.log("\nThe freshness peek carries the id counters the save takes its max against (review, 2026-10-07)");
+{
+  const liftFn = (src, name) => {
+    const m = new RegExp("\\n        (?:async )?function " + name + "\\(").exec(src);
+    return src.slice(m.index + 1, src.indexOf("\n        }\n", m.index + 1) + 10);
+  };
+  const peekWith = (src, answer) => new Function("window", "console", liftFn(src, "peekServerState") + "\nreturn peekServerState();")(
+    { WildcatAuth: { getSession: () => ({ idToken: "t" }), convexQuery: async () => answer } }, { warn() {} });
+  const answer = { lastSaveTimestamp: 1, currentWeek: 6, cycleNumber: 2, referralIdCounter: 40, detentionIdCounter: 50 };
+  const d = (await peekWith(script, answer)).data();
+  check("the server's detention counter reaches the save", d.detentionIdCounter === 50);
+  check("...and its referral counter", d.referralIdCounter === 40);
+  check("so a tab holding 3 sends 50, not 3",
+    Math.max(Number(3) || 1, Number(d.detentionIdCounter) || 1) === 50
+    && /Number\(serverCounters\.detentionIdCounter\) \|\| 1\)/.test(save));
+  const dropped = script.replace("                        detentionIdCounter: s.detentionIdCounter,\n", "");
+  if (dropped === script) throw new Error("teeth: the peek's counter line moved");
+  check("TEETH: a peek that drops it leaves the save comparing against 1",
+    (await peekWith(dropped, answer)).data().detentionIdCounter === undefined);
+}
+
 console.log(`\n${pass} passed, ${fail} failed\n`);
 if (fail) process.exit(1);

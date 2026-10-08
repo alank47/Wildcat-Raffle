@@ -417,5 +417,73 @@ console.log("\nA save that resolves false is a save that did not happen");
   check("and the caller gets null", a.done && a.ok === null);
 }
 
+console.log("\nSign-out discards what the person leaving had outstanding (review, 2026-10-07)");
+{
+  // A failed save keeps the queue pending and retrying, which is right while
+  // its person is signed in. Once they have signed out it cannot land, and
+  // the next person on the same tab read that pending flag at their own
+  // Logout as work of theirs. discard() forgets it, for good.
+  const results = [false];
+  let saves = 0;
+  const h = harness({ save: async () => { saves++; return results.length ? results.shift() : true; } });
+  const a = track(h.q.request("detention"));
+  await h.advance(1000);
+  check("before: the failed save is pending, with a retry scheduled", h.q.isPending() === true && h.nextDelay() === 2000 && a.ok === false);
+  h.q.discard();
+  check("after discard nothing is pending", h.q.isPending() === false);
+  check("...and no retry is scheduled", h.nextDelay() === null);
+  await h.advance(60000);
+  check("...and nothing is retried, however long the login screen sits", saves === 1);
+  // The next person's own work: no inherited backoff, a normal pass.
+  const b = track(h.q.request("next person"));
+  check("the queue still works for the next person, without the old backoff", h.nextDelay() === 1000);
+  await h.advance(1000);
+  check("...and their save runs and lands", saves === 2 && b.ok === true && h.q.isPending() === false);
+}
+{
+  // A request still in its quiet period: its caller is told false, now.
+  let saves = 0;
+  const h = harness({ save: async () => { saves++; return true; } });
+  const a = track(h.q.request("quiet"));
+  h.q.discard();
+  await settle();
+  check("a request not yet started is answered false at discard", a.done && a.ok === false);
+  await h.advance(10000);
+  check("...and never sent", saves === 0 && h.q.isPending() === false);
+}
+{
+  // A save already running when they sign out: it finishes and its caller
+  // hears the answer, but it is not pending and a failure re-arms nothing.
+  const save = controllableSave();
+  const h = harness({ save });
+  const a = track(h.q.request("running"));
+  await h.advance(1000);
+  check("a save is running", save.calls.length === 1 && h.q.isPending() === true);
+  h.q.discard();
+  check("discarded while running: not pending", h.q.isPending() === false);
+  // The next person asks for a save while the old one is still out.
+  const b = track(h.q.request("next person"));
+  save.calls[0].resolve(false);
+  await settle();
+  check("the old save's caller hears its answer", a.done && a.ok === false);
+  check("...its failure is not retried, and is not a failure of the next person's",
+    h.q.stats().consecutiveFailures === 0 && h.nextDelay() === 1000);
+  await h.advance(1000);
+  check("the next person's request gets its own pass", save.calls.length === 2);
+  save.calls[1].resolve(true);
+  await settle();
+  check("...which lands", b.done && b.ok === true && h.q.isPending() === false);
+}
+{
+  // CONTROL: without discard the same failed save stays pending and retries,
+  // which is what the next person's Logout used to read.
+  let saves = 0;
+  const h = harness({ save: async () => { saves++; return false; } });
+  track(h.q.request("detention"));
+  await h.advance(1000);
+  await h.advance(60000);
+  check("control: undiscarded, it is still pending and retried on the login screen", h.q.isPending() === true && saves > 2);
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

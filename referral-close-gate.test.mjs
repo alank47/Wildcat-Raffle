@@ -802,6 +802,30 @@ for (const action of ["assign", "mark", "edit"]) {
     a.currentUser === null && a.detentions.length === 0 && !("detentions" in blobIn(G)));
 }
 
+console.log("\n-- (A) ...and Log out anyway takes the queued save with them: the next person is not asked about it (review) --");
+/** A detention action whose save fails, Log out anyway, then another person signs in to the same tab. */
+async function leaveThenNext(action, src) {
+  const r = await detentionAction(action, src, { answers: [true] });   // Log out anyway
+  const before = r.G.saveQueue.isPending();
+  await r.a.logout();
+  const asked = r.G.confirms.at(-1);
+  const sent = (r.G.queueSaves || []).length;
+  for (let i = 0; i < 8; i++) await r.tick();   // the login screen sits; any retry the queue had scheduled fires
+  const retriedOnLogin = (r.G.queueSaves || []).length - sent;
+  signsIn(r.a, TEACHER);
+  r.G.answers = [false];
+  await r.a.logout();
+  return { ...r, before, asked, retriedOnLogin };
+}
+for (const action of ["assign", "mark", "edit"]) {
+  const { G, a, before, asked, retriedOnLogin } = await leaveThenNext(action, script);
+  check(`${action}: pending before, so the leaver was asked`, before === true && asked === SENDING_QUESTION && a.currentUser !== ADMIN);
+  check(`${action}: nothing is retried on the login screen`, retriedOnLogin === 0, String(retriedOnLogin));
+  check(`${action}: the next person's Logout asks the usual question`,
+    a.currentUser === TEACHER && G.confirms.at(-1) === "Are you sure you want to logout?" && G.confirmOpts.at(-1) === null,
+    G.confirms.at(-1));
+}
+
 console.log("\n-- (B) the inactivity logout keeps the teacher's own unsaved referral, and nothing else --");
 {
   const { G, a } = teacherWithUnsaved();
@@ -1767,6 +1791,13 @@ console.log("\n-- TEETH: the detention saves, the Close toast, the bar's words, 
       (G.directSaves || []).length === 1 && DETENTION_CHANGED[action](a) && G.confirms.at(-1) === "Are you sure you want to logout?",
       G.confirms.at(-1));
   }
+
+  // A sign-out that leaves the queue alone: it retries on the login screen
+  // and the next person's Logout names work they never did.
+  const keepQueue = breakOnce(script, "                _saveQueue.discard();\n", "", "queue discard");
+  const kq = await leaveThenNext("assign", keepQueue);
+  check("TEETH: without the discard the next person is warned about the leaver's save",
+    kq.G.confirms.at(-1) === SENDING_QUESTION && kq.retriedOnLogin > 0, J({ q: kq.G.confirms.at(-1), r: kq.retriedOnLogin }));
 
   const chattyClose = script
     .replace("                .then(ok => {\n                    if (generation !== _signInGeneration) return;\n", "                .then(ok => {\n")

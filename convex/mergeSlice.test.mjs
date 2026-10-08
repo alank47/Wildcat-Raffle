@@ -877,5 +877,138 @@ console.log("\nThe close guard: a non-closer's copy cannot close, claim or lock 
   }
 }
 
+console.log("\nDetentions from the app's own screens reach the server (review, 2026-10-07)");
+{
+  // The Detention tab's assignDetention and editDetention, lifted out of
+  // script.js and run, and what they produce merged by the handler above as an
+  // admin. Two ways a detention was lost without an error:
+  //   - an EDIT changed totalDays, daysRemaining, status and completedAt but no
+  //     field touchedAt reads, so the stored copy was never replaced
+  //     ("updated 0", the toast said "Detention updated");
+  //   - two devices minted the same detention_N from a counter neither learned
+  //     from the other, and the server kept the first and dropped the second.
+  const script = readFileSync(new URL("../script.js", import.meta.url), "utf8");
+  const discSrc = readFileSync(new URL("../wildcat-discipline.js", import.meta.url), "utf8");
+  const D = (() => { const sb = {}; new Function("globalThis", discSrc).call(sb, sb); return sb.WildcatDiscipline; })();
+  const liftFn = (src, name) => {
+    const m = new RegExp("\\n        (?:async )?function " + name + "\\(").exec(src);
+    if (!m) throw new Error("missing function " + name);
+    return src.slice(m.index + 1, src.indexOf("\n        }\n", m.index + 1) + 10);
+  };
+  const breakOnce = (src, from, to, label) => {
+    const at = src.indexOf(from);
+    if (at < 0 || src.indexOf(from, at + 1) >= 0) throw new Error(`teeth "${label}": anchor not found exactly once`);
+    return src.slice(0, at) + to + src.slice(at + from.length);
+  };
+  /** One device's Detention tab: its detentions, its counter, its form. */
+  const device = (src, G) => new Function("G", "Dm", `
+    const window = { WildcatDiscipline: Dm };
+    const document = { getElementById: (id) => (G.els[id] ||= { value: "", style: {} }) };
+    let detentions = G.detentions || [];
+    let detentionIdCounter = G.counter || 1;
+    const students = G.students || [];
+    const currentUser = { name: "An Admin" };
+    async function showPrompt() { return G.promptAnswer; }
+    function alert() {}
+    function requestSave() {}
+    function updateDetentionLists() {}
+    function showSuccessToast() {}
+    function clearDetentionStudentSelection() {}
+    ${liftFn(src, "assignDetention")}
+    ${liftFn(src, "editDetention")}
+    return { assignDetention, editDetention, get detentions() { return detentions; } };`)(G, D);
+
+  const ADMIN = { email: "admin@school.org", name: "An Admin", role: "admin" };
+  const past = "2026-10-01T15:00:00.000Z";
+  const copy = (p) => JSON.parse(JSON.stringify(p));
+  const det = (over) => ({ id: "detention_7", studentId: "S1", studentName: "Kid Synthetic", grade: "9", location: "Main Office",
+    status: "active", totalDays: 2, daysServed: 0, daysRemaining: 2, servedDates: [], completedAt: null,
+    assignedBy: "An Admin", assignedAt: past, ...over });
+  const merge = async (existing, rows) => {
+    const f = fakeDb(existing.map((p) => row(p)));
+    const res = await runNew({ db: { ...f.ctx.db }, __me: ADMIN }, "secondary", "detentions", rows.map((p) => row(p)), "id",
+      MAX_ROWS_PER_SLICE, mailSpy().fn);
+    return { res, stored: f.ctx.rowsInOrder().map((r) => r.payload) };
+  };
+  /** editDetention on this device's copy of `stored`, then that copy merged over the server's. */
+  const editThenSave = async (src, stored, days) => {
+    const dev = device(src, { detentions: [copy(stored)], promptAnswer: String(days), els: {} });
+    await dev.editDetention(stored.id);
+    return { ...(await merge([stored], [dev.detentions[0]])), sent: dev.detentions[0] };
+  };
+
+  {
+    const g = await editThenSave(script, det(), 5);
+    check("an edit to a detention never marked reaches the server", g.res.updated === 1
+      && g.stored[0].totalDays === 5 && g.stored[0].daysRemaining === 5);
+    const stale = await merge([g.stored[0]], [det()]);
+    check("...and a tab's older copy sent afterwards does not undo it", stale.res.updated === 0 && stale.stored[0].totalDays === 5);
+  }
+  {
+    const marked = det({ daysServed: 1, daysRemaining: 1, servedDates: ["2026-10-01"], updatedAt: past });
+    const g = await editThenSave(script, marked, 4);
+    check("an edit to a detention already marked reaches the server (the edit used to keep the mark's stamp)",
+      g.res.updated === 1 && g.stored[0].totalDays === 4 && g.stored[0].daysServed === 1);
+  }
+  {
+    const done = det({ status: "completed", daysServed: 2, daysRemaining: 0, completedAt: past, updatedAt: past });
+    const g = await editThenSave(script, done, 3);
+    check("a completed detention edited back to active is active again on the server",
+      g.res.updated === 1 && g.stored[0].status === "active" && g.stored[0].completedAt === null && g.stored[0].daysRemaining === 1);
+  }
+  {
+    const unstamped = breakOnce(script,
+      "            detention.updatedAt = new Date().toISOString();\n\n            requestSave('Detention edited');",
+      "            requestSave('Detention edited');", "edit stamp");
+    const g = await editThenSave(unstamped, det(), 5);
+    check("TEETH: an edit without its stamp is dropped by the merge (updated 0, still 2 days)",
+      g.res.updated === 0 && g.stored[0].totalDays === 2);
+  }
+
+  /** Two admins' devices that loaded the same school, each assigning one detention, then both saving. */
+  const twoDevices = async (src) => {
+    const one = (sid, first) => {
+      const dev = device(src, { counter: 3, els: {
+        selectedDetentionStudentId: { value: sid }, detentionLocation: { value: "Main Office" },
+        detentionDateAssigned: { value: "2026-10-07" }, detentionTotalDays: { value: "2" },
+        detentionStartDate: { value: "2026-10-08" }, detentionReason: { value: "SYNTHETIC-REASON" } },
+        students: [{ id: sid, firstName: first, lastName: "Synthetic", grade: "9" }] });
+      dev.assignDetention();
+      return dev.detentions[0];
+    };
+    const x = one("SX", "Xan"), y = one("SY", "Yol");
+    const f = fakeDb([]);
+    const save = (rows) => runNew({ db: { ...f.ctx.db }, __me: ADMIN }, "secondary", "detentions", rows.map((p) => row(p)), "id",
+      MAX_ROWS_PER_SLICE, mailSpy().fn);
+    const a = await save([x]);
+    const b = await save([y]);
+    // Device B then marks its own detention served.
+    const later = new Date(Date.now() + 60e3).toISOString();
+    await save([{ ...y, status: "completed", daysServed: 2, daysRemaining: 0, completedAt: later, updatedAt: later }]);
+    const stored = f.ctx.rowsInOrder().map((r) => r.payload);
+    return { x, y, a, b, stored };
+  };
+  {
+    const t = await twoDevices(script);
+    check("two devices with the same counter mint different detention ids", t.x.id !== t.y.id
+      && /^detention_\d{6}-[2-9A-HJ-NP-Z]{7}$/.test(t.x.id), t.x.id + " " + t.y.id);
+    check("...the card's ID (after the underscore) still reads", t.x.id.split("_")[1].length === 14);
+    check("both detentions are stored", t.a.inserted === 1 && t.b.inserted === 1 && t.stored.length === 2);
+    check("...each naming its own student", t.stored.find((d) => d.id === t.x.id)?.studentId === "SX"
+      && t.stored.find((d) => d.id === t.y.id)?.studentId === "SY");
+    check("marking the second one served leaves the first child's detention alone",
+      t.stored.find((d) => d.id === t.x.id)?.status === "active" && t.stored.find((d) => d.id === t.y.id)?.status === "completed");
+    check("no detention is minted from the counter any more", !/'detention_' \+ detentionIdCounter\+\+/.test(script));
+  }
+  {
+    const counted = breakOnce(script,
+      "                // Minted, not counted (review, 2026-10-07): see newDetentionId.\n                id: window.WildcatDiscipline.newDetentionId(),",
+      "                id: 'detention_' + detentionIdCounter++,", "minted id");
+    const t = await twoDevices(counted);
+    check("TEETH: counted ids collide, the second detention is not stored, and its mark overwrites the first child's",
+      t.x.id === t.y.id && t.b.inserted === 0 && t.stored.length === 1 && t.stored[0].studentId === "SY");
+  }
+}
+
 console.log(`\n${pass} passed, ${fail} failed\n`);
 if (fail) process.exit(1);

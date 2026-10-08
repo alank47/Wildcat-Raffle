@@ -89,6 +89,11 @@
     var inFlight = null;          // promise of the running save, or null
     var waiters = [];             // settle when a save covering them completes
     var consecutiveFailures = 0;
+    // Bumped by discard(). A save that started before it settles without
+    // re-arming anything or counting as pending: the work was the departed
+    // person's (see discard).
+    var epoch = 0;
+    var inFlightEpoch = 0;
 
     var stats = { requested: 0, saves: 0, coalesced: 0, failures: 0, flushes: 0 };
 
@@ -133,6 +138,7 @@
       dirty = false;
       oldestRequestAt = null;
       stats.saves += 1;
+      var started = inFlightEpoch = epoch;
 
       var settled;
       try {
@@ -145,6 +151,13 @@
 
       inFlight = settled.then(function (result) {
         inFlight = null;
+        if (started !== epoch) {
+          // Discarded while it ran: its callers hear the answer, nothing is
+          // retried, and a request made since gets its own pass.
+          for (var d = 0; d < covered.length; d++) covered[d].resolve(result);
+          schedule();
+          return result;
+        }
         // A SAVE THAT SAYS false DID NOT SAVE. saveData resolves false on
         // every path that refuses (a stale tab, a guard, another save still
         // running) and never rejects. Treating that as success meant the
@@ -170,6 +183,11 @@
         return result;
       }, function (err) {
         inFlight = null;
+        if (started !== epoch) {
+          for (var e = 0; e < covered.length; e++) covered[e].reject(err);
+          schedule();
+          return null;
+        }
         consecutiveFailures += 1;
         stats.failures += 1;
         // The changes were NOT written. Re-arm rather than abandon them (4).
@@ -236,11 +254,32 @@
       });
     }
 
+    /**
+     * Forget what is outstanding: the person whose work it is has signed out
+     * (review, 2026-10-07). Nothing they asked for can land once they have
+     * gone, so it is not retried; their callers waiting on a save that never
+     * started are told false. A save already running finishes, but re-arms
+     * nothing and is not pending. Without this the pass went on retrying on
+     * the login screen, and the next person's Logout read it as theirs. The
+     * queue stays usable for whoever signs in next.
+     */
+    function discard() {
+      epoch += 1;
+      if (timer !== null) { clearTimer(timer); timer = null; }
+      dirty = false;
+      oldestRequestAt = null;
+      consecutiveFailures = 0;
+      var dropped = waiters;
+      waiters = [];
+      for (var i = 0; i < dropped.length; i++) dropped[i].resolve(false);
+    }
+
     return {
       request: request,
       flush: flush,
+      discard: discard,
       /** True when work exists only in memory. Read by the unload handler. */
-      isPending: function () { return dirty || inFlight !== null; },
+      isPending: function () { return dirty || (inFlight !== null && inFlightEpoch === epoch); },
       /** For tests and diagnostics only. */
       stats: function () {
         return {
