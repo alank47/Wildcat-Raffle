@@ -41293,18 +41293,36 @@
             pumpUniformQueue();
         }
 
-        /** The queue onto this device, under its owner's email. Student numbers only. Never throws. */
-        function storeUniformQueue() {
+        /**
+         * The queue onto this device, under its owner's email. Student numbers
+         * only. Never throws.
+         *
+         * MERGED, NEVER OVERWRITTEN (second review, 2026-10-08). The same
+         * person's other tab shares this key: it resumes this tab's entries
+         * and sends them, while this tab may take a new press. Writing only
+         * this tab's own queue -- or removing the key once it was empty --
+         * erased entries only the other tab still held, whose Logout then
+         * promised they "wait on this device". So this tab's queue is written
+         * together with every stored entry it does not hold, less `landed`:
+         * the press this tab has just seen land (or refused for good).
+         */
+        function storeUniformQueue(landed) {
             if (!_uvQueueOwner) return;
             try {
                 const key = UV_QUEUE_PREFIX + _uvQueueOwner;
-                if (_uvQueue.length) {
-                    localStorage.setItem(key, JSON.stringify(_uvQueue.map(q => ({
-                        attemptId: q.attemptId, studentNumber: q.studentNumber, loaner: q.loaner === true, observedAt: q.observedAt
-                    }))));
-                } else {
-                    localStorage.removeItem(key);
-                }
+                const raw = localStorage.getItem(key);
+                let saved = [];
+                try { saved = JSON.parse(raw || '[]'); } catch (e) { saved = []; }
+                const mine = new Set(_uvQueue.map(q => q.attemptId));
+                const all = _uvQueue.map(q => ({
+                    attemptId: q.attemptId, studentNumber: q.studentNumber, loaner: q.loaner === true, observedAt: q.observedAt
+                }));
+                (Array.isArray(saved) ? saved : []).forEach(q => {
+                    if (!q || typeof q.attemptId !== 'string' || !q.attemptId || mine.has(q.attemptId) || q.attemptId === landed) return;
+                    all.push({ attemptId: q.attemptId, studentNumber: String(q.studentNumber || ''), loaner: q.loaner === true, observedAt: q.observedAt });
+                });
+                if (all.length) localStorage.setItem(key, JSON.stringify(all));
+                else localStorage.removeItem(key);
                 _uvQueueStored = true;
             } catch (e) {
                 _uvQueueStored = false;
@@ -41345,6 +41363,10 @@
          * sent when they next sign in here (Logout names it first).
          */
         function forgetUniformQueue() {
+            // Written once more as it leaves, so "it waits on this device"
+            // (Logout) is true when it is said, whatever another tab of the
+            // same person wrote meanwhile.
+            storeUniformQueue();
             _uvPumpGen++;
             if (_uvPumpTimer) { clearTimeout(_uvPumpTimer); _uvPumpTimer = null; }
             if (_uvBurstTimer) { clearTimeout(_uvBurstTimer); _uvBurstTimer = null; }
@@ -41400,7 +41422,7 @@
                         continue;
                     }
                     _uvQueue.shift();
-                    storeUniformQueue();
+                    storeUniformQueue(item.attemptId);
                     uniformSaved(item, res);
                     renderUniformViolations();
                 }

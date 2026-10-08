@@ -819,6 +819,61 @@ console.log("\nThe queue survives a reload, and goes with the person at sign-out
   check("a device that cannot store it says so, so Logout can warn it would be lost", priv.api.stored() === false && priv.api.uniformQueueLength() === 1);
 }
 
+console.log("\nTwo tabs of one person: one tab's sends never erase what only the other holds");
+{
+  // Same staff member, two tabs on one Chromebook, a flaky network (second
+  // review, 2026-10-08). Tab B resumes A's stored queue and sends it; while
+  // it does, the adult presses Enter in A. B's last success used to write
+  // its own (empty) queue over the shared copy, erasing the entry only A
+  // held -- and A's Logout then promised it "waits on this device".
+  const storage = new Map();
+  const KEY = "wcUniformQueue:pbis@school.test";
+  const LEO = { studentNumber: "12003", firstName: "Leo", lastName: "Test", grade: "9" };
+  const offline = () => { throw new Error("Failed to fetch"); };
+  const a = queueWorld({ storage, students: [ROSA, OWEN, LEO], answer: offline });
+  a.api.pick(ROSA); a.api.commitUniformViolation(false);
+  await a.settle();
+  a.api.pick(OWEN); a.api.commitUniformViolation(false);
+  await a.settle();
+  const b = queueWorld({ storage, hold: true, students: [ROSA, OWEN, LEO] });
+  b.api.resumeUniformQueue("pbis@school.test");
+  await b.settle();
+  a.api.pick(LEO); a.api.commitUniformViolation(false);        // A's retry of Rosa is still waiting
+  await a.settle();
+  const leo = a.api.queue().find((q) => q.studentNumber === "12003");
+  b.pending.shift().resolve(okAnswer("", b.calls[0].args));
+  await b.settle();
+  b.pending.shift()?.resolve(okAnswer("", b.calls[1]?.args || {}));
+  await b.settle();
+  const ids = () => JSON.parse(storage.get(KEY) || "[]").map((q) => q.attemptId);
+  const afterB = ids();
+  const warned = a.api.uniformQueueLength() === 3 && a.api.stored() === true;   // what Logout in A says "waits on this device"
+  a.api.forgetUniformQueue();                                   // Logout in A
+  const afterLogout = ids();
+  const c = queueWorld({ storage, students: [ROSA, OWEN, LEO], answer: okAnswer });
+  c.api.resumeUniformQueue("pbis@school.test");
+  await c.settle();
+  check("two tabs of one person: the other tab's sends never erase an entry only this tab holds, so it waits on this device as Logout says",
+    b.calls.length === 2 && !!leo && afterB.includes(leo.attemptId) && warned && afterLogout.includes(leo.attemptId),
+    JSON.stringify({ sent: b.calls.length, afterB, afterLogout, leo: leo && leo.attemptId }));
+  check("...and it is sent at the next sign-in on this device, under the same press",
+    c.calls.some((x) => x.args.attemptId === leo.attemptId && x.args.studentNumber === "12003") && !storage.has(KEY),
+    JSON.stringify({ c: c.calls.map((x) => x.args.studentNumber), left: ids() }));
+  check("...while the entries the other tab saw land are dropped from this device's copy",
+    JSON.stringify(afterB) === JSON.stringify([leo.attemptId]), JSON.stringify(afterB));
+  // A tab still on the code before this fix (open across the deploy)
+  // removes the key once its own queue is empty. Logout writes this tab's
+  // queue once more as it leaves, so "it waits on this device" is true.
+  const d = queueWorld({ storage, students: [ROSA], answer: offline });
+  d.api.pick(ROSA); d.api.commitUniformViolation(false);
+  await d.settle();
+  const rosaId = d.api.queue()[0]?.attemptId;
+  storage.delete(KEY);
+  d.api.forgetUniformQueue();
+  check("...and Logout writes this tab's queue once more as it leaves, whatever another tab removed meanwhile",
+    !!rosaId && ids().includes(rosaId), JSON.stringify(ids()));
+}
+
 console.log("\nSigned out and back in while a send is out: the queue still goes");
 {
   // Logout empties the queue and steps the pump's generation; the same
