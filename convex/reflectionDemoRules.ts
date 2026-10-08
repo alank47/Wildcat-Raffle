@@ -96,6 +96,25 @@ export function previousWeekday(day: string, noSchool: Set<string> | string[]): 
   return d;
 }
 
+/**
+ * The division whose REAL list counts `day` (switched on, counting from that
+ * day or earlier), or null when neither does.
+ *
+ * NEVER A TEST LIST ON A DAY THE REAL LIST COUNTS. Until that day's real
+ * list is made, a TEST list would hide its NOT FINAL "so far" view and stop
+ * its prints. Asked when one is built (reflectionDemoStore), and again every
+ * time one is read (reflectionList.demoListOf): the switch can be moved after
+ * a TEST list was built -- setMode allows counting from today -- and the
+ * real list must win from that moment, not only once it is made.
+ */
+export function countingDivision(settings: ReflectionSettings, day: string): Division | null {
+  for (const d of ["ms", "hs"] as Division[]) {
+    const from = settings.countFromDateByDivision[d];
+    if (settings.modeByDivision[d] !== "off" && from && from <= day) return d;
+  }
+  return null;
+}
+
 /** PowerSchool shows attendance being taken on this date: a school day (the reader's own test). */
 export function readShowsSchool(date: string, rows: AttRow[], codes: Extract<CodeBook, { ok: true }>): boolean {
   return hasEvidence(summarizeDay(date, rows, codes, {}).rowCounts);

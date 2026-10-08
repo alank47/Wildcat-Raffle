@@ -17,7 +17,8 @@
 //      row for row: lines, tags, Power-Up, absent this morning, sections.
 //   2. IT HIDES OR REPLACES A REAL LIST. A real list made for the same day
 //      always wins, and a TEST list is never built for a day the real list
-//      counts.
+//      counts -- nor shown, nor allowed to stop a print, if the switch is
+//      moved after it was built so that its day counts.
 //   3. IT LEAVES A RECORD. recordPrint refuses it, and building and clearing
 //      it change no table but its own: no tardy, detention, day, print,
 //      audit line, setting, lease or uniform entry.
@@ -260,6 +261,19 @@ try {
     check("...and a day the real list counts (HS in shadow from that day): it would hide the real list's NOT FINAL view",
       counted.ok === false && /The real list counts Thu 10\/8 \(HS is in shadow from 2026-10-08\)/.test(counted.reason)
         && demo.store.rows("reflectionDemoLists")[0].builtAt === la(THU, "11:50"), J(counted));
+
+    // The switch moved AFTER the TEST list was built: setMode allows counting
+    // from today, so on Thursday HS can be set to count from Thursday itself,
+    // with Thursday's TEST list still stored.
+    const beforeMove = demo.store.snapshot();
+    await demo.store.db.patch(s._id, { value: { modeByDivision: { ms: "shadow", hs: "shadow" }, countFromDateByDivision: { ms: FRI, hs: THU } } });
+    const moved = await demo.tryRun("admin", "reflectionList.listForDay", { day: THU });
+    const movedPrint = await demo.tryRun("admin", "reflectionList.recordPrint", { day: THU, kind: "master", unitIds: [], studentNumbers: [], listVersion: "x" });
+    const storedTest = demo.store.rows("reflectionDemoLists").length;
+    demo.store.restore(beforeMove);
+    check("a TEST list built before the switch was moved to count its day never hides the real list: the real NOT FINAL list is shown, and its print is recorded",
+      storedTest === 1 && moved.demo === false && moved.view === "so-far" && movedPrint.ok === true && movedPrint.final === false,
+      J({ storedTest, view: moved.view, demo: moved.demo, movedPrint }));
 
     // Thursday's real list is made after all (a fallback freeze, say).
     const snap = demo.store.snapshot();

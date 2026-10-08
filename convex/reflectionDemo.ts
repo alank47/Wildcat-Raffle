@@ -19,8 +19,8 @@ import { buildCodeBook, normalizeRows, rosterSnapshotRows, studentMap, type AttR
  * 10/8, the day before the pilot starts counting. Discipline > Reflection
  * Room then shows this TEST list for that day -- under a red "TEST ONLY"
  * banner, with "TEST — not for assignment" across every printed page -- but
- * only while that day has no real list (reflectionList.listForDay). Clear it
- * once it has been shown.
+ * only while that day has no real list and the real list does not count it
+ * (reflectionList.listForDay). Clear it once it has been shown.
  *
  * WHAT IT READS. PowerSchool, with the real reader's own confirmed read
  * (reflectionRead.readConfirmed: two steady reads in a row holding the same

@@ -269,7 +269,10 @@ no print of it is recorded, and slips and "Print changes only" are off.
 Tardies only: no uniform entries, carries or queued detentions.
 
 It is refused for a day the real list counts (a division switched on from on
-or before that day), a day whose real list is made, and a future day.
+or before that day), a day whose real list is made, and a future day. If the
+switch is moved after it was built so that its day counts, the real list is
+shown and printed instead, as if the TEST list were not there.
+
 Building it again replaces it. Clear it once it has been shown:
 
 ```

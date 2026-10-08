@@ -501,15 +501,15 @@ const CASES = [
 
   // ---- the TEST list (owner, 2026-10-08: show admins the list in the Hub before it counts)
   { guard: "the TEST list is shown even on a day whose real list is made", file: LIST, test: DEMO_TEST,
-    from: "    if (!row?.frozenAt) {\n      const demo = await demoListOf(ctx, date);",
-    to: "    if (true) {\n      const demo = await demoListOf(ctx, date);",
+    from: "    if (!row?.frozenAt) {\n      const demo = await demoListOf(ctx, date, settings);",
+    to: "    if (true) {\n      const demo = await demoListOf(ctx, date, settings);",
     mustFail: "a real frozen list for the same day hides the demo: the real list is shown, and nothing of the TEST list" },
   { guard: "a print of a TEST list is recorded", file: LIST, test: DEMO_TEST,
-    from: "    if (!final && await demoListOf(ctx, a.day)) return { ok: false as const, reason: DEMO_PRINT_REFUSED };\n", to: "",
+    from: "    if (!final && await demoListOf(ctx, a.day, settings)) return { ok: false as const, reason: DEMO_PRINT_REFUSED };\n", to: "",
     mustFail: "recordPrint refused on demo: a master, slips or changes print of a TEST list is never recorded, and says why" },
   { guard: "the TEST list is answered before the check of who is asking", file: LIST, test: DEMO_TEST,
     from: "    // THE CHECK COMES FIRST: nothing below is read for someone refused.\n",
-    to: "    { const early = await demoListOf(ctx, day === \"today\" ? today : day);\n"
+    to: "    { const early = await demoListOf(ctx, day === \"today\" ? today : day, await loadSettings(ctx));\n"
       + "      if (early) return demoAnswer({ demo: early, date: early.day, today, next: today, nowIso, roles: false, settings: await loadSettings(ctx) }); }\n",
     mustFail: "access refused for a teacher and a campus aide without the grant, and for an expired grant: no TEST list, no TEST row" },
   { guard: "the TEST list carries the previous day's morning tardies too (as if its own list was never made)", file: DEMO_RULES, test: DEMO_TEST,
@@ -535,6 +535,10 @@ const CASES = [
     from: "                if (res.demo === true) {\n                    openReflectionSheet(res, null);",
     to: "                if (false) {\n                    openReflectionSheet(res, null);",
     mustFail: "Print prints the TEST copy from a fresh read, and records nothing (the server refuses a TEST list's print)" },
+  // The review of the TEST list (2026-10-08): the switch moved after a build.
+  { guard: "a TEST list is shown, and stops prints, on a day the switch was later moved to count", file: LIST, test: DEMO_TEST,
+    from: "  if (countingDivision(settings, day)) return null;\n", to: "",
+    mustFail: "a TEST list built before the switch was moved to count its day never hides the real list: the real NOT FINAL list is shown, and its print is recorded" },
 ];
 
 // A builder's shortcut, never set in npm test: REFLECTION_TEETH_ONLY=<text>

@@ -2,7 +2,7 @@ import { internalMutation, internalQuery } from "./_generated/server";
 import type { QueryCtx } from "./_generated/server";
 import { v } from "convex/values";
 import { getDay, loadRoster, loadSettings, markedOf, readState, ROSTER_KEY, schoolTimeZone } from "./reflection";
-import { DEMO_ROW_KEYS } from "./reflectionDemoRules";
+import { countingDivision, DEMO_ROW_KEYS } from "./reflectionDemoRules";
 import {
   clockText, dayLabel, wallClock,
   type Marked, type ReflectionSettings, type RosterMeta, type RosterSnap,
@@ -35,16 +35,15 @@ const DAY_KEY = /^\d{4}-\d{2}-\d{2}$/;
 const addDays = (iso: string, n: number) =>
   new Date(Date.parse(iso + "T00:00:00Z") + n * 86400000).toISOString().slice(0, 10);
 
-const DIVISIONS = ["ms", "hs"] as const;
-
 /**
  * Why no TEST list may be built for `day` -- or null when one may.
  *
- * NEVER FOR A DAY THE REAL LIST COUNTS. A real list always wins on screen,
- * but only once it is made: before that, a TEST list for the same day would
- * hide the real "so far" view and stop its prints (recordPrint refuses a day
- * with a TEST list). So a TEST list is only ever for a day before the switch
- * counts, such as 10/8 with the pilot counting from 10/9.
+ * NEVER FOR A DAY THE REAL LIST COUNTS (countingDivision). A TEST list for
+ * such a day would hide the real "so far" view and stop its prints until the
+ * real list is made. So a TEST list is only ever for a day before the switch
+ * counts, such as 10/8 with the pilot counting from 10/9 -- and if the switch
+ * is moved later so that the day counts, listForDay and recordPrint ask
+ * again and pass it over.
  */
 async function refusal(ctx: QueryCtx, day: string, today: string, settings: ReflectionSettings, tz: string): Promise<string | null> {
   if (!DAY_KEY.test(day)) return `Not a day: "${day}". Give it as YYYY-MM-DD.`;
@@ -54,13 +53,11 @@ async function refusal(ctx: QueryCtx, day: string, today: string, settings: Refl
     return `The real list for ${dayLabel(day)} was made at ${clockText(row.frozenAt, tz)}. A real list always wins, `
       + "so a TEST list for that day would never be shown. Nothing was built.";
   }
-  for (const d of DIVISIONS) {
-    const mode = settings.modeByDivision[d];
-    const from = settings.countFromDateByDivision[d];
-    if (mode !== "off" && from && from <= day) {
-      return `The real list counts ${dayLabel(day)} (${d.toUpperCase()} is in ${mode} from ${from}). A TEST list would hide `
-        + "its NOT FINAL view and stop its prints until it is made, so none is built for a day the real list counts.";
-    }
+  const d = countingDivision(settings, day);
+  if (d) {
+    return `The real list counts ${dayLabel(day)} (${d.toUpperCase()} is in ${settings.modeByDivision[d]} from `
+      + `${settings.countFromDateByDivision[d]}). A TEST list would hide its NOT FINAL view and stop its prints until it is `
+      + "made, so none is built for a day the real list counts.";
   }
   return null;
 }

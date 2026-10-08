@@ -14,6 +14,7 @@ import {
   termBanner, uniformLine, unitReleased, wallClock,
   type ClaimResult, type Division, type Mode, type ReflectionSettings, type RosterMeta, type RosterSnap, type ScheduleKind, type UnitItem,
 } from "./reflectionRules";
+import { countingDivision } from "./reflectionDemoRules";
 
 /**
  * THE DAILY REFLECTION ROOM LIST, AS STAFF SEE IT AND PRINT IT (build spec
@@ -432,8 +433,14 @@ function sectionsOf(rows: ListRowOut[], modes: Record<Division, Mode>, settings:
  * it on a day with no real list, and recordPrint, which refuses to record a
  * print of it. Nothing that makes, carries, reviews, verifies or reports on
  * the real list reads it.
+ *
+ * NONE ON A DAY THE REAL LIST COUNTS, even one built before the switch was
+ * moved to count it (setMode allows counting from today): the real "so far"
+ * list is shown and printed as ever, rather than hidden behind the TEST one
+ * until the real list is made.
  */
-async function demoListOf(ctx: Ctx, day: string): Promise<Doc<"reflectionDemoLists"> | null> {
+async function demoListOf(ctx: Ctx, day: string, settings: ReflectionSettings): Promise<Doc<"reflectionDemoLists"> | null> {
+  if (countingDivision(settings, day)) return null;
   return ctx.db.query("reflectionDemoLists").withIndex("by_day", (q) => q.eq("day", day)).first();
 }
 
@@ -501,8 +508,8 @@ function demoAnswer(f: {
  * only). Student numbers and grades only: names are the browser's.
  *
  * A TEST LIST (reflectionDemo.ts) is answered for a day ONLY when that day
- * has no real list made, and only after the same check of who is asking:
- * real data always wins, the moment a list is made.
+ * has no real list made and the real list does not count it, and only after
+ * the same check of who is asking: real data always wins.
  */
 export const listForDay = query({
   args: { day: v.string() },
@@ -528,7 +535,7 @@ export const listForDay = query({
     const gradeOf = studentMap(maps?.students).gradeOf;
     const row = await getDay(ctx, date);
     if (!row?.frozenAt) {
-      const demo = await demoListOf(ctx, date);
+      const demo = await demoListOf(ctx, date, settings);
       if (demo) return demoAnswer({ demo, date, today, next, nowIso, roles, settings });
     }
     const marked = await markedOf(ctx, date);
@@ -804,9 +811,9 @@ export const listForDay = query({
  * not send anyone.
  *
  * A TEST LIST IS NEVER A RECORD (owner, 2026-10-08). A day showing one (no
- * real list made, and a TEST list built for it) records no print of any
- * kind: the screen prints its TEST copy without one, and slips and "Print
- * changes only" are off for it.
+ * real list made, the real list not counting it, and a TEST list built for
+ * it) records no print of any kind: the screen prints its TEST copy without
+ * one, and slips and "Print changes only" are off for it.
  */
 export const recordPrint = mutation({
   args: {
@@ -829,11 +836,11 @@ export const recordPrint = mutation({
     }
     const row = await getDay(ctx, a.day);
     const final = !!row?.frozenAt;
-    if (!final && await demoListOf(ctx, a.day)) return { ok: false as const, reason: DEMO_PRINT_REFUSED };
+    const settings = await loadSettings(ctx);
+    if (!final && await demoListOf(ctx, a.day, settings)) return { ok: false as const, reason: DEMO_PRINT_REFUSED };
     if (a.kind === "slips" && !final) {
       return { ok: false as const, reason: "Slips print only once the list is final. Print the master list, which is marked NOT FINAL." };
     }
-    const settings = await loadSettings(ctx);
     const modes = final && row?.modeByDivision ? row.modeByDivision : settings.modeByDivision;
     const id = await ctx.db.insert("reflectionPrints", {
       day: a.day, kind: a.kind, final, printedByEmail: staff.email, at: nowIso, mode: modeWords(modes),
