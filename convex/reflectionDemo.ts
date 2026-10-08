@@ -145,7 +145,7 @@ export const build = internalAction({
     if (!saved.ok) return { ok: false, reason: saved.reason };
     return {
       ok: true, day: a.day, previousDay, builtAt, rosterFrom, counts,
-      note: previousDay ? undefined : `No school day with attendance was found in the ${tries.length} weekdays before ${a.day}, so no P5/P6 tardies were carried.`,
+      ...(previousDay ? {} : { note: `No school day with attendance was found in the ${tries.length} weekdays before ${a.day}, so no P5/P6 tardies were carried.` }),
       shown: "Discipline > Reflection Room shows this TEST list for that day while it has no real list. Clear it after showing it.",
     };
   },
