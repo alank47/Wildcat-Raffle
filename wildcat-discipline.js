@@ -425,6 +425,179 @@
     });
   }
 
+  // =====================================================================
+  // UNSENT WORK KEPT AT SIGN-OUT: THE RULES (review, 2026-10-07)
+  //
+  // script.js keeps a signed-out person's unsent referrals and detentions on
+  // the device for that person alone (setAsideUnsentDiscipline) and sends
+  // them at their next sign-in there. These are the rules it uses, here so
+  // they can be tested on their own.
+  // =====================================================================
+
+  /** Days kept work waits for its author to sign in on the same browser again. */
+  var SET_ASIDE_DAYS = 14;
+  var DAY_MS = 86400000;
+
+  /**
+   * May work kept at `at` still be brought back at `nowMs`?
+   *
+   * NOT FOR EVER. Kept with no end, a teacher's unsent referral -- the
+   * child's name, what happened -- sat in plain JSON on a shared Chromebook
+   * until that teacher signed in on it again, which may be never. Fourteen
+   * days covers a week away and the weekends either side. AND NEVER ACROSS 1
+   * JULY, where the school year turns over (wildcat-store.js schoolYearOf):
+   * last year's referral is not sent into this year's record. A stamp that
+   * cannot be read, or one more than a day ahead of this clock, is not
+   * current either.
+   */
+  function setAsideIsCurrent(at, nowMs) {
+    var t = typeof at === 'string' ? Date.parse(at) : NaN;
+    var now = Number(nowMs);
+    if (!isFinite(t) || !isFinite(now) || t > now + DAY_MS) return false;
+    var d = new Date(now);
+    var yearStart = new Date(d.getMonth() >= 6 ? d.getFullYear() : d.getFullYear() - 1, 6, 1).getTime();
+    return t >= yearStart && now - t <= SET_ASIDE_DAYS * DAY_MS;
+  }
+
+  /**
+   * When a row was last touched: the stamps the server's merge reads, read
+   * the way it reads them (convex/legacyData.ts touchedAt), so a choice made
+   * here agrees with the one the server makes with the same two copies.
+   */
+  function touchedAt(row) {
+    if (!row || typeof row !== 'object') return 0;
+    var best = 0;
+    ['updatedAt', 'loopClosedAt', 'closedAt', 'submittedAt'].forEach(function (k) {
+      var v = row[k];
+      var t = typeof v === 'number' ? v : typeof v === 'string' ? Date.parse(v) : NaN;
+      if (isFinite(t) && t > best) best = t;
+    });
+    return best;
+  }
+
+  /**
+   * A detention as a record, whatever id it is held under: the child and the
+   * instant it was assigned. AN ID IS NOT ENOUGH. Detention ids come from a
+   * counter in each tab, and a detention whose save never landed never moved
+   * the server's counter on, so the next one anybody makes can take the same
+   * id for a different child.
+   */
+  function detentionKey(d) {
+    if (!d) return '';
+    return trimmed(d.studentId) + '|' + (trimmed(d.assignedAt) || 'id:' + trimmed(d.id));
+  }
+
+  /** One more than the highest N of any `detention_N` id in `rows`; 1 when there is none. */
+  function nextDetentionNumber(rows) {
+    var top = 0;
+    (Array.isArray(rows) ? rows : []).forEach(function (d) {
+      var m = /^detention_(\d+)$/.exec(trimmed(d && d.id));
+      if (m && Number(m[1]) > top) top = Number(m[1]);
+    });
+    return top + 1;
+  }
+
+  /**
+   * The kept rows `sent` does not cover. A write that landed covers a kept
+   * row when it carried the same record at least as new (touchedAt): the
+   * same id for a referral, the same child and assignment for a detention.
+   * Whatever the server then did with it, that row needs no sending again.
+   */
+  function rowsNotCoveredBy(kind, kept, sent) {
+    var keyOf = kind === 'detentions' ? detentionKey : function (r) { return r ? trimmed(r.id) : ''; };
+    var newest = {};
+    (Array.isArray(sent) ? sent : []).forEach(function (s) {
+      var k = keyOf(s);
+      if (k && (!newest[k] || touchedAt(s) > touchedAt(newest[k]))) newest[k] = s;
+    });
+    return (Array.isArray(kept) ? kept : []).filter(function (r) {
+      var s = newest[keyOf(r)];
+      return !(s && touchedAt(s) >= touchedAt(r));
+    });
+  }
+
+  /**
+   * Someone else's referral, as a sign-out keeps it: the id, the stamp and
+   * the close (REFERRAL_CLOSE_FIELDS), which is everything closing or closing
+   * the loop changes. An admin's unsent Close of a teacher's referral needs
+   * nothing more, because the server lays an incoming copy over its own
+   * field by field (legacyData.ts mergeRowFields), so the device never keeps
+   * that teacher's description or the child's name. It has no studentId,
+   * which is how a restore tells it from a whole referral.
+   */
+  function closePatch(r) {
+    var out = { id: r.id, updatedAt: r.updatedAt };
+    REFERRAL_CLOSE_FIELDS.forEach(function (k) {
+      if (Object.prototype.hasOwnProperty.call(r, k)) out[k] = r[k];
+    });
+    return out;
+  }
+
+  /**
+   * Kept detentions back into `list`, the list a save sends, each by the
+   * rule that applies to it. Pure: returns { list, counter, pending,
+   * superseded } and changes nothing it was given.
+   *
+   *   already held   the same record (detentionKey), under any id: the kept
+   *                  copy goes over it only when strictly newer (an
+   *                  attendance mark made before sign-out), and is dropped
+   *                  when older (a colleague's mark since is the later truth).
+   *   one active     made from a referral that already has an active
+   *   already        detention, or whose kept close lost to a later one
+   *                  (lostReferralIds): dropped. One per referral, as
+   *                  createDetentionFromReferral keeps it.
+   *   id taken       by a different record: it takes the next id above the
+   *                  counter and every detention_N held or kept, so neither
+   *                  child's detention replaces the other's.
+   *   otherwise      added.
+   *
+   * `pending` still needs sending, under the id it now has; `superseded`
+   * never will. `counter` is where the tab's next new id starts.
+   */
+  function putBackDetentions(list, kept, opts) {
+    var o = opts || {};
+    var lost = o.lostReferralIds && typeof o.lostReferralIds.has === 'function' ? o.lostReferralIds : null;
+    var out = Array.isArray(list) ? list.slice() : [];
+    var rows = (Array.isArray(kept) ? kept : []).filter(function (d) { return d && trimmed(d.id); });
+    var counter = Math.max(Number(o.counter) || 1, nextDetentionNumber(out), nextDetentionNumber(rows));
+    var pending = [], superseded = [];
+    function indexWhere(test) {
+      for (var i = 0; i < out.length; i++) if (out[i] && test(out[i])) return i;
+      return -1;
+    }
+    function withId(d, id) {
+      var c = {};
+      Object.keys(d).forEach(function (k) { c[k] = d[k]; });
+      c.id = id;
+      return c;
+    }
+    rows.forEach(function (d) {
+      var key = detentionKey(d);
+      var at = indexWhere(function (x) { return detentionKey(x) === key; });
+      if (at !== -1) {
+        var mine = touchedAt(d), theirs = touchedAt(out[at]);
+        if (mine < theirs) { superseded.push(d); return; }
+        var row = d.id === out[at].id ? d : withId(d, out[at].id);
+        if (mine > theirs) out[at] = row;
+        pending.push(row);
+        return;
+      }
+      var src = trimmed(d.sourceReferralId);
+      if (src && ((lost && lost.has(src)) || (d.status === 'active' && activeDetentionFor(out, src)))) {
+        superseded.push(d);
+        return;
+      }
+      var add = d;
+      if (indexWhere(function (x) { return x.id === d.id; }) !== -1) {
+        add = withId(d, 'detention_' + counter);
+        counter += 1;
+      }
+      out.push(add);
+      pending.push(add);
+    });
+    return { list: out, counter: counter, pending: pending, superseded: superseded };
+  }
+
   /**
    * What a referral save reports, as NUMBERS ONLY, for the console.
    *
@@ -1716,6 +1889,14 @@
     activeDetentionFor: activeDetentionFor,
     rowPrint: rowPrint,
     rowsNotOnServer: rowsNotOnServer,
+    SET_ASIDE_DAYS: SET_ASIDE_DAYS,
+    setAsideIsCurrent: setAsideIsCurrent,
+    touchedAt: touchedAt,
+    detentionKey: detentionKey,
+    nextDetentionNumber: nextDetentionNumber,
+    rowsNotCoveredBy: rowsNotCoveredBy,
+    closePatch: closePatch,
+    putBackDetentions: putBackDetentions,
     REFERRAL_SAVE_COUNTERS: REFERRAL_SAVE_COUNTERS,
     referralSaveCounts: referralSaveCounts,
     valueOf: valueOf,

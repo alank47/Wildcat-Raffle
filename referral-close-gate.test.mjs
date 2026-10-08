@@ -111,9 +111,12 @@ const FNS = [
   "serverOwnsReferralClose", "rescopeDisciplineForRole",
   // Review, 2026-10-07: unsent work at sign-out, late answers, the bar.
   "noteDisciplineOnServer", "unsentDisciplineNow", "describeUnsentDiscipline", "readUnsentDiscipline",
-  "unsentDisciplineOf", "dropUnsentDisciplineFor", "setAsideUnsentDiscipline", "restoreUnsentDiscipline",
-  "putBackUnsentDiscipline", "clearSentFromUnsaved", "settleRestoredDiscipline", "renderUnsavedReferralBar",
+  "unsentDisciplineOf", "setAsideUnsentDiscipline", "restoreUnsentDiscipline",
+  "putBackUnsentDiscipline", "clearSentFromUnsaved", "renderUnsavedReferralBar",
   "retryUnsavedReferrals", "pullReferralsOnce", "pullReferralsAndRedraw", "updateStudentReferralHistory",
+  // Second review, 2026-10-07: what is kept, for how long, and when it goes.
+  "writeUnsentDiscipline", "dropSetAside", "disciplineWriteLanded", "cutRestoredToRole",
+  "submitBehaviorReferral", "markReferralUnsaved", "markReferralSaved",
 ];
 const LINES = ["isPreviewingTeacher", "getOpenReferrals", "getClosedReferrals", "DETENTION_CLOSING_ACTION", "LOCAL_CACHE_AUDIT_MAX"];
 
@@ -137,8 +140,9 @@ function loadApp(src, G, Dmod) {
   const pagehideLine = (/^        window\.addEventListener\('pagehide', [^\n]*$/m.exec(src) || [""])[0];
   if (!pagehideLine) throw new Error("missing the pagehide listener");
   const installSnippet = cut(src, "                        const referralsData = referralsSnap.exists() ? referralsSnap.data() : {};",
-    // The line after the detentions install, so a test may break that line itself.
-    "// Read the counter back from Firebase, not just localStorage.");
+    // Through the counter and the put-back of kept work that follow the
+    // detentions install, so a test may break any of those lines.
+    "detentionLocations = secondaryData.detentionLocations");
   const body = `
     const window = { WildcatDiscipline: Dm, WildcatAuth: G.auth || null,
       addEventListener: (type, fn) => { (G.listeners ||= {})[type] = fn; } };
@@ -164,7 +168,10 @@ function loadApp(src, G, Dmod) {
     const auditIdsOnServer = new Set(), cashIdsOnServer = new Set();
     function ensureEntryId(e) { return e && e.id; }
     function wcForgetTab() {}
-    async function showConfirm(message) { (G.confirms ||= []).push(message); return true; }
+    async function showConfirm(message) { (G.confirms ||= []).push(message); return G.answers && G.answers.length ? G.answers.shift() : true; }
+    function alert() {}
+    function setButtonBusy() {}
+    function clearReferralForm() {}
     function applyCashAnalyticsGate() {}
     function showStudentLogin() {}
     // loadData, as far as reloadPreservingUnsavedWork needs it: install what
@@ -194,9 +201,15 @@ function loadApp(src, G, Dmod) {
     const _disciplineOnServer = { referrals: new Map(), detentions: new Map() };
     let _restoredDiscipline = null;
     let _signInGeneration = 0;
+    let _disciplineLoadedGeneration = -1;
     const UNSENT_DISCIPLINE_KEY = 'wcUnsentDiscipline';
     async function flushSaves() { (G.flushes ||= []).push(1); return G.flushResult === undefined ? null : G.flushResult; }
-    async function requestSave(label) { (G.requests ||= []).push(label); return G.requestResult === undefined ? true : G.requestResult; }
+    async function requestSave(label) {
+      (G.requests ||= []).push(label);
+      // A save held open until the test lets it go, as a slow network holds it.
+      if (G.saveGate) return G.saveGate;
+      return G.requestResult === undefined ? true : G.requestResult;
+    }
     function allCashOnServer() { return true; }
     function _fmtPullTime() { return 'now'; }
     function redrawReferralInsightViews() { G.redraws = (G.redraws || 0) + 1; }
@@ -225,11 +238,13 @@ ${pagehideLine}
       set currentUser(v) { currentUser = v; },
       get unsaved() { return _unsavedReferrals; },
       get restored() { return _restoredDiscipline; },
+      get detentionIdCounter() { return detentionIdCounter; },
       onServer: _disciplineOnServer,
     };`;
   G.toasts = []; G.saves = [];
   const app = new Function("G", "Dm", "document", body)(G, Dmod || D, document);
   app.els = els;
+  app.G = G;
   return app;
 }
 
@@ -643,12 +658,14 @@ console.log("\n-- a teacher's unsaved referral survives sign-out, for that teach
   check("...back on the bar, so they know it is still not on the server", a.unsaved.has("UNSAVED-NEW")
     && a.els.unsavedReferralBar.hidden === false);
   // The save: put back, send, and on landing clear only what was sent.
-  const applied = a.putBackUnsentDiscipline();
-  const sent = new Set(a.referrals.map((r) => r.id));
+  a.putBackUnsentDiscipline();
+  const refSent = JSON.parse(J(a.referrals));
+  const sent = new Set(refSent.map((r) => r.id));
   check("the sign-in save sends it", sent.has("UNSAVED-NEW"));
+  a.disciplineWriteLanded("referrals", refSent, "t.teacher@x.org", 0);
   a.clearSentFromUnsaved(new Set(a.unsaved.keys()), sent);
   check("once it lands, the bar lets it go", a.unsaved.size === 0);
-  check("...and so does the device", a.settleRestoredDiscipline(applied, sent, true) === true && G.localStorage.getItem(UNSENT) === null);
+  check("...and so does the device", G.localStorage.getItem(UNSENT) === null && a.restored === null);
 }
 
 console.log("\n-- ...and the web sign-in, which reloads the page (review) --");
@@ -663,10 +680,12 @@ console.log("\n-- ...and the web sign-in, which reloads the page (review) --");
   b.restoreUnsentDiscipline();
   check("after the reload the same teacher's sign-in brings it back", b.referrals.some((r) => r.id === "UNSAVED-NEW"));
   // The sign-in's own full load can land after that, replacing the list.
+  // It puts the kept work straight back and asks for a save to send it
+  // (second review, 2026-10-07); before, the next save did the putting back.
   b.runServerInstall({ exists: () => true, data: () => ({ behaviorReferrals: REFS() }) }, {});
-  check("a load that lands afterwards drops it from the list...", !b.referrals.some((r) => r.id === "UNSAVED-NEW"));
+  check("a load that lands afterwards leaves it in the list", b.referrals.some((r) => r.id === "UNSAVED-NEW"));
   b.putBackUnsentDiscipline();
-  check("...and the save puts it back before it sends", b.referrals.some((r) => r.id === "UNSAVED-NEW"));
+  check("...and the save still sends it, once", b.referrals.filter((r) => r.id === "UNSAVED-NEW").length === 1);
 }
 
 console.log("\n-- the bar never lists a referral no save will send (review) --");
@@ -790,21 +809,23 @@ console.log("\n-- a save takes off the bar only what it sent; Retry says what is
 
   const save = liftFn(script, "saveData");
   check("saveData puts unsent work back before it takes its snapshot",
-    save.indexOf("const restoredAtStart = putBackUnsentDiscipline();") !== -1
-    && save.indexOf("const restoredAtStart = putBackUnsentDiscipline();") < save.indexOf("const unsavedAtStart = {"));
+    save.indexOf("            putBackUnsentDiscipline();") !== -1
+    && save.indexOf("            putBackUnsentDiscipline();") < save.indexOf("const unsavedAtStart = {"));
   check("...clears the bar by what the referral write sent, never wholesale",
     /clearSentFromUnsaved\(unsavedAtStart\.referrals, referralIdsSent\);/.test(save)
     && !/unsavedAtStart\.referrals\.forEach\(id => _unsavedReferrals\.delete\(id\)\)/.test(save));
   check("...records what it sent only after the write resolves",
     /await mergeLegacySlice\('referrals'[^\n]*\n\s*referralIdsSent = new Set\(refSent/.test(save));
-  check("...and lets a brought-back set go only when it has landed",
-    /settleRestoredDiscipline\(restoredAtStart, referralIdsSent, detentionsOnServerNow\);/.test(save));
+  check("...and takes kept work off the device by what each write that landed carried",
+    /referralIdsSent = new Set\(refSent[^\n]*\n\s*disciplineWriteLanded\('referrals', refSent, ownerAtStart, generationAtStart\);/.test(save)
+    && /if \(key === 'detentions'\) disciplineWriteLanded\('detentions', sent, ownerAtStart, generationAtStart\);/.test(save)
+    && /if \(key === 'detentions'\) dropSetAside\(ownerAtStart, 'detentions', value\);/.test(save));
   const core = liftFn(script, "establishTeacherSessionCore");
   check("the sign-in sheds, brings back, then saves, in that order",
     /shedReferralsNotMine\(\);[\s\S]*?restoreUnsentDiscipline\(\);[\s\S]*?await saveData\(\);/.test(core));
   const out = liftFn(script, "logout");
   check("logout sets the work aside before it forgets who is signed in",
-    out.indexOf("setAsideUnsentDiscipline();") !== -1 && out.indexOf("setAsideUnsentDiscipline();") < out.indexOf("currentUser = null;"));
+    out.indexOf("setAsideUnsentDiscipline()") !== -1 && out.indexOf("setAsideUnsentDiscipline()") < out.indexOf("currentUser = null;"));
 }
 
 console.log("\n-- an answer that comes back after sign-out is dropped (review) --");
@@ -1230,8 +1251,8 @@ console.log("\n-- TEETH: the sign-out review fixes, each removed, are caught --"
     return { G, x };
   };
 
-  const dropsWork = breakOnce(script, "                if (typeof setAsideUnsentDiscipline === 'function') setAsideUnsentDiscipline();\n                currentUser = null;",
-    "                currentUser = null;", "set aside at logout");
+  const dropsWork = breakOnce(script, "const kept = typeof setAsideUnsentDiscipline === 'function' ? setAsideUnsentDiscipline() : null;",
+    "const kept = { referrals: 0, detentions: 0 };", "set aside at logout");
   check("TEETH: a logout that does not set the work aside loses the unsaved referral",
     (await loggedOutTeacher(dropsWork)).G.localStorage.getItem(UNSENT) === null);
 
@@ -1285,6 +1306,431 @@ console.log("\n-- TEETH: the sign-out review fixes, each removed, are caught --"
   loadApp(keepsOnClose, C);
   await C.listeners.pagehide();
   check("TEETH: a pagehide that only flushes leaves the school's referrals in localStorage", blobIn(C).behaviorReferrals.length === 4);
+}
+
+// ---------------------------------------------------------------- kept work: the second review (2026-10-07)
+//
+// What a sign-out keeps for its author: a row leaves the device only when a
+// write carrying it lands; it goes back only once the sign-in has the server's
+// lists, by rules that cannot replace another child's detention or make a
+// second active one; it is kept 14 days at most, someone else's referral as
+// its close alone, and only what the person may still hold comes back.
+
+const DET = "Assigned the student to mandatory detention";
+const snap = (rows) => ({ exists: () => true, data: () => ({ behaviorReferrals: rows }) });
+const copy = (x) => JSON.parse(J(x));
+const ADMIN_EMAIL = "admin@x.org";
+const TEACHER_EMAIL = "t.teacher@x.org";
+/** An admin's tab that loaded the school, closed THEIRS-OPEN with a detention, and was logged out before any of it landed. */
+async function adminClosedOffline(over, src) {
+  const G = world(ADMIN, Object.assign({ actions: [DET], detentionIdCounter: 5 }, over));
+  const a = loadApp(src || script, G);
+  a.runServerInstall(snap(REFS()), { detentions: [] });
+  await a.confirmCloseReferral("THEIRS-OPEN");
+  const made = copy(a.detentions), closed = copy(a.referrals);
+  await a.logout({ inactive: true });
+  return { G, a, made, closed };
+}
+/** The same admin signing in on a new page of the same browser. */
+function adminSignsIn(G, src, Dmod) {
+  const b = loadApp(src || script, world(null, { localStorage: G.localStorage, referrals: [] }), Dmod);
+  b.currentUser = ADMIN;
+  b.restoreUnsentDiscipline();
+  return b;
+}
+const OTHER_KIDS = () => ({ id: "detention_5", studentId: "S2", studentName: "Other Kid", sourceReferralId: "OTHER-REF",
+  assignedAt: "2026-10-07T20:00:00.000Z", status: "active", daysServed: 0, servedDates: [] });
+
+console.log("\n-- a kept detention never replaces another child's that took its id (second review) --");
+{
+  const { G, made } = await adminClosedOffline();
+  check("before: the offline close made detention_5 for S1, and it was kept",
+    made.length === 1 && made[0].id === "detention_5" && keptOn(G)?.[ADMIN_EMAIL]?.detentions.length === 1);
+  // A colleague's tab, whose counter the failed save never moved, then saved detention_5 for S2.
+  const b = adminSignsIn(G);
+  check("nothing kept goes into the lists before the sign-in load brings the server's",
+    b.detentions.length === 0 && !b.referrals.some((r) => r.id === "THEIRS-OPEN") && b.restored?.detentions.length === 1);
+  check("...and the next detention made here starts above every kept id", b.detentionIdCounter >= 6);
+  b.runServerInstall(snap(REFS()), { detentions: [OTHER_KIDS()], detentionIdCounter: 6 });
+  const s2 = b.detentions.filter((d) => d.studentId === "S2");
+  const s1 = b.detentions.filter((d) => d.studentId === "S1");
+  check("the other child's detention_5 is untouched", s2.length === 1 && s2[0].id === "detention_5" && s2[0].sourceReferralId === "OTHER-REF");
+  check("this child's detention is back under a new id", s1.length === 1 && s1[0].id !== "detention_5" && s1[0].sourceReferralId === "THEIRS-OPEN");
+  check("...no two detentions share an id", new Set(b.detentions.map((d) => d.id)).size === b.detentions.length);
+  check("...the counter has moved past it", Number(s1[0].id.replace("detention_", "")) < b.detentionIdCounter);
+  check("the load asked for a save to send it", (b.G.requests || []).includes("Unsent work from before sign-out"));
+  // The save carrying it lands: the device copy goes, matched as a record despite the new id.
+  b.disciplineWriteLanded("referrals", copy(b.referrals), ADMIN_EMAIL, 0);
+  b.disciplineWriteLanded("detentions", copy(b.detentions), ADMIN_EMAIL, 0);
+  check("once a write carrying it lands, nothing is left on the device or in memory", keptOn(G) === null && b.restored === null);
+}
+
+console.log("\n-- a kept copy older than the server's is dropped, not put over it (second review) --");
+{
+  const { G, a, made, closed } = await adminClosedOffline({ detentionIdCounter: 7 });
+  // The save that was running at sign-out lands afterwards.
+  a.disciplineWriteLanded("referrals", closed, ADMIN_EMAIL, 0);
+  a.disciplineWriteLanded("detentions", made, ADMIN_EMAIL, 0);
+  check("a save still running at sign-out takes what it carried off the device when it lands", keptOn(G) === null);
+  check("...without noting anything for a tab nobody is signed in to",
+    a.onServer.referrals.size === 0 && a.onServer.detentions.size === 0);
+
+  // The landing's answer was lost instead: the device still holds detention_7,
+  // and a colleague has since recorded two days served on the server's copy.
+  const lost = await adminClosedOffline({ detentionIdCounter: 7 });
+  const served = { ...lost.made[0], daysServed: 2, servedDates: ["2026-10-08", "2026-10-09"], updatedAt: "2026-10-09T16:00:00.000Z" };
+  const server = lost.closed;
+  const b = adminSignsIn(lost.G);
+  b.runServerInstall(snap(server), { detentions: [served] });
+  check("the colleague's two days served stay on this screen", b.detentions.length === 1 && b.detentions[0].daysServed === 2);
+  check("...and the stale kept copy is gone from the device", (keptOn(lost.G)?.[ADMIN_EMAIL]?.detentions || []).length === 0);
+}
+
+console.log("\n-- a load that lands mid-save cannot make a save drop kept work unsent (second review) --");
+{
+  const { G } = await adminClosedOffline({ actions: [DET, "Notified parents/guardians promptly"] });
+  const b = adminSignsIn(G);
+  b.runServerInstall(snap(REFS()), { detentions: [] });
+  check("before: the kept close and detention are back", b.referrals.find((r) => r.id === "THEIRS-OPEN").status === "closed"
+    && b.detentions.some((d) => d.sourceReferralId === "THEIRS-OPEN"));
+  // A save starts, then another load lands before its snapshot.
+  b.putBackUnsentDiscipline();
+  b.runServerInstall(snap(REFS()), { detentions: [] });
+  const refSent = copy(b.referrals), detSent = copy(b.detentions);
+  check("the load puts them straight back, so the snapshot carries them",
+    refSent.find((r) => r.id === "THEIRS-OPEN").status === "closed" && detSent.some((d) => d.sourceReferralId === "THEIRS-OPEN"));
+  // And a write that carried only the server's lists lands: nothing kept is let go.
+  b.disciplineWriteLanded("referrals", REFS(), ADMIN_EMAIL, 0);
+  const still = keptOn(G)?.[ADMIN_EMAIL];
+  check("a landed write that did not carry the kept rows leaves them on the device",
+    still?.referrals.length === 1 && still?.detentions.length === 1);
+  check("...and in what the next save puts back", b.restored?.referrals.length === 1 && b.restored?.detentions.length === 1);
+  check("Logout would still find them unsent", /1 referral and 1 detention/.test(b.describeUnsentDiscipline()), b.describeUnsentDiscipline());
+  b.disciplineWriteLanded("referrals", refSent, ADMIN_EMAIL, 0);
+  b.disciplineWriteLanded("detentions", detSent, ADMIN_EMAIL, 0);
+  check("the write that carried them lets them go", keptOn(G) === null && b.restored === null);
+}
+
+console.log("\n-- a kept detention is never a referral's second active one (second review) --");
+{
+  // The server's referral is still open, but it already has an active detention.
+  const one = await adminClosedOffline();
+  const b = adminSignsIn(one.G);
+  b.runServerInstall(snap(REFS()), { detentions: [{ id: "detention_6", studentId: "S1", sourceReferralId: "THEIRS-OPEN",
+    assignedAt: "2026-10-07T19:00:00.000Z", status: "active" }] });
+  check("the kept close still goes over the open referral", b.referrals.find((r) => r.id === "THEIRS-OPEN").status === "closed");
+  check("...but its detention is not added beside the active one",
+    b.detentions.filter((d) => d.sourceReferralId === "THEIRS-OPEN" && d.status === "active").length === 1);
+  check("...and is gone from the device", (keptOn(one.G)?.[ADMIN_EMAIL]?.detentions || []).length === 0);
+
+  // The referral was closed again since, later, with no detention: that close wins, and the kept detention goes with the losing one.
+  const two = await adminClosedOffline();
+  const later = new Date(Date.now() + 3600e3).toISOString();
+  const reclosed = theirs("THEIRS-OPEN", { status: "closed", closedBy: "B Admin", closedAt: later, updatedAt: later,
+    resolutionType: "no_action", closingActions: [] });
+  const c = adminSignsIn(two.G);
+  c.runServerInstall(snap([...REFS().filter((r) => r.id !== "THEIRS-OPEN"), reclosed]), { detentions: [] });
+  check("a later close elsewhere keeps the referral", c.referrals.find((r) => r.id === "THEIRS-OPEN").closedBy === "B Admin");
+  check("...and the losing close's detention is not added", c.detentions.length === 0);
+  check("...nor kept on the device", keptOn(two.G) === null);
+}
+
+console.log("\n-- a save lets go of the rows it carried, not a second tab's (second review) --");
+{
+  const store = makeStorage();
+  const { a: X } = teacherWithUnsaved({ localStorage: store });
+  await X.logout({ inactive: true });                       // R1 kept
+  const A = loadApp(script, world(null, { localStorage: store }));
+  A.runServerInstall(snap(REFS()), {});
+  A.currentUser = TEACHER;
+  A.restoreUnsentDiscipline();                              // R1 back; its first save fails
+  const R2 = ref("UNSAVED-TWO");
+  const B = loadApp(script, world(TEACHER, { localStorage: store, unsaved: new Map([[R2.id, R2]]) }));
+  B.runServerInstall(snap(REFS()), {});
+  B.referrals.push(R2);
+  await B.logout({ inactive: true });                       // R2 kept beside R1
+  check("before: both tabs' referrals are kept for the teacher", ids(JSON.parse(store.getItem(UNSENT))[TEACHER_EMAIL].referrals) === "UNSAVED-NEW,UNSAVED-TWO");
+  A.putBackUnsentDiscipline();
+  A.disciplineWriteLanded("referrals", copy(A.referrals), TEACHER_EMAIL, 0);   // carries R1 only
+  const left = JSON.parse(store.getItem(UNSENT) || "null")?.[TEACHER_EMAIL];
+  check("the save that carried R1 takes R1 off the device, and leaves R2",
+    ids(left?.referrals) === "UNSAVED-TWO" && J(left?.unsavedIds) === J(["UNSAVED-TWO"]));
+}
+
+console.log("\n-- a device that cannot keep the work says so (second review) --");
+{
+  const quota = () => { const e = new Error("full"); e.name = "QuotaExceededError"; return e; };
+  const failing = () => Object.assign(makeStorage(), { setItem() { throw quota(); } });
+  let { G, a } = teacherWithUnsaved({ localStorage: failing(), answers: [true, false] });
+  await a.logout();
+  check("Logout asks again when the work could not be kept", G.confirms.length === 2 && /could not keep 1 referral/.test(G.confirms[1]), J(G.confirms));
+  check("...and staying signed in keeps the person, the referral and the bar",
+    a.referralCacheOwner() === TEACHER_EMAIL && a.referrals.some((r) => r.id === "UNSAVED-NEW") && a.unsaved.has("UNSAVED-NEW")
+    && a.els.unsavedReferralBar.hidden === false);
+  ({ G, a } = teacherWithUnsaved({ localStorage: failing(), answers: [true, true] }));
+  await a.logout();
+  check("'Log out anyway' still logs out", a.referralCacheOwner() === "" && a.referrals.length === 0);
+
+  // An admin's device near full: the school's referrals in raffleData leave no room.
+  const capped = (seed, cap) => {
+    const m = new Map(Object.entries(seed));
+    const size = () => [...m.values()].reduce((n, v) => n + v.length, 0);
+    return {
+      getItem: (k) => (m.has(k) ? m.get(k) : null),
+      setItem(k, v) { const old = m.get(k); m.set(k, String(v)); if (size() > cap) { if (old === undefined) m.delete(k); else m.set(k, old); throw quota(); } },
+      removeItem: (k) => m.delete(k),
+    };
+  };
+  const school = JSON.stringify({ referralsOwner: ADMIN_EMAIL, cashTransactions: [{ id: "c1" }],
+    behaviorReferrals: Array.from({ length: 120 }, (_, i) => theirs("R" + i, { description: "x".repeat(300) })) });
+  const full = (src) => {
+    const H = world(ADMIN, { localStorage: capped({ raffleData: school }, school.length + 200), actions: ["Notified parents/guardians promptly"] });
+    const x = loadApp(src || script, H);
+    x.runServerInstall(snap(REFS()), { detentions: [] });
+    return { H, x };
+  };
+  const f = full();
+  await f.x.confirmCloseReferral("THEIRS-OPEN");
+  await f.x.logout({ inactive: true });
+  check("with the cache stripped first, the admin's unsent close fits", keptOn(f.H)?.[ADMIN_EMAIL]?.referrals.length === 1);
+  const late = full(breakOnce(script, "                if (typeof stripDisciplineFromLocalCache === 'function') stripDisciplineFromLocalCache();\n                // Before anyone is forgotten",
+    "                // Before anyone is forgotten", "strip first"));
+  await late.x.confirmCloseReferral("THEIRS-OPEN");
+  await late.x.logout({ inactive: true });
+  check("TEETH: keeping the work before the strip finds no room for it", keptOn(late.H) === null);
+}
+
+console.log("\n-- kept work has an end, and keeps no one else's referral whole (second review) --");
+{
+  const now = Date.parse("2026-10-07T18:00:00.000Z");
+  check("kept six days ago: current", D.setAsideIsCurrent("2026-10-01T18:00:00.000Z", now) === true);
+  check("kept fifteen days ago: past its time", D.setAsideIsCurrent("2026-09-22T17:00:00.000Z", now) === false);
+  check("kept before 1 July, read after it: past its time",
+    D.setAsideIsCurrent("2026-06-29T18:00:00.000Z", Date.parse("2026-07-02T18:00:00.000Z")) === false);
+  check("no stamp, a bad stamp, or one days ahead: not current",
+    !D.setAsideIsCurrent(undefined, now) && !D.setAsideIsCurrent("soon", now) && !D.setAsideIsCurrent("2026-10-10T18:00:00.000Z", now));
+
+  const { G, a } = teacherWithUnsaved();
+  await a.logout({ inactive: true });
+  const all = keptOn(G);
+  all[TEACHER_EMAIL].at = "2025-06-01T12:00:00.000Z";
+  G.localStorage.setItem(UNSENT, J(all));
+  const b = loadApp(script, world(null, { localStorage: G.localStorage }));
+  b.currentUser = TEACHER;
+  check("the same teacher signing in after it expired gets nothing back", b.restoreUnsentDiscipline() === 0 && !b.referrals.some((r) => r.id === "UNSAVED-NEW"));
+  check("...and it is gone from the device", G.localStorage.getItem(UNSENT) === null);
+
+  const { G: S, a: s } = teacherWithUnsaved();
+  await s.logout({ inactive: true });
+  const old = keptOn(S);
+  old[TEACHER_EMAIL].at = new Date(Date.now() - 20 * 86400000).toISOString();
+  old["other@x.org"] = { at: new Date().toISOString(), referrals: [ref("OTHER-KEPT")], unsavedIds: ["OTHER-KEPT"], detentions: [] };
+  S.localStorage.setItem(UNSENT, J(old));
+  s.establishStudentSession({ id: "S9" });
+  check("a student's sign-in removes what is past its time, and leaves what is current for its author",
+    J(Object.keys(keptOn(S))) === J(["other@x.org"]));
+  const boot = script.slice(script.indexOf("const hasSession = loadSession();"), script.indexOf("} else if (hasSession) {"));
+  check("the page start removes it too, right after the cache drop",
+    /dropDisciplineCacheUnlessMine\(\);\s*(\/\/[^\n]*\n\s*)*readUnsentDiscipline\(\);/.test(boot));
+
+  const { G: Q, a: q } = teacherWithUnsaved();
+  await q.logout();
+  check("the Logout question says how long it stays", /stays on this device for up to 14 days/.test(Q.confirms[0]), Q.confirms[0]);
+
+  const { G: P } = await adminClosedOffline();
+  const kept = keptOn(P)[ADMIN_EMAIL].referrals[0];
+  check("an admin's Close of a teacher's referral is kept as the close alone",
+    kept.id === "THEIRS-OPEN" && kept.status === "closed" && !("studentName" in kept) && !("description" in kept) && !("studentId" in kept));
+  const r = adminSignsIn(P);
+  r.runServerInstall(snap(REFS()), { detentions: [] });
+  const back = r.referrals.find((x) => x.id === "THEIRS-OPEN");
+  check("...and goes back over the server's row whole", back.status === "closed" && back.studentName === "Student THEIRS-OPEN"
+    && back.closedBy === "A Admin");
+  const t = keptOn(Q)?.[TEACHER_EMAIL]?.referrals[0];
+  check("a teacher's own unsaved referral is still kept whole", !!t && t.studentName === "Student UNSAVED-NEW" && t.studentId === "S1");
+}
+
+console.log("\n-- a referral saved during sign-out, and what is said about it (second review) --");
+{
+  /** A teacher's tab whose referral save is held open, as a slow network holds it. */
+  const submitting = (over) => {
+    let release;
+    const G = world(TEACHER, Object.assign({ students: [{ id: "S1", firstName: "Kid", lastName: "Synthetic", grade: "9" }] }, over));
+    G.saveGate = new Promise((r) => { release = r; });
+    const a = loadApp(over && over.src || script, G);
+    a.runServerInstall(snap(REFS()), {});
+    document_el(a, "referralStudentSelect").value = "S1";
+    document_el(a, "referralDate").value = "2026-10-07";
+    document_el(a, "referralBehaviorType").value = "Defiance";
+    document_el(a, "referralDescription").value = "SYNTHETIC-DESCRIPTION";
+    document_el(a, "referralReferringStaff").value = "T Teacher";
+    const done = a.submitBehaviorReferral();
+    return { G, a, done, release, sent: copy(a.referrals) };
+  };
+
+  const one = submitting();
+  await one.a.logout();
+  check("Logout during the save names the referral as not on the server", /Not on the server yet: 1 referral\./.test(one.G.confirms[0]));
+  check("...and keeps it", keptOn(one.G)?.[TEACHER_EMAIL]?.referrals.length === 1);
+  // The save that was sending it lands now.
+  one.a.disciplineWriteLanded("referrals", one.sent, TEACHER_EMAIL, 0);
+  one.release(true); await one.done;
+  check("when that save lands, the copy kept on the device goes", keptOn(one.G) === null);
+  const save = liftFn(script, "saveData");
+  check("saveData takes whose save it is before anything is awaited",
+    /const ownerAtStart = referralCacheOwner\(\);/.test(save)
+    && save.indexOf("const ownerAtStart = referralCacheOwner();") < save.indexOf("await peekOnceInSave()"));
+
+  for (const landed of [true, false]) {
+    const x = submitting();
+    await x.a.logout({ inactive: true });
+    const before = x.G.toasts.length;
+    x.release(landed); await x.done;
+    const after = x.G.toasts.slice(before);
+    check(`a save that ${landed ? "lands" : "fails"} after sign-out puts no toast naming the child on the login screen`,
+      !after.some((t) => /Synthetic/.test(t.message)), J(after));
+  }
+}
+
+console.log("\n-- only what the person may hold now comes back (second review) --");
+{
+  const G = world(ADMIN, { actions: [DET], detentionIdCounter: 5 });
+  const a = loadApp(script, G);
+  a.runServerInstall(snap(REFS()), { detentions: [] });
+  await a.confirmCloseReferral("MINE-OPEN");      // a teacher's referral, closed by the admin, with a detention
+  await a.logout({ inactive: true });
+  check("before: the close and its detention are kept for the admin",
+    keptOn(G)?.[ADMIN_EMAIL]?.referrals.length === 1 && keptOn(G)?.[ADMIN_EMAIL]?.detentions.length === 1);
+  const b = loadApp(script, world(null, { localStorage: G.localStorage, referrals: [] }));
+  b.currentUser = { ...ADMIN, role: "teacher" };   // the same email, moved down to teacher
+  b.restoreUnsentDiscipline();
+  check("moved down to teacher: neither comes back into this tab's memory", b.restored === null
+    && !b.referrals.some((r) => r.id === "MINE-OPEN") && b.detentions.length === 0);
+  check("...and neither stays on the device (the owner's call: work this role may not do waits for no one)", keptOn(G) === null);
+}
+
+console.log("\n-- TEETH: the second review's fixes, each removed, are caught --");
+{
+  const brokenD = (from, to, label) => loadD(breakOnce(discSrc, from, to, label));
+
+  const noReId = brokenD("      if (indexWhere(function (x) { return x.id === d.id; }) !== -1) {",
+    "      if (false) {", "re-id");
+  let { G } = await adminClosedOffline();
+  let b = adminSignsIn(G, script, noReId);
+  b.runServerInstall(snap(REFS()), { detentions: [OTHER_KIDS()] });
+  check("TEETH: without a new id the kept detention shares detention_5 with another child's",
+    b.detentions.filter((d) => d.id === "detention_5").length === 2);
+
+  const noGate = breakOnce(script, "                if (_disciplineLoadedGeneration !== _signInGeneration) return null;\n", "", "load gate");
+  ({ G } = await adminClosedOffline());
+  b = adminSignsIn(G, noGate);
+  check("TEETH: without the gate the kept detention goes into the sign-in save before the server's list is here",
+    b.detentions.some((d) => d.id === "detention_5" && d.studentId === "S1"));
+
+  const overwrite = brokenD("        if (mine < theirs) { superseded.push(d); return; }\n" +
+    "        var row = d.id === out[at].id ? d : withId(d, out[at].id);\n        if (mine > theirs) out[at] = row;",
+    "        var row = d.id === out[at].id ? d : withId(d, out[at].id);\n        out[at] = row;", "newer only");
+  const lost = await adminClosedOffline({ detentionIdCounter: 7 });
+  b = adminSignsIn(lost.G, script, overwrite);
+  b.runServerInstall(snap(lost.closed), { detentions: [{ ...lost.made[0], daysServed: 2, updatedAt: "2026-10-09T16:00:00.000Z" }] });
+  check("TEETH: a kept copy put over a newer server copy undoes the colleague's two days", b.detentions[0].daysServed === 0);
+
+  const noActive = brokenD("(d.status === 'active' && activeDetentionFor(out, src))", "false", "one active");
+  ({ G } = await adminClosedOffline());
+  b = adminSignsIn(G, script, noActive);
+  b.runServerInstall(snap(REFS()), { detentions: [{ id: "detention_6", studentId: "S1", sourceReferralId: "THEIRS-OPEN",
+    assignedAt: "2026-10-07T19:00:00.000Z", status: "active" }] });
+  check("TEETH: without the one-active rule the referral gets a second active detention",
+    b.detentions.filter((d) => d.sourceReferralId === "THEIRS-OPEN" && d.status === "active").length === 2);
+
+  const noLost = brokenD("(lost && lost.has(src))", "false", "lost close");
+  ({ G } = await adminClosedOffline());
+  const later = new Date(Date.now() + 3600e3).toISOString();
+  b = adminSignsIn(G, script, noLost);
+  b.runServerInstall(snap([...REFS().filter((r) => r.id !== "THEIRS-OPEN"),
+    theirs("THEIRS-OPEN", { status: "closed", closedBy: "B Admin", closedAt: later, updatedAt: later })]), { detentions: [] });
+  check("TEETH: without the lost-close rule a detention from the losing close is added", b.detentions.length === 1);
+
+  const wholesale = breakOnce(script, "                const left = D.rowsNotCoveredBy(kind, before, rows);", "                const left = [];", "only covered rows");
+  ({ G } = await adminClosedOffline());
+  b = adminSignsIn(G, wholesale);
+  b.runServerInstall(snap(REFS()), { detentions: [] });
+  b.disciplineWriteLanded("referrals", REFS(), ADMIN_EMAIL, 0);
+  check("TEETH: letting go of rows a write did not carry loses the kept close from the device",
+    (keptOn(G)?.[ADMIN_EMAIL]?.referrals || []).length === 0);
+
+  const noHook = breakOnce(script, "                        if (_restoredDiscipline && putBackUnsentDiscipline()) {", "                        if (false) {", "load hook");
+  ({ G } = await adminClosedOffline());
+  b = adminSignsIn(G, noHook);
+  b.runServerInstall(snap(REFS()), { detentions: [] });
+  check("TEETH: without the load's put-back the kept close is not in the list the next snapshot takes",
+    b.referrals.find((r) => r.id === "THEIRS-OPEN").status !== "closed");
+
+  const notOnLanding = breakOnce(script, "            if (generation === _signInGeneration) noteDisciplineOnServer(kind, sent);\n            dropSetAside(owner, kind, sent);",
+    "            if (generation === _signInGeneration) noteDisciplineOnServer(kind, sent);", "landing drops");
+  const { G: T, a: t } = teacherWithUnsaved();
+  const tSent = copy(t.referrals);
+  const tl = loadApp(notOnLanding, world(TEACHER, { localStorage: T.localStorage }));
+  await t.logout({ inactive: true });
+  tl.disciplineWriteLanded("referrals", tSent, TEACHER_EMAIL, 0);
+  check("TEETH: a landing that does not touch the kept copy leaves a referral the server holds on the device",
+    keptOn(T)?.[TEACHER_EMAIL]?.referrals.length === 1);
+
+  const forever = brokenD("    return t >= yearStart && now - t <= SET_ASIDE_DAYS * DAY_MS;", "    return true;", "expiry");
+  const ex = teacherWithUnsaved();
+  await ex.a.logout({ inactive: true });
+  const all = keptOn(ex.G);
+  all[TEACHER_EMAIL].at = "2025-06-01T12:00:00.000Z";
+  ex.G.localStorage.setItem(UNSENT, J(all));
+  const ev = loadApp(script, world(null, { localStorage: ex.G.localStorage }), forever);
+  ev.currentUser = TEACHER;
+  check("TEETH: without the expiry last June's referral comes back", ev.restoreUnsentDiscipline() === 1);
+
+  const whole = brokenD("  function closePatch(r) {\n", "  function closePatch(r) {\n    return r;\n", "close only");
+  const W = world(ADMIN, { actions: [DET], detentionIdCounter: 5 });
+  const w = loadApp(script, W, whole);
+  w.runServerInstall(snap(REFS()), { detentions: [] });
+  await w.confirmCloseReferral("THEIRS-OPEN");
+  await w.logout({ inactive: true });
+  check("TEETH: without the close-only copy the device keeps the teacher's description and the child's name",
+    "studentName" in keptOn(W)[ADMIN_EMAIL].referrals[0]);
+
+  const noCut = breakOnce(script, "            if (!refsOut.length && !detsOut.length) return;\n", "            return;\n", "role cut");
+  const C = world(ADMIN, { actions: [DET], detentionIdCounter: 5 });
+  const cA = loadApp(script, C);
+  cA.runServerInstall(snap(REFS()), { detentions: [] });
+  await cA.confirmCloseReferral("MINE-OPEN");
+  await cA.logout({ inactive: true });
+  const cB = loadApp(noCut, world(null, { localStorage: C.localStorage }));
+  cB.currentUser = { ...ADMIN, role: "teacher" };
+  cB.restoreUnsentDiscipline();
+  check("TEETH: without the cut a demoted person's tab holds the kept close and detention", cB.restored?.detentions.length === 1);
+
+  const ask = breakOnce(script, "                if (notKept && !inactive && !(await showConfirm(", "                if (false && !(await showConfirm(", "ask on failure");
+  const failing = Object.assign(makeStorage(), { setItem() { const e = new Error("full"); e.name = "QuotaExceededError"; throw e; } });
+  const R = ref("UNSAVED-NEW");
+  const F = world(TEACHER, { localStorage: failing, unsaved: new Map([[R.id, R]]), answers: [true, false] });
+  const fa = loadApp(ask, F);
+  fa.runServerInstall(snap(REFS()), {});
+  fa.referrals.push(R);
+  await fa.logout();
+  check("TEETH: without the second question a full device signs out and loses the referral", fa.referrals.length === 0);
+
+  const chatty = script.replace("                if (generation !== _signInGeneration) return;\n                if (ok === false)", "                if (ok === false)")
+    .replace("                console.error('[referral] save failed', e);\n                if (generation !== _signInGeneration) return;\n", "                console.error('[referral] save failed', e);\n");
+  if (chatty === script) throw new Error("teeth: toast guard anchors moved");
+  let rel;
+  const K = world(TEACHER, { students: [{ id: "S1", firstName: "Kid", lastName: "Synthetic", grade: "9" }] });
+  K.saveGate = new Promise((r) => { rel = r; });
+  const k = loadApp(chatty, K);
+  k.runServerInstall(snap(REFS()), {});
+  for (const [id, v] of [["referralStudentSelect", "S1"], ["referralDate", "2026-10-07"], ["referralBehaviorType", "Defiance"],
+    ["referralDescription", "SYNTHETIC-DESCRIPTION"], ["referralReferringStaff", "T Teacher"]]) document_el(k, id).value = v;
+  const kd = k.submitBehaviorReferral();
+  await k.logout({ inactive: true });
+  const n = K.toasts.length;
+  rel(true); await kd;
+  check("TEETH: without the sign-in check the login screen gets a toast naming the child", K.toasts.slice(n).some((x) => /Synthetic/.test(x.message)));
 }
 
 console.log("\n-- the page these run in --");

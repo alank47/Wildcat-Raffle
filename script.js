@@ -2540,6 +2540,12 @@
         // in flight when it moved belongs to the person who has gone, and its
         // answer is dropped instead of installed.
         let _signInGeneration = 0;
+        // The generation in which a load last installed the server's referrals
+        // and detentions. Work a sign-out kept goes back only once it equals
+        // _signInGeneration: checked against the server's lists, not against
+        // whatever a tab holds before its sign-in load lands
+        // (putBackUnsentDiscipline).
+        let _disciplineLoadedGeneration = -1;
         let detentionLocations = ['Main Office', 'Library', 'Room 101', 'Room 102', 'Cafeteria', 'Gym'];
         let detentionReasons = [
             'Disrupting Class',
@@ -3039,6 +3045,10 @@
             _disciplineOnServer.referrals.clear();
             _disciplineOnServer.detentions.clear();
             _restoredDiscipline = null;
+            // Kept work past its time comes off the device here too, so a
+            // student's sign-in and every sign-out apply the limit as well as
+            // the page start and a staff sign-in (readUnsentDiscipline).
+            readUnsentDiscipline();
             try {
                 _unsavedReferrals.clear();
                 renderUnsavedReferralBar();
@@ -4078,6 +4088,14 @@
                         detentionIdCounter = Math.max(
                             Number(detentionIdCounter) || 1,
                             Number(secondaryData.detentionIdCounter) || 1);
+                        // The server's own lists and counter are here, so work a
+                        // sign-out kept can be checked against them now, and a
+                        // save sent for it rather than waiting for the next
+                        // thing somebody does (review, 2026-10-07).
+                        _disciplineLoadedGeneration = _signInGeneration;
+                        if (_restoredDiscipline && putBackUnsentDiscipline()) {
+                            Promise.resolve(requestSave('Unsent work from before sign-out')).catch(() => {});
+                        }
                         detentionLocations = secondaryData.detentionLocations || ['Main Office', 'Library', 'Room 101', 'Room 102', 'Cafeteria', 'Gym'];
                         detentionReasons = secondaryData.detentionReasons || ['Disrupting Class', 'Tardiness', 'Dress Code Violation', 'Inappropriate Behavior', 'Defiance/Disrespect', 'Cell Phone Violation', 'Missing Assignment', 'Other'];
                         
@@ -4843,7 +4861,7 @@
             // aside and the same person's sign-in brought back (review,
             // 2026-10-07). Before the snapshot below, so a pass that sends
             // them can take them off.
-            const restoredAtStart = putBackUnsentDiscipline();
+            putBackUnsentDiscipline();
             // Unsaved work that existed BEFORE this save started. A fully
             // successful save proves it is on the server; anything marked
             // during the save belongs to the next one.
@@ -4855,11 +4873,11 @@
             // Only these leave the bar: a referral missing from the list was
             // not sent, whatever else this save managed (review, 2026-10-07).
             let referralIdsSent = null;
-            // True once detentions are known to be on the server after this
-            // pass: written now, or unchanged since a write that landed.
-            let detentionsOnServerNow = false;
-            // Whose save this is. A sign-out during it moves the generation on.
+            // Whose save this is. A sign-out during it moves the generation on,
+            // and what it sent still comes off the work its author kept on
+            // this device (disciplineWriteLanded).
             const generationAtStart = _signInGeneration;
+            const ownerAtStart = referralCacheOwner();
 
             try {
                 // The save is a sequence of Convex mutations now. Each one is
@@ -5383,7 +5401,7 @@
                             const refSent = JSON.parse(JSON.stringify(behaviorReferrals || []));
                             const refSaved = await mergeLegacySlice('referrals', 'behaviorReferrals', behaviorReferrals, 'id');
                             referralIdsSent = new Set(refSent.map(r => r && r.id).filter(Boolean));
-                            if (generationAtStart === _signInGeneration) noteDisciplineOnServer('referrals', refSent);
+                            disciplineWriteLanded('referrals', refSent, ownerAtStart, generationAtStart);
                             // WHAT THE SERVER DID WITH IT, IN NUMBERS (2026-10-07).
                             // The answer was thrown away, so a save the server
                             // partly refused -- a stale copy, a close from a
@@ -5902,8 +5920,10 @@
                             for (const key of Object.keys(secondaryLists)) {
                                 const value = secondaryLists[key] || [];
                                 if (!saveDirty.changed('secondary:' + key, value)) {
-                                    // Unchanged since a write of it landed.
-                                    if (key === 'detentions') detentionsOnServerNow = true;
+                                    // Unchanged since a write of it landed, so the
+                                    // server holds what it carries: kept work that
+                                    // matches it has nothing left to send.
+                                    if (key === 'detentions') dropSetAside(ownerAtStart, 'detentions', value);
                                     continue;
                                 }
                                 secondaryNames.push(key);
@@ -5920,10 +5940,7 @@
                                     mergeLegacySlice('secondary', key, sent, 'id')
                                         .then(r => {
                                             saveDirty.markWritten('secondary:' + key, sent);
-                                            if (key === 'detentions') {
-                                                detentionsOnServerNow = true;
-                                                if (generationAtStart === _signInGeneration) noteDisciplineOnServer('detentions', sent);
-                                            }
+                                            if (key === 'detentions') disciplineWriteLanded('detentions', sent, ownerAtStart, generationAtStart);
                                             // THE SERVER KEPT A RECEIPT CANCELLED that this
                                             // tab still had open (2026-10-02): catch up now,
                                             // rather than offer it for another refund.
@@ -6168,9 +6185,6 @@
                     // in the list it sent is now on the server. Work marked
                     // during the pass waits for the next one.
                     clearSentFromUnsaved(unsavedAtStart.referrals, referralIdsSent);
-                    // What a sign-in brought back has landed: the device copy
-                    // set aside for it can go.
-                    settleRestoredDiscipline(restoredAtStart, referralIdsSent, detentionsOnServerNow);
                     // Cash only when the outbox agrees. "No write threw" is not
                     // the same claim as "the rows I was holding are on the
                     // server": a pass with nothing dirty throws nothing and
@@ -9393,14 +9407,35 @@
             // closed. It is not lost either way -- it is kept on this device
             // for this person -- but they should know it is not on the server.
             const unsent = !inactive && typeof describeUnsentDiscipline === 'function' ? describeUnsentDiscipline() : '';
+            const days = (window.WildcatDiscipline && window.WildcatDiscipline.SET_ASIDE_DAYS) || 14;
             const question = unsent
-                ? `Not on the server yet: ${unsent}. It stays on this device, and is sent ` +
-                  'the next time you sign in here. Log out anyway?'
+                ? `Not on the server yet: ${unsent}. It stays on this device for up to ${days} days, ` +
+                  'and is sent the next time you sign in here. Log out anyway?'
                 : 'Are you sure you want to logout?';
             if (inactive || await showConfirm(question)) {
+                // THE DEVICE CACHE COMES OFF FIRST (review, 2026-10-07). On an
+                // admin's device it holds the whole school's referrals, which
+                // is exactly what fills localStorage (it hit the quota on
+                // 2026-09-17), and the room it frees is what the work kept
+                // below needs. clearSession strips it again; that is a no-op.
+                if (typeof stripDisciplineFromLocalCache === 'function') stripDisciplineFromLocalCache();
                 // Before anyone is forgotten: whose it is comes from who is
                 // signed in, and the lists are emptied below.
-                if (typeof setAsideUnsentDiscipline === 'function') setAsideUnsentDiscipline();
+                const kept = typeof setAsideUnsentDiscipline === 'function' ? setAsideUnsentDiscipline() : null;
+                // AND IF IT COULD NOT BE KEPT, NOBODY IS TOLD IT WAS. The
+                // question above has just promised "it stays on this device";
+                // a full or blocked storage breaks that promise, so the person
+                // who pressed Logout is asked again, and staying signed in
+                // keeps the work where it is. The inactivity logout has nobody
+                // to ask, so it says so in the console, in numbers.
+                const notKept = kept === null && typeof describeUnsentDiscipline === 'function' ? describeUnsentDiscipline() : '';
+                if (notKept && !inactive && !(await showConfirm(
+                    `This device could not keep ${notKept}, so it is lost if you log out now. ` +
+                    'Staying signed in keeps it here to be sent.',
+                    { confirmLabel: 'Log out anyway', cancelLabel: 'Stay signed in', danger: true }))) {
+                    return;
+                }
+                if (notKept) console.error('[referrals] unsent work could not be kept on this device at sign-out:', notKept);
                 currentUser = null;
                 currentStudent = null;
                 clearSession(); // Clear saved session
@@ -26764,6 +26799,9 @@
             // Whoever's discipline record the local cache holds goes, unless
             // it is this tab's own session's (dropDisciplineCacheUnlessMine).
             dropDisciplineCacheUnlessMine();
+            // And unsent work kept at a sign-out goes once it is past its time:
+            // reading it removes what is (readUnsentDiscipline).
+            readUnsentDiscipline();
 
             // Restore the Microsoft session too when a STAFF user was restored,
             // so Convex writes (meal PIN, NFC tags, hall passes, bell schedule)
@@ -43131,14 +43169,23 @@
             showReferralToast(
                 `<strong>Saving referral</strong> for ${escapeHtml(referral.studentName)}…`, 'ok');
 
+            // NOTHING TO SAY ONCE THE TEACHER HAS SIGNED OUT (review,
+            // 2026-10-07). A Logout pressed while this save was still sending
+            // put either toast on the login screen for whoever sat down next,
+            // with the child's name in it; and "Use Retry in the bar" pointed
+            // at a bar sign-out had removed, for a referral it had kept on the
+            // device for the teacher's next sign-in.
+            const generation = _signInGeneration;
             try {
                 const ok = await requestSave('Referral for ' + referral.studentName);
+                if (generation !== _signInGeneration) return;
                 if (ok === false) throw new Error('the save did not complete');
                 markReferralSaved(referral.id);
                 showReferralToast(
                     `✅ <strong>Referral submitted</strong> for ${escapeHtml(referral.studentName)}, sent to administration for review.`, 'ok');
             } catch (e) {
                 console.error('[referral] save failed', e);
+                if (generation !== _signInGeneration) return;
                 // The banner stays until it saves. A toast disappears, and a
                 // teacher who missed it would never learn the referral was
                 // never filed.
@@ -43304,6 +43351,26 @@
         //
         // What the server holds is kept as fingerprints by id
         // (_disciplineOnServer), noted on every load, pull and landed save.
+        //
+        // THE SECOND REVIEW (2026-10-07) found it could still lose, misplace
+        // or leak what it kept, and the rules are now these:
+        //   - A ROW LEAVES THE DEVICE WHEN A WRITE THAT CARRIED IT LANDS, and
+        //     no other way but expiry or being superseded. It used to go
+        //     wholesale after any successful save: one that a load had
+        //     emptied of the kept rows, one that sent only one tab's share of
+        //     a person's work, or none at all when a save already in flight
+        //     at sign-out landed afterwards (disciplineWriteLanded).
+        //   - KEPT WORK GOES BACK ONLY ONCE THIS SIGN-IN HAS THE SERVER'S
+        //     LISTS to check it against (putBackUnsentDiscipline). Before
+        //     that, a kept detention could take the id another child's
+        //     detention has had since, or be a referral's second active one.
+        //     A referral on the "not saved yet" bar goes back at once, as
+        //     before: its id is its own.
+        //   - KEPT FOR 14 DAYS, NOT FOR EVER, and never into a new school
+        //     year (readUnsentDiscipline).
+        //   - SOMEONE ELSE'S REFERRAL IS KEPT AS ITS CLOSE ALONE
+        //     (WildcatDiscipline.closePatch), and only what the person may
+        //     hold now comes back (cutRestoredToRole).
         // =====================================================================
 
         /**
@@ -43362,54 +43429,128 @@
             }
         }
 
-        /** Every person's set-aside work on this browser, by email. {} on any failure. */
+        /**
+         * Every person's kept work on this browser, by email. {} on any failure.
+         *
+         * WHAT IS PAST ITS TIME IS REMOVED ON THE WAY (review, 2026-10-07):
+         * 14 days, never across 1 July, and nothing whose stamp cannot be
+         * read (WildcatDiscipline.setAsideIsCurrent). The stamp was written
+         * and never read, so an author who never came back to this browser
+         * left a child's referral on it for good -- through every other
+         * teacher's and student's sign-in -- and one kept last June went
+         * back into the first save after the year turned over. Every read
+         * goes through here, and the page start and a student's sign-in read
+         * it for this alone.
+         */
         function readUnsentDiscipline() {
             try {
                 const raw = localStorage.getItem(UNSENT_DISCIPLINE_KEY);
                 const all = raw ? JSON.parse(raw) : null;
-                return all && typeof all === 'object' && !Array.isArray(all) ? all : {};
+                if (!all || typeof all !== 'object' || Array.isArray(all)) return {};
+                const now = Date.now();
+                const gone = Object.keys(all).filter(owner =>
+                    !all[owner] || !window.WildcatDiscipline.setAsideIsCurrent(all[owner].at, now));
+                if (gone.length) {
+                    gone.forEach(owner => { delete all[owner]; });
+                    writeUnsentDiscipline(all);
+                    // A count, never whose: an email is a name.
+                    console.log('[referrals] unsent work past its time removed from this device:', { people: gone.length });
+                }
+                return all;
             } catch (e) {
                 return {};
             }
+        }
+
+        /** Write the kept work back, removing the key when nobody has any. Throws on a full or blocked storage. */
+        function writeUnsentDiscipline(all) {
+            if (Object.keys(all).length) localStorage.setItem(UNSENT_DISCIPLINE_KEY, JSON.stringify(all));
+            else localStorage.removeItem(UNSENT_DISCIPLINE_KEY);
         }
 
         function unsentDisciplineOf(all, owner) {
             return Object.prototype.hasOwnProperty.call(all, owner) ? all[owner] : null;
         }
 
-        /** Remove one person's set-aside work, once it is on the server. */
-        function dropUnsentDisciplineFor(owner) {
+        /**
+         * Take rows of one person's kept work off the device, and out of what
+         * this tab brought back for them: the ones `rows` covers (the same
+         * record, at least as new; WildcatDiscipline.rowsNotCoveredBy). For
+         * rows a write carried that has landed, and for rows that will never
+         * be sent (superseded, or no longer this person's to hold).
+         *
+         * ONLY THOSE ROWS (review, 2026-10-07). The whole entry went after
+         * any successful save, so a second tab's work, kept under the same
+         * email after this tab brought the entry back, went with it unsent.
+         */
+        function dropSetAside(owner, kind, rows) {
+            if (!owner || (kind !== 'referrals' && kind !== 'detentions') || !Array.isArray(rows) || !rows.length) return;
+            const D = window.WildcatDiscipline;
+            const R = _restoredDiscipline;
+            if (R && R.owner === owner) {
+                R[kind] = D.rowsNotCoveredBy(kind, R[kind], rows);
+                if (!R.referrals.length && !R.detentions.length) _restoredDiscipline = null;
+            }
             try {
                 const all = readUnsentDiscipline();
-                if (!unsentDisciplineOf(all, owner)) return;
-                delete all[owner];
-                if (Object.keys(all).length) localStorage.setItem(UNSENT_DISCIPLINE_KEY, JSON.stringify(all));
-                else localStorage.removeItem(UNSENT_DISCIPLINE_KEY);
+                const mine = unsentDisciplineOf(all, owner);
+                if (!mine) return;
+                const before = Array.isArray(mine[kind]) ? mine[kind] : [];
+                const left = D.rowsNotCoveredBy(kind, before, rows);
+                if (left.length === before.length) return;
+                mine[kind] = left;
+                if (kind === 'referrals') {
+                    const still = new Set(left.map(r => r && r.id));
+                    mine.unsavedIds = (Array.isArray(mine.unsavedIds) ? mine.unsavedIds : []).filter(id => still.has(id));
+                }
+                if (!(mine.referrals || []).length && !(mine.detentions || []).length) delete all[owner];
+                writeUnsentDiscipline(all);
             } catch (e) { /* kept: sent again at the next sign-in, which the server merges */ }
+        }
+
+        /**
+         * A write of one discipline list has landed. What it sent is on the
+         * server: noted for this sign-in (not after a sign-out, when the tab
+         * belongs to nobody), and taken off the device copy of the work its
+         * author kept -- whoever is signed in now. A save running when
+         * somebody signs out lands after their work was kept, and left that
+         * copy of a referral the server already held on the device until they
+         * came back (review, 2026-10-07). `owner` and `generation` are the
+         * save's own, taken when it started.
+         */
+        function disciplineWriteLanded(kind, sent, owner, generation) {
+            if (generation === _signInGeneration) noteDisciplineOnServer(kind, sent);
+            dropSetAside(owner, kind, sent);
         }
 
         /**
          * At sign-out, BEFORE the person is forgotten: keep their unsent work
          * on this browser under their own email. Added to anything already
-         * kept for them (a later copy of a referral wins). Returns the counts
-         * kept, or null when nobody is signed in or the write failed. Never
-         * throws: a sign-out must not fail on this.
+         * kept for them (a later copy of a referral wins; a detention is
+         * matched as a record, not by its id). Someone else's referral is kept
+         * as its close alone (WildcatDiscipline.closePatch). Returns the
+         * counts kept, or null when nobody is signed in or the write failed.
+         * Never throws: a sign-out must not fail on this.
          */
         function setAsideUnsentDiscipline() {
             try {
                 const owner = referralCacheOwner();
                 if (!owner) return null;
+                const D = window.WildcatDiscipline;
                 const now = unsentDisciplineNow();
                 if (!now.referrals.length && !now.detentions.length) return { referrals: 0, detentions: 0 };
+                const onBar = new Set(now.unsavedIds);
+                const who = isPreviewingTeacher() ? realUser : currentUser;
+                const referrals = now.referrals.map(r =>
+                    D.ownsReferral(r, who) || onBar.has(r.id) ? r : D.closePatch(r));
                 const all = readUnsentDiscipline();
                 const prev = unsentDisciplineOf(all, owner) || {};
-                const dets = new Map((Array.isArray(prev.detentions) ? prev.detentions : [])
-                    .filter(d => d && d.id).map(d => [d.id, d]));
-                now.detentions.forEach(d => dets.set(d.id, d));
+                const dets = new Map();
+                [...(Array.isArray(prev.detentions) ? prev.detentions : []), ...now.detentions]
+                    .forEach(d => { if (d && d.id) dets.set(D.detentionKey(d), d); });
                 all[owner] = {
                     at: new Date().toISOString(),
-                    referrals: window.WildcatDiscipline.mergeReferrals(
-                        Array.isArray(prev.referrals) ? prev.referrals : [], now.referrals).referrals,
+                    referrals: D.mergeReferrals(Array.isArray(prev.referrals) ? prev.referrals : [], referrals).referrals,
                     unsavedIds: [...new Set([...(Array.isArray(prev.unsavedIds) ? prev.unsavedIds : []), ...now.unsavedIds])],
                     detentions: [...dets.values()],
                 };
@@ -43426,10 +43567,11 @@
         /**
          * At sign-in, before the first save: bring back what THIS person set
          * aside, and nobody else's. Their unsaved referrals go back on the
-         * bar; everything is put into the lists the save sends, and again
-         * before every save until one lands (a load can still replace the
-         * lists after this). The device copy is removed only then
-         * (settleRestoredDiscipline). Returns how many rows came back.
+         * bar, and so in the next save; the rest goes into the lists a save
+         * sends once this sign-in has the server's own lists to check it
+         * against, and again before every save until a write carrying it
+         * lands (putBackUnsentDiscipline, disciplineWriteLanded). Returns how
+         * many rows came back.
          */
         function restoreUnsentDiscipline() {
             try {
@@ -43444,8 +43586,15 @@
                 };
                 const unsaved = new Set(Array.isArray(mine.unsavedIds) ? mine.unsavedIds : []);
                 // On the bar first, so the cut to this person's own keeps them.
-                R.referrals.forEach(r => { if (unsaved.has(r.id) && !_unsavedReferrals.has(r.id)) _unsavedReferrals.set(r.id, r); });
+                R.referrals.forEach(r => {
+                    if (unsaved.has(r.id) && r.studentId && !_unsavedReferrals.has(r.id)) _unsavedReferrals.set(r.id, r);
+                });
                 _restoredDiscipline = R;
+                cutRestoredToRole(R);
+                // The next detention this tab makes takes an id above every
+                // kept one, so it cannot meet one of them on the server.
+                detentionIdCounter = Math.max(Number(detentionIdCounter) || 1,
+                    window.WildcatDiscipline.nextDetentionNumber(R.detentions));
                 putBackUnsentDiscipline();
                 renderUnsavedReferralBar();
                 console.log('[referrals] brought back unsent work from before sign-out:',
@@ -43458,14 +43607,40 @@
         }
 
         /**
-         * Put unsent discipline work into the lists the next save sends: every
-         * referral on the "not saved yet" bar that has dropped out of the list
-         * (the bar must never list a referral no save will send), and what a
-         * sign-in brought back -- referrals merged by the usual rule (a later
-         * edit here wins), detentions only over the server's own copy (an
-         * edit made here since sign-in is newer than what was set aside).
-         * Returns the brought-back set it applied, or null. Never during a
-         * teacher view, whose list is the admin's and whose saves are refused.
+         * WHAT THE PERSON SIGNED IN MAY HOLD NOW, AND NO MORE (review,
+         * 2026-10-07). The same email can come back with a lower role: an
+         * admin's kept Close of a teacher's referral, and the detention it
+         * made, then sat in this tab's memory -- readable from the console --
+         * while no save could send them. The rest comes off the device too,
+         * counted: work this role may not do is not waiting for anyone. The
+         * owner may prefer to keep it there for the person's old role to come
+         * back; that is a one-line change here.
+         */
+        function cutRestoredToRole(R) {
+            const keep = cacheableReferrals(R.referrals);
+            const kept = new Set(keep.map(r => r && r.id));
+            const refsOut = R.referrals.filter(r => !kept.has(r.id));
+            const detsOut = referralsScopedToViewer() ? R.detentions : [];
+            if (!refsOut.length && !detsOut.length) return;
+            dropSetAside(R.owner, 'referrals', refsOut);
+            dropSetAside(R.owner, 'detentions', detsOut);
+            console.log('[referrals] unsent work this role may not hold, removed:',
+                { referrals: refsOut.length, detentions: detsOut.length });
+        }
+
+        /**
+         * Put unsent discipline work into the lists the next save sends.
+         *
+         * Every referral on the "not saved yet" bar that has dropped out of
+         * the list goes back at once (the bar must never list a referral no
+         * save will send). What a sign-in brought back goes back only once a
+         * load has given this sign-in the server's own lists: a kept referral
+         * over the server's copy, field by field as the server lays it, when
+         * it is newer; a kept detention by WildcatDiscipline.putBackDetentions.
+         * Rows that lost to a later copy are superseded and come off the
+         * device. Returns the brought-back set it applied, or null. Never
+         * during a teacher view, whose list is the admin's and whose saves
+         * are refused.
          */
         function putBackUnsentDiscipline() {
             try {
@@ -43476,17 +43651,35 @@
                 const R = _restoredDiscipline;
                 if (!R) return null;
                 if (R.owner !== referralCacheOwner()) { _restoredDiscipline = null; return null; }
+                if (_disciplineLoadedGeneration !== _signInGeneration) return null;
+                cutRestoredToRole(R);
+                if (_restoredDiscipline !== R) return null;
                 const D = window.WildcatDiscipline;
-                behaviorReferrals = cacheableReferrals(D.mergeReferrals(behaviorReferrals, R.referrals).referrals);
+                const list = behaviorReferrals.slice();
+                const superseded = [];
+                const lost = new Set();
+                R.referrals.forEach(r => {
+                    const i = list.findIndex(x => x && x.id === r.id);
+                    if (i === -1) {
+                        // A whole referral the server has not got yet goes in;
+                        // a close alone has nothing left to close.
+                        if (r.studentId) list.push(r); else superseded.push(r);
+                        return;
+                    }
+                    const mine = D.touchedAt(r), theirs = D.touchedAt(list[i]);
+                    if (mine > theirs) list[i] = Object.assign({}, list[i], r);
+                    else if (mine < theirs) { superseded.push(r); lost.add(r.id); }
+                });
+                behaviorReferrals = list;
+                if (superseded.length) dropSetAside(R.owner, 'referrals', superseded);
                 if (R.detentions.length && !referralsScopedToViewer()) {
-                    const list = Array.isArray(detentions) ? detentions.slice() : [];
-                    R.detentions.forEach(d => {
-                        const i = list.findIndex(x => x && x.id === d.id);
-                        if (i === -1) { list.push(d); return; }
-                        const prints = _disciplineOnServer.detentions.get(d.id);
-                        if (prints && prints.has(D.rowPrint(list[i]))) list[i] = d;
-                    });
-                    detentions = list;
+                    const put = D.putBackDetentions(detentions, R.detentions,
+                        { counter: detentionIdCounter, lostReferralIds: lost });
+                    detentions = put.list;
+                    detentionIdCounter = put.counter;
+                    // Under the ids they now have, so the next pass finds them.
+                    R.detentions = put.pending;
+                    if (put.superseded.length) dropSetAside(R.owner, 'detentions', put.superseded);
                 }
                 return R;
             } catch (e) {
@@ -43501,19 +43694,6 @@
             if (!idsSent) return 0;
             (idsAtStart || []).forEach(id => { if (idsSent.has(id) && _unsavedReferrals.delete(id)) cleared++; });
             return cleared;
-        }
-
-        /**
-         * After a save in which every write landed: if it carried what a
-         * sign-in brought back (and the detentions landed too, when there were
-         * any), that work is on the server and its device copy goes.
-         */
-        function settleRestoredDiscipline(applied, idsSent, detentionsLanded) {
-            if (!applied || applied !== _restoredDiscipline || !idsSent) return false;
-            if (applied.detentions.length && !detentionsLanded) return false;
-            _restoredDiscipline = null;
-            dropUnsentDisciplineFor(applied.owner);
-            return true;
         }
 
         // Closure action list — mirrors the "Closing the Loop Options" checklist.
