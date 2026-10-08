@@ -690,7 +690,7 @@ export const verifyExport = internalQuery({
       day,
       settings: {
         modeByDivision: settings.modeByDivision, countFromDateByDivision: settings.countFromDateByDivision,
-        lateEntryLists: settings.lateEntryLists,
+        lateEntryLists: settings.lateEntryLists, countDitching: settings.countDitching,
       },
       marked: marked ?? null,
       dayRow: row ? {
@@ -698,6 +698,7 @@ export const verifyExport = internalQuery({
         closeInstant: row.closeInstant ?? null, readyInstant: row.readyInstant ?? null, lastFreezeInstant: row.lastFreezeInstant ?? null,
         frozenAt: row.frozenAt ?? null, freezeKind: row.freezeKind ?? null, closingReadStartedAt: row.closingReadStartedAt ?? null,
         noList: row.noList ?? null, modeByDivision: row.modeByDivision ?? null,
+        roomAttendanceDone: !!row.roomAttendanceDoneAt, roomClosed: !!row.roomClosed,
       } : null,
       days: listDays.map((d) => ({ date: d.date, schoolDay: d.schoolDay ?? null, frozenAt: d.frozenAt ?? null })),
       list: units.map((u) => ({
@@ -707,7 +708,8 @@ export const verifyExport = internalQuery({
       tardies: tardies.map((t) => ({
         id: t._id, key: tardyKey(t.studentNumber, t.attDate, t.periodId), studentNumber: t.studentNumber, attDate: t.attDate,
         periodId: t.periodId, slot: t.slot, code: t.code, division: t.division ?? null, state: t.state,
-        reason: t.reason ?? null, firstSeenAt: t.firstSeenAt, listsBeforeSeen: t.listsBeforeSeen, unitId: t.unitId ?? null,
+        reason: t.reason ?? null, firstSeenAt: t.firstSeenAt, firstCountableAt: t.firstCountableAt ?? null, wasHeld: !!t.wasHeld,
+        listsBeforeSeen: t.listsBeforeSeen, unitId: t.unitId ?? null,
         unitServeDay: t.unitId ? unitDay.get(t.unitId)?.serveDay ?? null : null,
         unitState: t.unitId ? unitDay.get(t.unitId)?.state ?? null : null,
       })),

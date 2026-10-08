@@ -29,6 +29,8 @@ const READER = "convex/reflectionRead.ts";
 const READER_TEST = "reflection-reader.test.mjs";
 const LIST = "convex/reflectionList.ts";
 const PRINT_TEST = "reflection-print.test.mjs";
+const VERIFY = "scripts/reflection-verify.mjs";
+const VERIFY_TEST = "reflection-verify.test.mjs";
 
 const CASES = [
   // ---- step 1: the rules (spec 6, step 1 table)
@@ -200,6 +202,23 @@ const CASES = [
     from: "            return t.toLocaleTimeString('en-US', { timeZone: RR_TZ, hour: 'numeric', minute: '2-digit' });",
     to: "            return t.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });",
     mustFail: "times use LA time, never this Chromebook's (the test runs in Tokyo)" },
+
+  // ---- step 9: the independent verify script
+  { guard: "the verify's own rule takes any earlier mark as presence (the literal rule)", file: VERIFY, test: VERIFY_TEST,
+    from: "      const here = s === 1 ? ms.some((m) => !m.absent && m.code !== \"T\" && m.code !== \"D\") : ms.some((m) => !m.absent);",
+    to: "      const here = true;",
+    mustFail: "the verify's own rule: absent at Promise Time and P2, then T at P4, is an arrival" },
+  { guard: "the verify accepts a single steady read (drops the same-ids check)", file: VERIFY, test: VERIFY_TEST,
+    from: "      if (steady && previous && previous.length === ids.length && previous.every((id, k) => id === ids[k])) return r.rows;",
+    to: "      if (steady) return r.rows;",
+    mustFail: "a teacher saving mid-read (a delete plus an insert, counts unchanged): the verify's own read is refused" },
+  { guard: "the snapshot hashes keys without the salt", file: VERIFY, test: VERIFY_TEST,
+    from: "export const hashKey = (salt, key) => createHash(\"sha256\").update(`${salt}|${key}`).digest(\"hex\");",
+    to: "export const hashKey = (salt, key) => createHash(\"sha256\").update(key).digest(\"hex\");",
+    mustFail: "the snapshot holds salted hashes only: no student number, no plain hash of a key" },
+  { guard: "a tardy left off the list is filed as entered late, never as dropped", file: VERIFY, test: VERIFY_TEST,
+    from: "        else c.dropped++;", to: "        else c.enteredLate++;",
+    mustFail: "a tardy counted at the close but left off the list is DROPPED BY THE READER" },
 ];
 
 // ------------------------------------------------------------------ the copy

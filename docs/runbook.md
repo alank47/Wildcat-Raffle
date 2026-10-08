@@ -178,6 +178,43 @@ npx convex run --prod reflection:status '{}'          # today's state: reads don
 npx convex run --prod reflection:rosterStatus '{}'    # snapshot age and the term banner
 ```
 
+### Who sees it, the review queue, and the audit trail
+
+The screen is Discipline > Reflection Room, for admin, superadmin and PBIS
+(and, from build step 6, a per-person grant with an end date). It reads
+`reflectionList:listForDay` every 30 seconds while it is open; its Print
+button reads the list again, records the print (`reflectionPrints`: ids and
+student numbers, never names) and then prints. Until the resolve screen
+lands, the review queue and the audit trail are read from the command line:
+
+```
+npx convex run --prod reflectionList:adminReview '{}'                    # each item, with its age in school days
+npx convex run --prod reflectionList:auditTrail '{"day":"2026-10-21"}'   # every human act on that day's list
+```
+
+### Checking the list during the pilot (`scripts/reflection-verify.mjs`)
+
+A second, independent reading of PowerSchool, with its own copy of the rules,
+that the pilot's controls are judged by. It only reads PowerSchool, prints
+counts only, and stores salted hashes (never a student number) in
+`~/.wildcat/reflection-verify/`. It needs `PS_HOST`, `PS_CLIENT_ID`,
+`PS_CLIENT_SECRET`, `PS_SCHOOL_ID`, `PS_YEAR_ID` and `PS_TERM_ID` in the
+environment. Never at 13:25-14:00 or 19:25-20:00 UTC.
+
+```
+# At close + 1 minute (11:46 regular, 11:21 Wednesday and Minimum, 11:51 Stack), as a local scheduled task:
+node scripts/reflection-verify.mjs snapshot
+# After school (it runs npx convex run --deployment prod reflectionList:verifyExport itself):
+node scripts/reflection-verify.mjs compare --day 2026-10-21
+```
+
+`compare` sorts every difference (on the list, entered late, held, excluded
+by rule, rule disagreement, dropped by the reader, corrected after the list
+was made, missing), prints the controls that must be 0, and ends with
+CLEAN, NOT CLEAN, or NOT JUDGED (no snapshot that day: it neither counts
+toward the clean run nor breaks it). Each judged day's counts are kept as
+`<day>.result.json` beside the snapshot.
+
 ### Deploy rules while it is on
 
 There is one production Convex deployment, so **every** server deploy ships
