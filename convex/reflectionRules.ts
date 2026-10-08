@@ -1399,14 +1399,23 @@ export function sweepFrom(input: { today: string; days: DayVerdictRow[] }): stri
 // ===========================================================================
 
 /**
- * Is an item from this date admitted at all? A division switched off, or a
- * date before its countFromDate, is "before-start": stored, never listed.
- * That is what stops switching on (or back on after a pause) from flooding
- * the first list with weeks of old tardies.
+ * Is an item from this date admitted at all? A date before its division's
+ * countFromDate is "before-start": stored, never listed. That is what stops
+ * switching on (or back on after a pause) from flooding the first list with
+ * weeks of old tardies.
+ *
+ * A DIVISION SWITCHED OFF DECIDES NOTHING YET (third review, 2026-10-08).
+ * Stamped before-start while off, an item stayed before-start for good: a
+ * tardy seen at 08:30 with HS off, HS switched on at 09:00 counting from
+ * today, was never listed -- nor was one handled during a rollback that was
+ * switched back on the same day. Off, an item is stored as it reads
+ * (countable, held or an arrival), no list claims it (claimAtFreeze skips an
+ * off division), and switching on decides: setMode parks everything still
+ * waiting from before its countFromDate, and the rest counts.
  */
 export function admitState(date: string, division: Division | null, settings: ReflectionSettings): "before-start" | null {
   if (!division) return null;
-  if (settings.modeByDivision[division] === "off") return "before-start";
+  if (settings.modeByDivision[division] === "off") return null;
   const from = settings.countFromDateByDivision[division];
   if (!from || date < from) return "before-start";
   return null;
@@ -1738,8 +1747,9 @@ export function uniformClaimable(u: UniformItem, day: string): boolean {
  * carry), a Friday arrival that Monday's re-read of Friday turns into a
  * counted tardy, and a Friday uniform entry queued on a Chromebook that
  * reaches the server on Monday. So every freeze asks once more, item by item:
- *   - a tardy or uniform entry dated before its division's countFromDate, or
- *     of a division switched off, is before-start;
+ *   - a tardy or uniform entry dated before its division's countFromDate is
+ *     before-start (one of a division switched OFF is left alone: setMode
+ *     decides when the division is switched on);
  *   - a waiting detention made under another mode than the division's now (a
  *     shadow carry once the division is live), or carried from a list dated
  *     before countFromDate, is before-start.
@@ -1751,7 +1761,10 @@ export function beforeStartAtClaim(
 ): boolean {
   if (!division) return false;
   const mode = settings.modeByDivision[division];
-  if (mode === "off") return true;
+  // Off: neither claimed nor parked -- left waiting for setMode to decide
+  // when the division is switched on (admitState). Parked here, a uniform
+  // entry still waiting when the OTHER division's list was made was lost.
+  if (mode === "off") return false;
   if (item.mode && item.mode !== mode) return true;
   const from = settings.countFromDateByDivision[division];
   const date = item.date ?? item.carriedFromDay ?? null;

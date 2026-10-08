@@ -155,11 +155,13 @@ npx convex run --prod reflection:setMode '{"division":"ms","mode":"off"}'
 
 `countFromDate` defaults to the next school day. Violations dated before it
 are stored as `before-start` and never listed, so switching on (or back on
-after a pause) never floods the first list. Run it **before the school day it
-names** (the evening before): a uniform entry logged that morning while the
-division was off still counts, but once the other division is on, that
-morning's reads have already stored this division's tardies as
-`before-start`. Going from shadow to live sets a
+after a pause) never floods the first list. While a division is **off** its
+tardies and uniform entries are kept as they read and wait on no list; the
+other division's list leaves them alone. Switching it on parks everything
+dated before `countFromDate` and counts the rest, so a division switched on
+the same morning, counting from today, takes that morning's tardies and
+uniform entries (the evening before is still the quiet time to run it).
+Going from shadow to live sets a
 new date: pending shadow items before it become `before-start`, and shadow
 carries do not move into live. Every mode change is written to
 `reflectionAudit`.

@@ -495,7 +495,10 @@ export function judge({ day, days, sch, exp, snap, salt }) {
       if (sys.unitServeDay && sys.unitServeDay > day) { c.enteredLate++; continue; }
       if (sys.state === "countable") {
         if (t.date === day && AFTER_POWER_UP.has(t.slot)) c.nextList++;
-        else if (row.noList || !row.frozenAt) c.noList++;
+        // A division switched off when the list was made has no list that
+        // day: its tardies wait, stored as they read, until it is switched
+        // on (third review, 2026-10-08).
+        else if (row.noList || !row.frozenAt || row.modeByDivision?.[sys.division] === "off") c.noList++;
         else if (t.date > day) c.enteredLate++;
         else if (sys.unitId || seenAfterClose(sys)) c.enteredLate++;
         else c.dropped++;

@@ -482,8 +482,12 @@ const claim = (dayKey, { tardies = [], uniforms = [], units = [], days = {}, set
   check("a tardy already on a list is never claimed twice", assigned.rows.length === 0);
   const voided = claim(MON, { uniforms: [uni({ id: "v", voided: true }), uni({ id: "r", reflectionState: "review" })] });
   check("a voided uniform entry, or one in review, is never claimed", voided.rows.length === 0);
-  const off = claim(MON, { tardies: [tardy({ id: "o" })], settings: R.reflectionSettingsOrDefault({ ...ON, modeByDivision: { ms: "off", hs: "shadow" } }) });
+  const off = claim(MON, { tardies: [tardy({ id: "o" })], uniforms: [uni({ id: "ou" })],
+    settings: R.reflectionSettingsOrDefault({ ...ON, modeByDivision: { ms: "off", hs: "shadow" } }) });
   check("a division that is switched off has no list", off.rows.length === 0);
+  check("...and the other division's freeze leaves its items waiting, neither claimed nor parked (switching it on decides)",
+    off.claimedTardyIds.length === 0 && off.claimedUniformIds.length === 0 && off.parked.tardyIds.length === 0 && off.parked.uniformIds.length === 0,
+    J({ claimed: [off.claimedTardyIds, off.claimedUniformIds], parked: off.parked }));
   const unplaced = claim(MON, { tardies: [tardy({ id: "q" })], divisionOf: {} });
   check("a student with no division is reported, never guessed", unplaced.rows.length === 0 && J(unplaced.unplaced) === J([S]));
 
@@ -580,7 +584,8 @@ console.log("\n3.6 WHOLE DAYS: NO LIST, WEEKENDS, HOLIDAYS\n");
 console.log("\n3.9 SWITCHING ON, AND LATENESS COUNTED IN LISTS\n");
 {
   const s = ON;
-  check("a division switched off admits nothing", R.admitState("2026-10-12", "ms", R.reflectionSettingsOrDefault({})) === "before-start");
+  check("a division switched off decides nothing yet: its items are stored as they read, and setMode decides when it is switched on",
+    R.admitState("2026-10-12", "ms", R.reflectionSettingsOrDefault({})) === null);
   const fromTue = R.reflectionSettingsOrDefault({ ...ON, countFromDateByDivision: { ms: TUE, hs: TUE } });
   check("violations dated before countFromDate are before-start, never listed",
     R.admitState(MON, "ms", fromTue) === "before-start" && R.admitState(TUE, "ms", fromTue) === null);

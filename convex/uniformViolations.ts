@@ -259,12 +259,13 @@ export const log = mutation({
     // later that same morning, counting from today, the division must take
     // that morning's entries, as it takes that day's tardies (first seen
     // after the switch); a stamp made while it was off was never lifted. An
-    // entry is left unstamped then: setMode parks it if it is dated before
-    // the day counting starts, and each freeze asks again as it claims
+    // entry is left unstamped then (admitState decides nothing for a
+    // division that is off): setMode parks it if it is dated before the day
+    // counting starts, and each freeze asks again as it claims
     // (reflectionRules.beforeStartAtClaim).
     const division = divisionOfGrade(student.grade);
     const settings = await loadSettings(ctx);
-    const beforeStart = division && settings.modeByDivision[division] === "off" ? null : admitState(day, division, settings);
+    const beforeStart = admitState(day, division, settings);
     const loaner = args.loanerProvided === true;
     const id = await ctx.db.insert("uniformViolations", {
       studentId: student._id,

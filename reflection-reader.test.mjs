@@ -48,6 +48,9 @@
 //  22. A fallback list: a tardy entered after it, and an arrival re-judged
 //      after it, are both "Found after the list was made", and the verify
 //      calls them entered late, never dropped.
+//  23. HS off (a rollback) while MS's list is made, then switched back on
+//      after it, counting from that day: that day's HS tardy and uniform
+//      entry are on the next list; an earlier day's is parked by the switch.
 //
 // TEETH: scripts/reflection-teeth.mjs breaks the direct id confirmation, the
 // natural key, the lease expiry, the "unconfirmed changes nothing" rule,
@@ -272,7 +275,8 @@ try {
     check("an arrival (absent at Promise Time and P2, late to P4) is stored as an arrival, never countable",
       w.tardies("B")[0]?.state === "arrival" && /Arrived late/.test(w.tardies("B")[0].reason), J(w.tardies("B")));
     check("a tardy whose Promise Time section has no marks yet is held", w.tardies("H")[0]?.state === "held" && w.tardies("H")[0].wasHeld === true);
-    check("an HS tardy while HS is off is before-start", w.tardies("X")[0]?.state === "before-start");
+    check("an HS tardy while HS is off is stored as it reads (countable) and waits on no list: switching HS on decides it (world 23)",
+      w.tardies("X")[0]?.state === "countable" && !w.tardies("X")[0].unitId, J(w.tardies("X")));
     check("an Excused Tardy is never stored", w.tardies("D1").length === 0);
     check("the lookback read Monday (never proved, so counted first) and stored its tardies",
       w.tardies("W")[0]?.state === "countable" && w.tardies("W")[0].attDate === MON && w.tardies("Y")[0]?.state === "countable", J(w.tardies("W")));
@@ -1531,6 +1535,60 @@ try {
       J(tagsOf("MLATE")) === J(FOUND), J(tagsOf("MLATE")));
     check("...and so is an arrival re-judged as counted after it: seen before the list, counting only after it",
       J(tagsOf("MREJ")) === J(FOUND), J(tagsOf("MREJ")));
+  }
+
+  // ==========================================================================
+  console.log("\n23. A DIVISION SWITCHED OFF DECIDES NOTHING: SWITCHED BACK ON, COUNTING FROM TODAY, TODAY COUNTS\n");
+  // ==========================================================================
+  // Third review, 2026-10-08. Off, a tardy first seen was stamped
+  // before-start, and a uniform entry still waiting when MS's list was made
+  // was parked by that freeze: both for good, though HS was switched back on
+  // counting from that same day (spec 3.9: only items dated BEFORE
+  // countFromDate are before-start).
+  {
+    const MON = "2026-11-16", TUE = "2026-11-17", WED = "2026-11-18";
+    const hs = { grade: 10, sections: HS };
+    const w = await world({
+      students: { HM: hs, HT: hs, MT: { grade: 7, sections: MS } },
+      days: [{ date: MON, slots: MON_SLOTS }, { date: TUE, slots: TUE_SLOTS }, { date: WED, slots: WED_SLOTS }],
+      settings: { modeByDivision: { ms: "shadow", hs: "off" }, countFromDateByDivision: { ms: "2026-10-21", hs: null } },
+    });
+    await w.store.db.insert("teachers", { name: "Pat PBIS", ticketsAwarded: 0, email: "pbis@school.test", role: "pbis" });
+    await w.store.db.insert("students", { studentNumber: "UH", firstName: "Uma", lastName: "Test", grade: "10" });
+    let on = null, logged = null;
+    await drive(w, la(MON, "07:30"), la(MON, "15:45"), [
+      [la(MON, "08:00"), () => w.mark(MON, "HM", 2, "T")],                      // Monday, HS off
+    ]);
+    const logAtTue = w.fake.log.length;
+    await drive(w, la(TUE, "07:30"), la(TUE, "11:50"), [
+      [la(TUE, "08:00"), async () => {
+        w.rt.signIn({ issuer: STAFF_ISSUER, email: "pbis@school.test" });
+        logged = await w.rt.run("uniformViolations.log", { studentNumber: "UH", loanerProvided: false, attemptId: "uh-tue", observedAt: Date.parse(la(TUE, "08:00")) });
+        w.mark(TUE, "HT", 3, "T"); w.mark(TUE, "MT", 3, "T");
+      }],
+    ]);
+    const uh = () => w.store.rows("uniformViolations").find((x) => x.studentNumber === "UH");
+    check("HS off: MS's list is made, and leaves HS's tardy and uniform entry waiting, neither listed nor stamped before-start",
+      logged?.ok && w.day(TUE).frozenAt && J(w.listed(TUE)) === J(["MT"]) && w.tardies("HT")[0]?.state === "countable" && !w.tardies("HT")[0].unitId
+        && !uh().unitId && !uh().reflectionState, J({ listed: w.listed(TUE), ht: w.tardies("HT")[0]?.state, uh: uh()?.reflectionState }));
+    const monFull = w.fake.log.slice(logAtTue).filter((l) => l.kind === "table" && l.q === `schoolid==${SCHOOL};yearid==${YEAR};att_date==${MON}`);
+    check("...and Monday's HS tardy, waiting while HS is off, costs no full re-read of Monday at Tuesday's reads",
+      w.tardies("HM")[0]?.state === "countable" && monFull.length === 0, J({ hm: w.tardies("HM")[0]?.state, fullReads: monFull.length }));
+    const V = await import(new URL("./scripts/reflection-verify.mjs", import.meta.url).href);
+    const exp = await w.rt.run("reflectionList.verifyExport", { day: TUE });
+    const sch = V.school({ codes: w.fake.tables.attendance_code, students: w.fake.tables.students, cc: [] });
+    const judged = V.judge({ day: TUE, days: { [TUE]: V.dayOf(TUE, w.fake.tables.attendance, sch) }, sch, exp, snap: null, salt: null });
+    check("...and the verify: an off division's waiting tardy is 'no list was made' for it, never dropped by the reader",
+      judged.counts.noList === 1 && judged.counts.onList === 1 && judged.counts.dropped === 0 && Object.values(judged.controls).every((n) => n === 0),
+      J({ c: judged.counts, k: judged.controls }));
+    await drive(w, la(TUE, "11:55"), la(TUE, "15:45"), [
+      [la(TUE, "13:00"), async () => { on = await w.rt.run("reflection.setMode", { division: "hs", mode: "shadow", countFromDate: TUE }); }],
+    ]);
+    check("HS switched on at 13:00, counting from today: Monday's HS tardy, from before, is parked by the switch",
+      on?.ok && w.tardies("HM")[0]?.state === "before-start", J({ on, hm: w.tardies("HM")[0]?.state }));
+    await drive(w, la(WED, "07:30"), la(WED, "11:25"));
+    check("...and today's HS tardy and uniform entry are on Wednesday's list, Monday's is not",
+      J(w.listed(WED)) === J(["HT", "UH"]) && uh().reflectionState === "listed", J({ wed: w.listed(WED), uh: uh()?.reflectionState }));
   }
 
   // ==========================================================================

@@ -587,14 +587,21 @@ export const readContext = internalQuery({
       const units = await ctx.db.query("reflectionUnits").withIndex("by_serveDay", (q) => q.eq("serveDay", lastList)).collect();
       if (units.some((u) => u.state === "listed" || u.state === "carried" || u.state === "review")) carryOpen = lastList;
     }
+    const settings = await loadSettings(ctx);
+    // A DIVISION SWITCHED OFF keeps its tardies as they read (admitState),
+    // waiting on no list. Their dates earn no full re-read: switching the
+    // division on parks everything dated before its countFromDate, which is
+    // never before that day, and today is read in full anyway. Counted, they
+    // would crowd the three full re-reads a read allows (FULL_REREAD_CAP).
+    const counts = (t: Doc<"reflectionTardies">) => !t.division || settings.modeByDivision[t.division] !== "off";
     return {
-      settings: await loadSettings(ctx),
+      settings,
       tz: await schoolTimeZone(ctx),
       maps: await readState(ctx, MAPS_KEY),
       rosterMeta: await readState(ctx, ROSTER_KEY),
       days: [...byDate.values()].sort((a, b) => a.date.localeCompare(b.date)),
-      held: [...new Set(held.map((t) => t.attDate))].sort(),
-      pending: [...new Set(pending.map((t) => t.attDate))].sort(),
+      held: [...new Set(held.filter(counts).map((t) => t.attDate))].sort(),
+      pending: [...new Set(pending.filter(counts).map((t) => t.attDate))].sort(),
       carryOpen,
     };
   },
