@@ -227,8 +227,13 @@
    * independently, so this list and that one have to agree.
    */
   function disciplineTabsFor(role, user) {
+    // THE REFLECTION ROOM LIST (2026-10-08) sits on the privileged side for
+    // the reason Early Warning does: it names the children owing a detention
+    // today. convex/accessRules.ts canReadReflection is the real check (the
+    // three roles, plus a per-person grant with an end date, build step 6);
+    // this only decides which buttons to draw.
     if (seesAllReferrals(role)) {
-      return ['submit', 'review', 'closed', 'detention', 'attendance', 'earlyWarning', 'uniform', 'history', 'analytics'];
+      return ['submit', 'review', 'closed', 'detention', 'attendance', 'earlyWarning', 'uniform', 'reflection', 'history', 'analytics'];
     }
     // ATTENDANCE WATCH ACCESS, per person (2026-09-30, "Attendance Watch and
     // Early Warning for Avalos"). Those two tabs and nothing else: the

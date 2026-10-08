@@ -28,6 +28,7 @@ const SERVER = "convex/reflection.ts";
 const READER = "convex/reflectionRead.ts";
 const READER_TEST = "reflection-reader.test.mjs";
 const LIST = "convex/reflectionList.ts";
+const PRINT_TEST = "reflection-print.test.mjs";
 
 const CASES = [
   // ---- step 1: the rules (spec 6, step 1 table)
@@ -187,6 +188,18 @@ const CASES = [
   { guard: "show the role-only banners to grant holders too", file: LIST, test: READER_TEST,
     from: "    if (roles) {\n      const items = await reviewItems(ctx, today, tz);", to: "    if (true) {\n      const items = await reviewItems(ctx, today, tz);",
     mustFail: "the roles see 'N waiting in review, oldest' on Today; a grant holder never does" },
+
+  // ---- step 8a: the screen and the master print (spec 6, step 8a, plus two more)
+  { guard: "print from the array on screen, without the fresh read", file: "script.js", test: PRINT_TEST,
+    from: "                const res = await loadReflectionList();", to: "                const res = _rrData;",
+    mustFail: "Print waits for a fresh read: the sheet is drawn from a new listForDay answer, never the list on screen" },
+  { guard: "drop the NOT FINAL mark from a list not yet made", file: "script.js", test: PRINT_TEST,
+    from: "                if (!final) marks.push('NOT FINAL: do not pull');", to: "",
+    mustFail: "PILOT and NOT FINAL watermarks: a pilot list not yet final says both on every MS page, NOT FINAL on HS" },
+  { guard: "read times off the Chromebook's own clock", file: "script.js", test: PRINT_TEST,
+    from: "            return t.toLocaleTimeString('en-US', { timeZone: RR_TZ, hour: 'numeric', minute: '2-digit' });",
+    to: "            return t.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });",
+    mustFail: "times use LA time, never this Chromebook's (the test runs in Tokyo)" },
 ];
 
 // ------------------------------------------------------------------ the copy

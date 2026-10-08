@@ -34,8 +34,11 @@ const pkg = JSON.parse(readFileSync(new URL("./package.json", import.meta.url), 
 
 // The store's purchase-list functions as they stood at 1bb196f, the commit this
 // feature was built on, plus the one guard line added on purpose on 2026-10-01
-// (see THE WIRING below).
-const PURCHASE_LIST_HASH = "427a06100b0b81c5";
+// (see THE WIRING below), RE-PINNED ON PURPOSE on 2026-10-08: that guard was
+// widened from "a perfect attendance sheet" to "any sheet that marks itself
+// with data-sheet", because the Reflection Room list became a third sheet on
+// #wcPrintSheet (build spec 4.8). Nothing else in the four functions moved.
+const PURCHASE_LIST_HASH = "90fb4b28d18158b1";
 
 let pass = 0, fail = 0;
 const check = (n, c, why) => {
@@ -1091,8 +1094,9 @@ console.log("\nTHE WIRING\n");
       return drew;
     };
     check("a purchase list's late redraw leaves an open perfect attendance sheet alone", drawsInto(fn, "perfect") === false);
+    check("...and an open Reflection Room list too (widened 2026-10-08)", drawsInto(fn, "reflection") === false);
     check("...and still draws into its own sheet", drawsInto(fn, null) === true);
-    const unguarded = fn.replace("if (!sheet || sheet.getAttribute('data-sheet') === 'perfect') return;", "if (!sheet) return;");
+    const unguarded = fn.replace("if (!sheet || sheet.getAttribute('data-sheet')) return;", "if (!sheet) return;");
     check("TEETH: without that line, the late redraw lands in the perfect sheet",
       unguarded !== fn && drawsInto(unguarded, "perfect") === true);
   }

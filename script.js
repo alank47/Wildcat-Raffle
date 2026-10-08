@@ -9563,6 +9563,10 @@
                 // ID on it -- over the login screen for whoever sits down next.
                 // The inactivity logout reaches here with it open (2026-10-01).
                 if (typeof closePerfectAttendanceSheet === 'function') closePerfectAttendanceSheet();
+                // The Reflection Room list names children owing a detention:
+                // its sheet, its rows and its 30-second refresh leave with
+                // the person signing out (2026-10-08).
+                if (typeof forgetReflectionRoom === 'function') forgetReflectionRoom();
                 // The same for colleagues' cash (2026-10-01): an admin's Teacher
                 // Interactions tables and the school-wide audit log stay in the
                 // DOM under a hidden tab, so they are emptied here rather than
@@ -27916,6 +27920,7 @@
                 { id: 'attendance', fn: 'switchDisciplineTab', label: wcIcon('calendar') + ' Attendance Watch' },
                 { id: 'earlyWarning', fn: 'switchDisciplineTab', label: wcIcon('target') + ' Early Warning' },
                 { id: 'uniform',   fn: 'switchDisciplineTab', label: wcIcon('identity') + ' Uniform Violations' },
+                { id: 'reflection', fn: 'switchDisciplineTab', label: wcIcon('list') + ' Reflection Room' },
                 { id: 'history',   fn: 'switchDisciplineTab', label: wcIcon('book') + ' Student History' },
                 { id: 'analytics', fn: 'switchDisciplineTab', label: wcIcon('analytics') + ' Analytics' }
             ]
@@ -31965,11 +31970,13 @@
 
         function renderPurchaseListSheet() {
             const sheet = document.getElementById('wcPrintSheet');
-            // NOT OVER THE PERFECT ATTENDANCE SHEET (2026-10-01). The two
-            // share this id, and a Promise Time lookup that answers after the
-            // purchase list was closed would otherwise redraw it over the
-            // attendance list someone has opened since.
-            if (!sheet || sheet.getAttribute('data-sheet') === 'perfect') return;
+            // NOT OVER ANOTHER SHEET (2026-10-01, widened 2026-10-08). The
+            // sheets share this id, and a Promise Time lookup that answers
+            // after the purchase list was closed would otherwise redraw it
+            // over the perfect attendance list or the Reflection Room list
+            // someone has opened since. Every other sheet marks itself with
+            // data-sheet; the purchase list's own never does.
+            if (!sheet || sheet.getAttribute('data-sheet')) return;
             const choices = purchaseListChoices();
             _purchaseListChoicesShown = choices;
             const picks = choices.filter(function (c) { return _purchaseListPicks && _purchaseListPicks.has(c.id); })
@@ -36072,6 +36079,7 @@
                 attendance:{ pane: 'behaviorAttendance', btn: null },
                 earlyWarning: { pane: 'behaviorEarlyWarning', btn: null },
                 uniform:   { pane: 'behaviorUniform',   btn: null },
+                reflection: { pane: 'behaviorReflection', btn: null },
                 history:   { pane: 'behaviorHistory',   btn: 'historyDisciplineTabBtn' },
                 analytics: { pane: 'behaviorAnalytics', btn: 'analyticsDisciplineTabBtn' }
             };
@@ -36136,6 +36144,8 @@
                 openEarlyWarning(false);
             } else if (subtab === 'uniform') {
                 openUniformViolations();
+            } else if (subtab === 'reflection') {
+                openReflectionRoom();
             } else if (subtab === 'history') {
                 populateHistoryStudentDropdown();
                 // Draw from memory, then pull, like Open and Closed: a
@@ -41194,6 +41204,481 @@
             showToast('Thresholds saved: flagged at ' + next.habitAt +
                       '+ in ' + next.windowDays + ' days.', 'success', 5000);
             await openUniformViolations();
+        }
+
+        // =====================================================================
+        // THE DAILY REFLECTION ROOM LIST (2026-10-08, build spec step 8a)
+        //
+        // Who serves a lunch detention today, for the room's supervisor and
+        // the PBIS lead. EVERY DECISION IS THE SERVER'S. reflectionList:
+        // listForDay says who is on the list, in which section, with which
+        // banners, and whether it is final, and it refuses everyone but admin,
+        // superadmin, PBIS and a per-person grant. This code adds names (from
+        // the student records this browser already holds: the server sends
+        // student numbers), sorts, and draws. Nothing here decides who is on it.
+        //
+        // FRESH WITHOUT ASKING ANYONE TO REFRESH. Every 30 seconds while this
+        // pane is on screen and the browser tab is visible, and at once when
+        // the tab becomes visible again. A supervisor who printed at 11:31 is
+        // told on this screen, unprompted, what changed since.
+        //
+        // PRINT WAITS FOR A FRESH READ (review B6). The Print button reads the
+        // list again, records the print (ids and student numbers only), and
+        // draws the sheet from THAT answer -- never from the array on screen,
+        // which can be 30 seconds old at the very moment the list is made. A
+        // list printed before it is final says NOT FINAL on every page; a
+        // pilot list says PILOT on every page. The PDF is named
+        // "Reflection Room list 2026-10-13": a date, never a name.
+        //
+        // TIMES ARE LOS ANGELES TIME, from the school's clock, never this
+        // Chromebook's: a laptop left on another zone must not move "made at
+        // 11:45".
+        // =====================================================================
+        const RR_REFRESH_MS = 30000;
+        const RR_TZ = 'America/Los_Angeles';
+        let _rrView = 'today';          // today | next | past
+        let _rrPastDay = '';            // YYYY-MM-DD, for the past view
+        let _rrData = null;             // the answer on screen now
+        let _rrWhy = '';                // why there is nothing to show (refused, signed out, failed)
+        let _rrSeq = 0;                 // an older answer arriving late never replaces a newer one
+        let _rrTimer = null;
+        let _rrPrinting = false;
+        let _rrPrintDone = null;
+
+        /** The column headings, and each column's sort text. Shared by the screen and the sheet. */
+        const RR_COLS = [
+            { label: 'Student', type: 'text', text: (r, st) => rrSortName(st) },
+            { label: 'Student #', type: 'num', text: r => r.studentNumber },
+            { label: 'Grade', type: 'num', text: r => r.grade },
+            { label: 'Power-Up', type: 'text', text: r => (r.pu && r.pu.teacher) || '' },
+            { label: 'Violations', type: 'text', text: r => (r.lines || []).join(' ') },
+            { label: 'Tag', type: 'text', text: r => (r.tags || []).join(' ') },
+            { label: 'Absent this morning: check if arrived', type: 'text', text: r => r.absentMorning ? 'Absent this morning' : '' }
+        ];
+
+        /** An instant as the school's clock reads it: "11:46 AM". */
+        function rrClock(iso) {
+            if (!iso) return '';
+            const t = new Date(iso);
+            if (isNaN(t.getTime())) return '';
+            return t.toLocaleTimeString('en-US', { timeZone: RR_TZ, hour: 'numeric', minute: '2-digit' });
+        }
+
+        /** studentNumber -> the app's own student record, for the name. */
+        function rrStudentIndex() {
+            const byNumber = {};
+            (students || []).forEach(st => {
+                const n = st && st.studentNumber ? String(st.studentNumber) : '';
+                if (n) byNumber[n] = st;
+            });
+            return byNumber;
+        }
+
+        function rrName(st, sn) {
+            if (st && (st.lastName || st.firstName)) {
+                return st.lastName && st.firstName ? st.lastName + ', ' + st.firstName : (st.lastName || st.firstName);
+            }
+            return 'Student ' + sn;
+        }
+
+        /** Last name, then first: shared surnames order by the other name. Blank (no record here) sorts last. */
+        function rrSortName(st) {
+            return st && (st.lastName || st.firstName) ? ((st.lastName || '') + ' ' + (st.firstName || '')).trim() : '';
+        }
+
+        /** Words in order, a blank after every filled one (the screen's sort sinks blanks too). */
+        function rrCompareWords(a, b) {
+            if (!a !== !b) return a ? -1 : 1;
+            return String(a).localeCompare(String(b), undefined, { sensitivity: 'base', numeric: true });
+        }
+
+        function rrTableId(division) { return division === 'hs' ? 'rrHs' : 'rrMs'; }
+
+        /**
+         * One section's rows in the order the screen shows them: Power-Up
+         * teacher, then student -- or the column a heading was pressed on. The
+         * printed sheet calls this too, so paper and screen agree.
+         */
+        function rrRowsInOrder(section, byNumber) {
+            const rows = (section && section.rows ? section.rows : []).slice();
+            rows.sort((a, b) => rrCompareWords((a.pu && a.pu.teacher) || '', (b.pu && b.pu.teacher) || '')
+                || rrCompareWords(rrSortName(byNumber[a.studentNumber]), rrSortName(byNumber[b.studentNumber]))
+                || String(a.studentNumber).localeCompare(String(b.studentNumber), undefined, { numeric: true }));
+            return wcSortItems(rrTableId(section.division), rows,
+                (r, col) => (RR_COLS[col] ? RR_COLS[col].text(r, byNumber[r.studentNumber]) : ''));
+        }
+
+        /** What listForDay is asked for, in the view on screen. */
+        function rrDayArg() {
+            if (_rrView === 'next') return 'next';
+            if (_rrView === 'past') return _rrPastDay || '';
+            return 'today';
+        }
+
+        /**
+         * THE LIST, READ FROM THE SERVER. Returns the answer, and draws it if it
+         * is still the newest one asked for in the view on screen. Never throws:
+         * a failed read keeps what was drawn and says so.
+         */
+        async function loadReflectionList() {
+            const auth = window.WildcatAuth;
+            const session = auth && auth.getSession && auth.getSession();
+            const day = rrDayArg();
+            const seq = ++_rrSeq;
+            if (!auth || !session) {
+                _rrWhy = 'The Reflection Room list comes from the server, which needs a Microsoft sign-in.';
+                _rrData = null;
+                renderReflectionRoom();
+                return null;
+            }
+            if (!day) { _rrData = null; _rrWhy = 'Pick a day.'; renderReflectionRoom(); return null; }
+            try {
+                const res = await auth.convexQuery('reflectionList:listForDay', { day: day }, session.idToken);
+                if (seq !== _rrSeq) return res;
+                if (res && res.allowed === false) { _rrData = null; _rrWhy = res.reason || 'Not available to your access level.'; }
+                else if (res && res.ok === false) { _rrData = null; _rrWhy = res.reason || 'The list could not be read.'; }
+                else { _rrData = res; _rrWhy = ''; }
+                renderReflectionRoom();
+                return res;
+            } catch (e) {
+                console.warn('[reflection] the list could not be read:', (e && e.message) || e);
+                if (seq === _rrSeq) {
+                    _rrWhy = 'The list could not be read just now' + (_rrData ? '; this is the last one that loaded.' : '.');
+                    renderReflectionRoom();
+                }
+                return null;
+            }
+        }
+
+        function openReflectionRoom() {
+            renderReflectionRoom();
+            loadReflectionList();
+            // ONE TIMER for the session, started on the first visit. It reads
+            // only while this pane is on screen and the tab is visible.
+            if (!_rrTimer) _rrTimer = setInterval(reflectionRefreshTick, RR_REFRESH_MS);
+        }
+
+        function reflectionRefreshTick() {
+            if (_rrPrinting || document.visibilityState !== 'visible') return;
+            if (!wcPanelOnScreen('behaviorReflection')) return;
+            loadReflectionList();
+        }
+
+        document.addEventListener('visibilitychange', function () {
+            if (document.visibilityState === 'visible' && _rrTimer && wcPanelOnScreen('behaviorReflection')) loadReflectionList();
+        });
+
+        function setReflectionView(view) {
+            _rrView = view === 'next' || view === 'past' ? view : 'today';
+            document.querySelectorAll('#rrViewFilter [data-rrview]').forEach(b => {
+                b.classList.toggle('active', b.getAttribute('data-rrview') === _rrView);
+            });
+            const wrap = document.getElementById('rrPastWrap');
+            if (wrap) wrap.hidden = _rrView !== 'past';
+            _rrData = null;
+            _rrWhy = '';
+            renderReflectionRoom();
+            loadReflectionList();
+        }
+
+        function setReflectionPastDay(day) {
+            _rrPastDay = /^\d{4}-\d{2}-\d{2}$/.test(String(day || '')) ? String(day) : '';
+            if (_rrView === 'past') { _rrData = null; renderReflectionRoom(); loadReflectionList(); }
+        }
+
+        /** The Power-Up cell: teacher and course, the flag the runner needs, and anything to check. */
+        function rrPowerUpHtml(r) {
+            const bits = [];
+            if (r.pu && (r.pu.teacher || r.pu.course)) {
+                bits.push(escapeHtml(r.pu.teacher || ''));
+                if (r.pu.course) bits.push('<div class="print-note">' + escapeHtml(r.pu.course) + '</div>');
+                // RSP, ELD and 7002A students are pulled like everyone else
+                // (owner, 10/8); the flag sends the runner to the right room.
+                if (r.pu.flag) bits.push('<span class="rr-flag">' + escapeHtml(r.pu.flag) + ': pull from this class</span>');
+                if (r.pu.check) bits.push('<div class="rr-check">Check PowerSchool: 2 Power-Up classes</div>');
+            } else if (r.notOnRoster) {
+                bits.push('<span class="print-note">Not on current PowerSchool roster</span>');
+            } else {
+                bits.push('<span class="print-note">&mdash;</span>');
+            }
+            return bits.join(' ');
+        }
+
+        /** Every violation with its date; anything cleared since the list was made, struck through, with why. */
+        function rrViolationsHtml(r) {
+            const lines = (r.lines || []).map(l => '<div>' + escapeHtml(l) + '</div>');
+            (r.cleared || []).forEach(c => lines.push('<div class="rr-cleared">Cleared after the list was made: '
+                + escapeHtml(c.line) + ' (' + escapeHtml(c.reason) + ')</div>'));
+            (r.voided || []).forEach(x => lines.push('<div class="rr-cleared">Removed after the list was made: ' + escapeHtml(x.line) + '</div>'));
+            return lines.join('');
+        }
+
+        function rrTagHtml(r) {
+            const out = (r.tags || []).map(t => '<div>' + escapeHtml(t) + '</div>');
+            if (r.released) out.push('<div class="rr-release">Released: ' + escapeHtml(r.released.reason) + '</div>');
+            if (r.after) out.push('<div class="print-note">' + escapeHtml(r.after) + '</div>');
+            return out.join('');
+        }
+
+        function rrBannersHtml(res) {
+            return (res.banners || []).map(b => '<div class="rr-banner rr-banner-' + escapeHtml(b.level) + '" data-rr-banner="'
+                + escapeHtml(b.id) + '">' + escapeHtml(b.text) + '</div>').join('');
+        }
+
+        function renderReflectionRoom() {
+            const note = document.getElementById('rrDayNote');
+            const bannersEl = document.getElementById('rrBanners');
+            const list = document.getElementById('rrList');
+            const foot = document.getElementById('rrFoot');
+            const btn = document.getElementById('rrPrintBtn');
+            if (!list) return;
+            const res = _rrData;
+            if (btn) btn.disabled = !res || _rrPrinting;
+            if (!res) {
+                if (note) note.textContent = '';
+                if (bannersEl) bannersEl.innerHTML = '';
+                list.innerHTML = '<p class="wu-absent">' + escapeHtml(_rrWhy || 'Loading the list…') + '</p>';
+                if (foot) foot.textContent = '';
+                return;
+            }
+            const byNumber = rrStudentIndex();
+            const made = res.frozen
+                ? 'Final: made at ' + rrClock(res.frozenAt) + (res.freezeKind === 'closing' ? '' : ' (' + res.freezeKind + ')')
+                : (res.view === 'so-far' ? 'NOT FINAL: so far' : '');
+            if (note) {
+                note.textContent = [res.dayLabel + (res.isNext ? ' (next school day)' : ''), made,
+                    res.times && !res.frozen && res.view === 'so-far' && res.isToday ? 'closes ' + res.times.close + ', ready by ' + res.times.ready : '']
+                    .filter(Boolean).join(' · ');
+            }
+            if (bannersEl) bannersEl.innerHTML = rrBannersHtml(res) + (_rrWhy ? '<div class="rr-banner rr-banner-warn">' + escapeHtml(_rrWhy) + '</div>' : '');
+            let html = '';
+            (res.sections || []).forEach(section => {
+                const tableId = rrTableId(section.division);
+                _wcSortRedraw.set(tableId, () => renderReflectionRoom());
+                const rows = rrRowsInOrder(section, byNumber);
+                const cap = section.capacity ? ' of ' + section.capacity : '';
+                html += '<div class="rr-section" data-rr-section="' + escapeHtml(section.division) + '">'
+                    + '<h4 class="rr-section-head">' + escapeHtml(section.label)
+                    + ' <span class="wc-chip">' + section.count + cap + ' student' + (section.count === 1 ? '' : 's') + '</span>'
+                    + (section.mode === 'off' ? ' <span class="print-note">switched off</span>'
+                        : ' <span class="print-note">pull at about ' + escapeHtml(section.pullAt) + '</span>')
+                    + (section.mode === 'shadow' ? ' <span class="rr-pilot">PILOT: do not assign</span>' : '')
+                    + '</h4>';
+                if (!rows.length) {
+                    html += '<p class="wu-absent">Nobody on this list.</p></div>';
+                    return;
+                }
+                html += '<div class="wu-scroll-x"><table class="student-table wc-att-table rr-table"><thead><tr>'
+                    + RR_COLS.map((col, i) => wcSortTh(tableId, i, escapeHtml(col.label), { type: col.type })).join('')
+                    + '</tr></thead><tbody>'
+                    + rows.map(r => '<tr' + (r.released ? ' class="rr-released"' : '') + '>'
+                        + '<td><b>' + escapeHtml(rrName(byNumber[r.studentNumber], r.studentNumber)) + '</b></td>'
+                        + '<td>' + escapeHtml(r.studentNumber) + '</td>'
+                        + '<td>' + escapeHtml(r.grade || '') + '</td>'
+                        + '<td>' + rrPowerUpHtml(r) + '</td>'
+                        + '<td>' + rrViolationsHtml(r) + '</td>'
+                        + '<td>' + rrTagHtml(r) + '</td>'
+                        + '<td>' + (r.absentMorning ? 'Absent this morning: check if arrived' : '') + '</td>'
+                        + '</tr>').join('')
+                    + '</tbody></table></div></div>';
+            });
+            // THE ROLES SEE WHO HAS PRINTED TODAY, and what each print now lacks.
+            if (Array.isArray(res.printsToday) && res.printsToday.length) {
+                html += '<div class="rr-prints"><h4>Printed for ' + escapeHtml(res.dayLabel) + '</h4><ul>'
+                    + res.printsToday.map(p => {
+                        const c = p.changes || {};
+                        const since = [c.added ? '+' + c.added + ' added' : '', c.release ? 'release ' + c.release : '',
+                            c.cleared ? c.cleared + ' cleared' : '', c.voided ? c.voided + ' voided' : ''].filter(Boolean).join(', ');
+                        return '<li>' + escapeHtml(rrClock(p.at)) + ' · ' + escapeHtml(p.by) + ' · ' + escapeHtml(p.kind)
+                            + (p.final ? '' : ' (NOT FINAL)') + ' · ' + escapeHtml(since ? 'since then: ' + since : 'still current') + '</li>';
+                    }).join('') + '</ul></div>';
+            }
+            list.innerHTML = html;
+            if (foot) {
+                foot.textContent = 'As of ' + rrClock(res.asOf) + '. This list reads itself again every 30 seconds while it is open.'
+                    + (res.lastGoodReadAt && res.isToday ? ' Last good PowerSchool read ' + rrClock(res.lastGoodReadAt) + '.' : '');
+            }
+        }
+
+        /** What Chrome names the saved PDF: the list's day, never a student. */
+        function reflectionSheetTitle(res) {
+            return 'Reflection Room list ' + String(res && res.date || '');
+        }
+
+        /**
+         * THE PRINTED LIST, as HTML, from one answer of listForDay. MS first,
+         * then HS, each on its own page with its own count and pull time. Every
+         * page's repeated header row carries PILOT (a shadow division) and NOT
+         * FINAL (a list not yet made), so no page torn off the end can be
+         * mistaken for a list to pull from. Released students are not printed.
+         */
+        function reflectionSheetHtml(res, opts) {
+            const o = opts || {};
+            const byNumber = o.byNumber || {};
+            const sections = (res.sections || []).filter(s => s.mode !== 'off' || s.rows.length);
+            const live = s => rrRowsInOrder(s, byNumber).filter(r => !r.released);
+            const counts = sections.map(s => ({ s: s, rows: live(s) }));
+            const total = counts.reduce((n, c) => n + c.rows.length, 0);
+            const final = !!res.frozen;
+            const asOf = rrClock(res.asOf);
+            const head = 'As of ' + asOf + ' · ' + (final ? 'Final' : 'NOT FINAL') + ' · ' + total + ' student' + (total === 1 ? '' : 's')
+                + ' (' + counts.map(c => c.s.division.toUpperCase() + ' ' + c.rows.length + (c.s.capacity ? ' of ' + c.s.capacity : '')).join(', ') + ')';
+            const foot = 'Printed by ' + (o.printedBy || 'staff') + ' at ' + rrClock(o.printedAt || res.asOf) + ' on ' + res.dayLabel;
+            const cols = ['Served'].concat(RR_COLS.map(c => c.label));
+            const pages = counts.map(c => {
+                const marks = [];
+                if (c.s.mode === 'shadow') marks.push('PILOT: do not assign');
+                if (!final) marks.push('NOT FINAL: do not pull');
+                const markRow = marks.length
+                    ? '<tr><th colspan="' + cols.length + '" class="rr-watermark">' + escapeHtml(marks.join(' · ')) + '</th></tr>' : '';
+                const body = c.rows.length
+                    ? c.rows.map(r => '<tr>'
+                        + '<td class="print-check"></td>'
+                        + '<td>' + escapeHtml(rrName(byNumber[r.studentNumber], r.studentNumber)) + '</td>'
+                        + '<td>' + escapeHtml(r.studentNumber) + '</td>'
+                        + '<td>' + escapeHtml(r.grade || '') + '</td>'
+                        + '<td>' + rrPowerUpHtml(r) + '</td>'
+                        + '<td>' + rrViolationsHtml(r) + '</td>'
+                        + '<td>' + rrTagHtml(r) + '</td>'
+                        + '<td>' + (r.absentMorning ? 'Absent this morning: check if arrived' : '') + '</td>'
+                        + '</tr>').join('')
+                    : '<tr><td colspan="' + cols.length + '" class="print-empty">Nobody on this list.</td></tr>';
+                return '<section class="print-page rr-print-page' + (marks.length ? ' rr-marked' : '') + '"'
+                    + (marks.length ? ' data-rr-mark="' + escapeHtml(marks.join(' · ')) + '"' : '') + '>'
+                    + '<h2>' + escapeHtml('Reflection Room — ' + c.s.label + ' — ' + res.dayLabel) + '</h2>'
+                    + '<p class="print-sub">' + escapeHtml(head) + ' · pull at about ' + escapeHtml(c.s.pullAt) + '</p>'
+                    + '<table class="print-table"><thead>' + markRow + '<tr>'
+                    + cols.map(l => '<th>' + escapeHtml(l) + '</th>').join('') + '</tr></thead>'
+                    + '<tbody>' + body + '</tbody>'
+                    + '<tfoot><tr><td colspan="' + cols.length + '" class="print-note">' + escapeHtml(foot) + '</td></tr></tfoot>'
+                    + '</table></section>';
+            });
+            const toolbar = '<div class="print-toolbar" data-rr-sheet>'
+                + '<div class="print-toolbar-row">'
+                + '<strong>Reflection Room list: ' + escapeHtml(res.dayLabel) + (final ? '' : ' (NOT FINAL)') + '</strong>'
+                + '<button type="button" class="btn" onclick="printReflectionList()"><svg class="wc-icon" aria-hidden="true" focusable="false"><use href="#wci-printer"></use></svg> Print again</button>'
+                + '<button type="button" class="btn btn-secondary" onclick="closeReflectionSheet()">Close</button>'
+                + '</div>'
+                + '<p class="receipt-meta">Read from the server just now (' + escapeHtml(asOf) + '). To get a PDF: press Print, then choose “Save as PDF”.</p>'
+                + '</div>';
+            return toolbar + '<div class="print-pages">' + (pages.length ? pages.join('')
+                : '<p class="print-empty">Both divisions are switched off, so there is no list.</p>') + '</div>';
+        }
+
+        /**
+         * PRINT: A FRESH READ FIRST, ALWAYS. The list on screen may be up to 30
+         * seconds old, and the half minute either side of the close is exactly
+         * when it changes. So this reads listForDay again, records the print
+         * (ids and student numbers: what "changed since your print" compares
+         * with), and only then draws the sheet -- from that answer.
+         */
+        async function printReflectionList() {
+            if (_rrPrinting) return;
+            _rrPrinting = true;
+            const btn = document.getElementById('rrPrintBtn');
+            if (btn) btn.disabled = true;
+            try {
+                const res = await loadReflectionList();
+                if (!res || res.allowed === false || res.ok === false || !Array.isArray(res.sections)) {
+                    showAlert('ℹ️ The list could not be read just now, so nothing was printed. ' + (_rrWhy || 'Try again in a moment.'));
+                    return;
+                }
+                const auth = window.WildcatAuth;
+                const session = auth && auth.getSession && auth.getSession();
+                const rows = res.sections.flatMap(s => s.rows).filter(r => !r.released);
+                let rec = null;
+                try {
+                    rec = session ? await auth.convexMutation('reflectionList:recordPrint', {
+                        day: res.date, kind: 'master',
+                        unitIds: rows.map(r => r.unitId).filter(Boolean),
+                        studentNumbers: rows.map(r => String(r.studentNumber)),
+                        listVersion: String(res.listVersion || '')
+                    }, session.idToken) : null;
+                } catch (e) { console.warn('[reflection] the print was not recorded:', (e && e.message) || e); }
+                if (!rec || rec.ok !== true) {
+                    // NOT RECORDED, NOT PRINTED: an unrecorded print would never
+                    // be told what changed since it.
+                    showAlert('ℹ️ This print could not be recorded, so it was not printed. '
+                        + ((rec && rec.reason) || 'Check the connection and try again.'));
+                    return;
+                }
+                openReflectionSheet(res, rec);
+                beginReflectionPrint(res);
+                try { window.print(); }
+                catch (e) { console.warn('[reflection] print failed:', e && e.message); endReflectionPrint(); }
+            } finally {
+                _rrPrinting = false;
+                if (btn) btn.disabled = !_rrData;
+            }
+        }
+
+        function openReflectionSheet(res, rec) {
+            // REPLACED, NOT REUSED: an open purchase list or perfect attendance
+            // sheet goes, with any print it left half-finished.
+            if (typeof closePerfectAttendanceSheet === 'function') closePerfectAttendanceSheet();
+            endReflectionPrint();
+            // Its print class must not outlive it either.
+            document.body.classList.remove('wc-printing');
+            const old = document.getElementById('wcPrintSheet');
+            if (old) old.remove();
+            const sheet = document.createElement('div');
+            sheet.id = 'wcPrintSheet';
+            sheet.className = 'print-sheet';
+            sheet.setAttribute('role', 'dialog');
+            sheet.setAttribute('aria-label', 'Reflection Room list');
+            sheet.setAttribute('data-sheet', 'reflection');
+            sheet.innerHTML = reflectionSheetHtml(res, {
+                byNumber: rrStudentIndex(),
+                printedBy: (currentUser && (currentUser.name || currentUser.email)) || 'staff',
+                printedAt: (rec && rec.at) || res.asOf
+            });
+            document.body.appendChild(sheet);
+        }
+
+        /** The sheet's title becomes the PDF's name for the length of the print, and is always put back. */
+        function beginReflectionPrint(res) {
+            endReflectionPrint();
+            const titleBefore = document.title;
+            let timer = null;
+            const done = function () {
+                if (_rrPrintDone !== done) return;
+                _rrPrintDone = null;
+                window.removeEventListener('afterprint', done);
+                clearTimeout(timer);
+                document.body.classList.remove('wc-printing');
+                document.title = titleBefore;
+            };
+            _rrPrintDone = done;
+            document.title = reflectionSheetTitle(res);
+            document.body.classList.add('wc-printing');
+            window.addEventListener('afterprint', done);
+            timer = setTimeout(done, 60000);
+        }
+
+        function endReflectionPrint() {
+            if (_rrPrintDone) _rrPrintDone();
+        }
+
+        function closeReflectionSheet() {
+            endReflectionPrint();
+            const sheet = document.getElementById('wcPrintSheet');
+            if (sheet && sheet.getAttribute('data-sheet') === 'reflection') sheet.remove();
+            document.body.classList.remove('wc-printing');
+        }
+
+        /** Sign-out: the sheet, the list and the timer go with the person leaving. */
+        function forgetReflectionRoom() {
+            closeReflectionSheet();
+            if (_rrTimer) { clearInterval(_rrTimer); _rrTimer = null; }
+            _rrSeq++;
+            _rrData = null;
+            _rrWhy = '';
+            _rrView = 'today';
+            _rrPastDay = '';
+            const list = document.getElementById('rrList');
+            if (list) list.innerHTML = '';
+            const bannersEl = document.getElementById('rrBanners');
+            if (bannersEl) bannersEl.innerHTML = '';
         }
 
         // At most one roster fetch per visit to the referral form, so a

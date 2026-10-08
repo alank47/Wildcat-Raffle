@@ -120,7 +120,10 @@ console.log("\nThe screens: two tabs, view only");
   check("the pane check agrees", D.canOpenDisciplineTab("campusaide", "earlyWarning", { attendanceWatch: true })
     && !D.canOpenDisciplineTab("campusaide", "analytics", { attendanceWatch: true })
     && !D.canOpenDisciplineTab("campusaide", "attendance", {}));
-  check("PBIS unchanged", D.disciplineTabsFor("pbis", {}).length === 9);
+  // Ten since 2026-10-08: the roles gained the Reflection Room list, which
+  // this grant does not open (accessRules.canReadReflection is its own check).
+  check("PBIS unchanged", D.disciplineTabsFor("pbis", {}).length === 10
+    && !D.disciplineTabsFor("campusaide", { attendanceWatch: true }).includes("reflection"));
   check("the grant cannot change the school's settings", !D.canEditInsightSettings("campusaide") && D.canEditInsightSettings("pbis"));
 
   const s = read("./script.js");

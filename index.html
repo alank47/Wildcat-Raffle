@@ -3997,6 +3997,46 @@
                     </div>
                 </div>
 
+                <!-- THE DAILY REFLECTION ROOM LIST (2026-10-08). Who serves a
+                     lunch detention today. Read through reflectionList:listForDay,
+                     which refuses everyone but admin, superadmin, PBIS and a
+                     per-person grant; this markup only draws what it returns.
+                     Names come from the student records this browser already
+                     holds: the server sends student numbers. -->
+                <div id="behaviorReflection" class="discipline-subtab hidden">
+                    <div class="wc-card panel-card">
+                        <div class="wc-att-controls">
+                            <h3 style="color: #2F67A7; margin: 0;">Reflection Room</h3>
+                            <div class="wc-att-controls-end">
+                                <button type="button" class="btn-primary" id="rrPrintBtn"
+                                        onclick="printReflectionList()"><svg class="wc-icon" aria-hidden="true" focusable="false"><use href="#wci-printer"></use></svg> Print list</button>
+                            </div>
+                        </div>
+                        <div class="wc-att-controls">
+                            <!-- NOT .analytics-tabs, for the same reason as #ewTierFilter. -->
+                            <div class="subtab-bar wc-att-pills" id="rrViewFilter">
+                                <button type="button" class="analytics-tab active" data-rrview="today"
+                                        onclick="setReflectionView('today')">Today</button>
+                                <button type="button" class="analytics-tab" data-rrview="next"
+                                        onclick="setReflectionView('next')">Tomorrow so far</button>
+                                <button type="button" class="analytics-tab" data-rrview="past"
+                                        onclick="setReflectionView('past')">Past day</button>
+                            </div>
+                            <div class="wc-att-controls-end">
+                                <label class="rr-past" id="rrPastWrap" hidden>Day
+                                    <input type="date" id="rrPastDay" onchange="setReflectionPastDay(this.value)">
+                                </label>
+                            </div>
+                        </div>
+                        <p class="wc-att-basis-note" id="rrDayNote"></p>
+                        <div id="rrBanners" class="rr-banners" aria-live="polite"></div>
+                    </div>
+                    <div class="wc-card panel-card">
+                        <div id="rrList" class="wc-att-list"></div>
+                        <p class="wc-att-foot" id="rrFoot"></p>
+                    </div>
+                </div>
+
                 <!-- Student History Subtab -->
                 <div id="behaviorHistory" class="discipline-subtab hidden">
                     <div class="wc-card panel-card">

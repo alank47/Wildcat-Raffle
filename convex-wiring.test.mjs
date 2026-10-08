@@ -137,6 +137,10 @@ const mustBeCalled = [
   "hallPasses:requestMine",
   "studentDetail:setPassLimit",
   "push:unsubscribe",
+  // The Reflection Room list (2026-10-08): the screen's one read, and the
+  // print record "what changed since your print" is worked out against.
+  "reflectionList:listForDay",
+  "reflectionList:recordPrint",
 ];
 for (const n of mustBeCalled) {
   check(`${n} has a caller`, called.has(n), server.has(n) ? "exported, never called" : "not exported at all");
