@@ -274,6 +274,7 @@ export const uniformItemOf = (u: Doc<"uniformViolations">): UniformItem => ({
   id: u._id, studentNumber: u.studentNumber, day: u.day, at: u.at, voided: !!u.voidedAt,
   unitId: u.unitId ?? null, reflectionState: u.reflectionState ?? null, loaner: u.loanerProvided,
   savedAt: u.savedAt ?? null, observedAt: u.observedAt ? new Date(u.observedAt).toISOString() : null,
+  recordedAt: u.recordedAt ?? null,
 });
 
 export const unitItemOf = (u: Doc<"reflectionUnits">): UnitItem => ({

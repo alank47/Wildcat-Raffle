@@ -1731,6 +1731,11 @@ export default defineSchema({
     reflectionState: v.optional(v.string()),
     observedAt: v.optional(v.number()),
     savedAt: v.optional(v.string()),
+    // When the server SAVED the row, on every entry (`at` is when it was
+    // seen, and `savedAt` is set only when that was over 10 minutes before).
+    // A list claims what was saved before it was made, so "Uniform logged
+    // after the list closed" is judged by this.
+    recordedAt: v.optional(v.string()),
   })
     .index("by_attemptId", ["attemptId"])
     .index("by_student_day", ["studentNumber", "day"])

@@ -456,6 +456,15 @@ const CASES = [
     from: "          tags: [...(fresh.tags ?? []), ...(carry!.tags.includes(QUEUED_TAG) ? [QUEUED_TAG] : [])],",
     to: "          tags: fresh.tags ?? [],",
     mustFail: "...and Tuesday's, waiting, keeps 'Queued: 2nd detention' through Wednesday's afternoon re-reads" },
+  { guard: "'Uniform logged after the list closed' is judged by when the entry was seen, not saved", file: RULES, test: RULES_TEST,
+    from: "  const saved = u.recordedAt ?? u.savedAt ?? u.at;", to: "  const saved = u.at;",
+    mustFail: "...judged by when it was SAVED: seen at 11:40, saved at 11:50 (a queued send), after the 11:46 list, it says so, with the save time" },
+  { guard: "the uniform log stops recording when it saved the row", file: UNIFORM, test: UNIFORM_TEST,
+    from: "      recordedAt: nowIso,\n", to: "",
+    mustFail: "...and EVERY row keeps when the server saved it (recordedAt), the time a list's claim is judged by, even one saved a minute after it was seen" },
+  { guard: "a carry does not record the age of the detention it carries", file: SERVER, test: "reflection-weeks.test.mjs",
+    from: "recordedAt: c.now, originAt: u.originAt ?? u.recordedAt, state:", to: "recordedAt: c.now, state:",
+    mustFail: "O Wed 11/18 OW: lines, tags, carry count and what became of it" },
 ];
 
 // A builder's shortcut, never set in npm test: REFLECTION_TEETH_ONLY=<text>

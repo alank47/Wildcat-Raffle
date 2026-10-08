@@ -554,6 +554,11 @@ const claim = (dayKey, { tardies = [], uniforms = [], units = [], days = {}, set
   check("tag: List not made, on a date with no list", tags(tardy({ attDate: MON, slot: 2 })).includes("List not made Mon 10/12"));
   check("tag: Uniform logged after the list closed",
     R.uniformTags(uni({ day: "2026-10-09", at: at("2026-10-09", "11:52") }), MON, days, TZ).includes("Uniform logged after the list closed (Fri 10/9 11:52)"));
+  check("...judged by when it was SAVED: seen at 11:40, saved at 11:50 (a queued send), after the 11:46 list, it says so, with the save time",
+    J(R.uniformTags(uni({ day: "2026-10-09", at: at("2026-10-09", "11:40"), recordedAt: at("2026-10-09", "11:50") }), MON, days, TZ))
+      === J(["Uniform logged after the list closed (Fri 10/9 11:50)"]));
+  check("...and seen at 11:40, saved at 11:45, before the list: no tag (it was on that list)",
+    R.uniformTags(uni({ day: "2026-10-09", at: at("2026-10-09", "11:40"), recordedAt: at("2026-10-09", "11:45") }), MON, days, TZ).length === 0);
   check("tag: Saved late (observed Tue 7:52)",
     R.uniformTags(uni({ day: TUE, at: at(TUE, "07:52"), savedAt: at(WED, "08:10") }), WED, {}, TZ).includes("Saved late (observed Tue 7:52)"));
 }

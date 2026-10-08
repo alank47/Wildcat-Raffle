@@ -279,6 +279,8 @@ export const log = mutation({
       at: when.at,
       ...(when.source === "observed" ? { observedAt: args.observedAt } : {}),
       ...(when.savedAt ? { savedAt: when.savedAt } : {}),
+      // When it was SAVED: which list it can be on (reflectionRules.uniformTags).
+      recordedAt: nowIso,
       loanerProvided: loaner,
       loanerOutstanding: loaner,
       loanerReturnedAt: null,

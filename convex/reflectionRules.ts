@@ -1674,6 +1674,8 @@ export type UniformItem = {
   id: string; studentNumber: string; day: string; at: string; voided: boolean;
   unitId?: string | null; reflectionState?: string | null; loaner?: boolean;
   savedAt?: string | null; observedAt?: string | null;
+  /** When the server saved it (absent on rows from before 2026-10-08: savedAt, else at). */
+  recordedAt?: string | null;
 };
 
 export type UnitState = "pending" | "listed" | "carried" | "queued-forward" | "released" | "review" | "expired" | "before-start";
@@ -1843,9 +1845,16 @@ export function tardyTags(t: TardyItem, serveDay: string, days: Record<string, D
 export function uniformTags(u: UniformItem, serveDay: string, days: Record<string, DayState>, tz: string): string[] {
   const tags: string[] = [];
   const own = days[u.day];
+  // Judged by when it was SAVED (third review, 2026-10-08): a list claims
+  // what was saved before it was made. Seen at 11:40 and saved at 11:50 (a
+  // queued send), an entry misses the 11:45 list though `at` is before it.
+  // The time shown is when it was seen if that is after the list, else when
+  // it was saved.
+  const saved = u.recordedAt ?? u.savedAt ?? u.at;
   if (u.day < serveDay && own?.noList) tags.push(`List not made ${dayLabel(u.day)}`);
-  else if (own?.frozenAt && Date.parse(u.at) >= Date.parse(own.frozenAt)) {
-    tags.push(`Uniform logged after the list closed (${dayLabel(u.day)} ${clockText(u.at, tz)})`);
+  else if (own?.frozenAt && Date.parse(saved) >= Date.parse(own.frozenAt)) {
+    const shown = Date.parse(u.at) >= Date.parse(own.frozenAt) ? u.at : saved;
+    tags.push(`Uniform logged after the list closed (${dayLabel(u.day)} ${clockText(shown, tz)})`);
   }
   if (u.savedAt) tags.push(`Saved late (observed ${dayLabel(u.day).split(" ")[0]} ${clockText(u.at, tz)})`);
   return tags;

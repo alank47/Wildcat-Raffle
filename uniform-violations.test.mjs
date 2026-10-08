@@ -592,6 +592,10 @@ try {
     const row = w.store.rows("uniformViolations").find((x) => x.day === TUE);
     check("...the row keeps observedAt (epoch ms) and savedAt for the list's tag",
       row.observedAt === Date.parse(la(TUE, "07:52")) && row.savedAt === la(WED, "08:10"));
+    const wedRow = w.store.rows("uniformViolations").find((x) => x.day === WED);
+    check("...and EVERY row keeps when the server saved it (recordedAt), the time a list's claim is judged by, even one saved a minute after it was seen",
+      row.recordedAt === la(WED, "08:10") && wedRow.recordedAt === la(WED, "08:10") && wedRow.at === la(WED, "08:09") && !wedRow.savedAt,
+      JSON.stringify([row.recordedAt, wedRow.recordedAt]));
     const again = await w.log("12001", { observedAt: Date.parse(la(TUE, "07:55")) });
     check("one entry per student per SERVER day still holds: a second Tuesday sighting is a duplicate", again.duplicate === true);
 
