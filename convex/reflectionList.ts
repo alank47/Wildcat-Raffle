@@ -10,8 +10,8 @@ import {
 } from "./reflection";
 import {
   claimAtFreeze, clockText, dayLabel, dayTimes, freezeBanner, idSetHash, lastReadBanner, lunchClassOf, minuteText, nextSchoolDayGuess,
-  noListBanner, provesNoSchool, pullTimes, pullWords, QUEUED_TAG, roomWindow, rosterAgeBanner, schoolDayVerdict, studentMap, tardyKey,
-  tardyLine, termBanner, uniformLine, unitReleased, wallClock,
+  noListBanner, POWER_UP_MINUTE, provesNoSchool, pullTimes, pullWords, QUEUED_TAG, roomWindow, rosterAgeBanner, schoolDayVerdict,
+  studentMap, tardyKey, tardyLine, termBanner, uniformLine, unitReleased, wallClock,
   type ClaimResult, type Division, type LunchClass, type Mode, type ReflectionSettings, type RosterMeta, type RosterSnap,
   type ScheduleKind, type UnitItem,
 } from "./reflectionRules";
@@ -474,7 +474,10 @@ function versionOf(rows: ListRowOut[]): string {
  * A TEST list built before 10/9 (`legacyMs`) has no class before lunch on
  * its rows, only the Power-Up class it was built with: its MS column keeps
  * the Power-Up heading, so a Power-Up teacher is never shown under "Class
- * before lunch".
+ * before lunch", and its pull time stays the one it was built with, Power-Up's
+ * start ("pull at 12:31 PM from Power-Up"). The MS pull minute now is two
+ * minutes before that, when those students are still in the class before
+ * lunch, not yet in Power-Up.
  */
 function sectionsOf(rows: ListRowOut[], modes: Record<Division, Mode>, settings: ReflectionSettings, kind: ScheduleKind,
   legacyMs = false) {
@@ -483,14 +486,14 @@ function sectionsOf(rows: ListRowOut[], modes: Record<Division, Mode>, settings:
   return (["ms", "hs"] as Division[]).map((division) => {
     const mine = rows.filter((r) => r.division === division);
     const count = mine.filter((r) => r.state !== "released").length;
-    const pullMinute = division === "ms" ? pull.msMinute : pull.hsMinute;
     const lunch = division === "ms" && !legacyMs;
+    const pullMinute = division === "hs" ? pull.hsMinute : lunch ? pull.msMinute : POWER_UP_MINUTE[kind];
     return {
       division,
       label: division === "ms" ? "Middle school (grades 6-8)" : "High school (grades 9-12)",
       mode: modes[division],
       pullAt: hhmm(pullMinute),
-      pullWords: lunch || division === "hs" ? pullWords(kind, division, settings) : `pull at ${minuteText(pullMinute)}`,
+      pullWords: lunch || division === "hs" ? pullWords(kind, division, settings) : `pull at ${minuteText(pullMinute)} from Power-Up`,
       pullFrom: lunch ? "before-lunch" as const : "powerup" as const,
       column: lunch ? "Class before lunch" : "Power-Up",
       count,

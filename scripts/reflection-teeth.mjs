@@ -637,6 +637,10 @@ const CASES = [
   { guard: "this build's screen never says it shows the class before lunch (so it is never sent the list)", file: SCREEN, test: DEMO_TEST,
     from: "{ day: day, demoOk: true, lunchOk: true }", to: "{ day: day, demoOk: true }",
     mustFail: "this build's screen says it shows the class before lunch (lunchOk), and is sent the list" },
+  { guard: "a TEST list stored before 10/9 is pulled at the new MS minute, two minutes before Power-Up", file: LIST, test: DEMO_TEST,
+    from: "    const pullMinute = division === \"hs\" ? pull.hsMinute : lunch ? pull.msMinute : POWER_UP_MINUTE[kind];",
+    to: "    const pullMinute = division === \"hs\" ? pull.hsMinute : pull.msMinute;",
+    mustFail: "...pulled when it was built to be: at the start of Power-Up (12:31), never 12:29, two minutes before Power-Up begins" },
 ];
 
 // A builder's shortcut, never set in npm test: REFLECTION_TEETH_ONLY=<text>

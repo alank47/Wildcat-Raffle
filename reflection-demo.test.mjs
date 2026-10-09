@@ -505,15 +505,17 @@ try {
     check("a TEST list stored before 10/9 still shows, with the Power-Up class it was built with, under a Power-Up heading",
       legacyShown.demo === true && lms?.column === "Power-Up" && lms.pullFrom === "powerup" && lms.rows.length === 5
         && lms.rows.every((r) => !("lunch" in r) && r.slipTo === null && r.pu?.teacher === "Ms Ruiz"), J(lms));
+    check("...pulled when it was built to be: at the start of Power-Up (12:31), never 12:29, two minutes before Power-Up begins",
+      lms?.pullAt === "12:31" && lms.pullWords === "pull at 12:31 PM from Power-Up", J({ pullAt: lms?.pullAt, pullWords: lms?.pullWords }));
     const legacyScreen = makeWorld(read("./script.js"), {
       query: (args, path) => legacy.as("admin").run(path.replace(":", "."), args),
       mutation: (args, path) => legacy.as("admin").run(path.replace(":", "."), args),
     }, BROWSER);
     await legacyScreen.app.loadReflectionList();
     const legacyHtml = legacyScreen.fixed.rrList.innerHTML;
-    check("...and this build's screen draws it: Power-Up column, Ms Ruiz, no 'Class before lunch'",
-      /Power-Up/.test(legacyHtml) && /Ms Ruiz/.test(legacyHtml) && !/Class before lunch/.test(legacyHtml) && NAME_RE.test(legacyHtml),
-      legacyHtml.slice(0, 400));
+    check("...and this build's screen draws it: Power-Up column, Ms Ruiz, 'pull at 12:31 PM from Power-Up', no 'Class before lunch'",
+      /Power-Up/.test(legacyHtml) && /Ms Ruiz/.test(legacyHtml) && !/Class before lunch/.test(legacyHtml) && NAME_RE.test(legacyHtml)
+        && /pull at 12:31 PM from Power-Up/.test(legacyHtml) && !/12:29/.test(legacyHtml), legacyHtml.slice(0, 400));
 
     // Thursday's REAL list (made by the shipped system in section 1), on this
     // build's screen and on the screen open tabs run today (339e1be, stamp
@@ -607,6 +609,19 @@ try {
       check("...the control: handed the rows, the 339e1be screen shows MS under Power-Up (Ms Ruiz, 'RSP: pull from this class', pull at about 12:29) while its slips go to Ms Ortiz",
         /Ms Ruiz/.test(leakHtml) && /RSP: pull from this class/.test(leakHtml) && /pull at about 12:29/.test(leakHtml)
           && J(leakOut) === J(["Ms Ortiz", "Ms Cruz"]), J({ leakOut, html: leakHtml.slice(0, 300) }));
+
+      // A list that names no class before lunch (the TEST list stored before
+      // 10/9, as built) still reaches the old screen, pulled when it was
+      // built to be.
+      const oldLegacy = makeWorld(oldSrc, {
+        query: (args, path) => legacy.as("admin").run(path.replace(":", "."), args),
+        mutation: (args, path) => legacy.as("admin").run(path.replace(":", "."), args),
+      }, BROWSER);
+      await oldLegacy.app.loadReflectionList();
+      const oldLegacyHtml = oldLegacy.fixed.rrList.innerHTML;
+      check("...while a list that names no class before lunch (the TEST list stored before 10/9) still reaches it: Ms Ruiz, pull at about 12:31",
+        oldLegacy.app.data?.demo === true && /Ms Ruiz/.test(oldLegacyHtml) && /pull at about 12:31/.test(oldLegacyHtml) && !/12:29/.test(oldLegacyHtml),
+        J({ why: oldLegacy.app.why, html: oldLegacyHtml.slice(0, 300) }));
     } else {
       console.log("  SKIP  the 339e1be screen against this server (git or that commit not available here)");
     }
