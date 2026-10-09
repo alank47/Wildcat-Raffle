@@ -841,9 +841,112 @@ console.log("\nTHE LAST-READ BANNER, AND A TARDY BACK AFTER ITS RELEASE\n");
 
   const pull = R.pullInstant(TUE, "regular", "ms", ON, TZ);
   check("a tardy back after its detention was released AFTER the pull rejoins it; released before the pull, it does not",
-    pull === at(TUE, "12:31") && R.pullInstant(TUE, "regular", "hs", ON, TZ) === at(TUE, "12:57")
+    pull === at(TUE, "12:29") && R.pullInstant(TUE, "regular", "hs", ON, TZ) === at(TUE, "12:57")
       && R.rejoinsReleasedDetention({ releasedAt: at(TUE, "13:00"), pullAt: pull })
+      && R.rejoinsReleasedDetention({ releasedAt: at(TUE, "12:30"), pullAt: pull })
       && !R.rejoinsReleasedDetention({ releasedAt: at(TUE, "12:10"), pullAt: pull }));
+}
+
+// ===========================================================================
+console.log("\nMIDDLE SCHOOL IS PULLED FROM THE CLASS BEFORE LUNCH (owner, 2026-10-09)\n");
+// ===========================================================================
+// MS eats first, so an MS student is pulled a couple of minutes BEFORE lunch
+// begins, from the class they are in right before Lunch & Power Up -- which is
+// P3 on a regular Monday or Thursday, and P4 on every other kind of day. HS is
+// unchanged: pulled from Power-Up, 5 minutes before it ends.
+{
+  // ---- The seeded schedules, read from the seed file itself.
+  const seed = read("./seedBellSchedules.ts");
+  const tables = {};
+  for (const m of seed.matchAll(/^const (\w+): P\[\] = \[([\s\S]*?)^\];/gm)) {
+    tables[m[1]] = [...m[2].matchAll(/p\("([^"]*)",\s*(\d+),\s*(\d+),\s*(\d+),\s*(\d+)\)/g)]
+      .map((x) => ({ label: x[1], start: Number(x[2]) * 60 + Number(x[3]) }));
+  }
+  const seeded = [...seed.matchAll(/\{ name: "([^"]+)", weekdays: \[([^\]]*)\], periods: (\w+) \}/g)].map((m) => {
+    const periods = tables[m[3]] ?? [];
+    const lunch = periods.findIndex((x) => /^Lunch & Power Up$/.test(x.label));
+    const before = periods.slice(0, Math.max(lunch, 0)).filter((x) => /^\d+$/.test(x.label)).pop();
+    const kind = R.scheduleKindFor({ date: MON, marked: { scheduleId: "s", scheduleName: m[1] } }).kind;
+    return {
+      name: m[1], kind, weekdays: m[2].split(",").map((x) => x.trim()).filter(Boolean).map(Number),
+      lastPeriodBeforeLunch: before ? Number(before.label) : null, lunchStart: lunch >= 0 ? periods[lunch].start : null,
+    };
+  });
+  check("SEEDED_SCHEDULES is what seedBellSchedules.ts says: each schedule's type, weekdays and last class period before Lunch & Power Up",
+    seeded.length === 5 && J(seeded.map(({ lunchStart, ...s }) => s)) === J(R.SEEDED_SCHEDULES), J(seeded));
+  check("...and each schedule's Lunch & Power Up starts at the minute the list's times use for its type",
+    seeded.every((s) => s.lunchStart === R.POWER_UP_MINUTE[s.kind]), J(seeded.map((s) => [s.name, s.lunchStart])));
+
+  // ---- Which period, by day.
+  const THU = "2026-10-15", FRI = "2026-10-16", SAT = "2026-10-17";
+  const slotOn = (date, o = {}) => {
+    const marked = o.schedule ? { scheduleId: "id-" + o.schedule, scheduleName: o.schedule } : null;
+    const kind = o.kind ?? R.scheduleKindFor({ date, marked, rowCounts: o.rowCounts ?? null }).kind;
+    return R.beforeLunchSlot({ date, kind, marked });
+  };
+  check("Mon/Thu -> slot 4 (P3): a regular Monday or Thursday is pulled from P3",
+    slotOn(MON)?.slot === 4 && slotOn(MON)?.period === "P3" && slotOn(THU)?.slot === 4 && slotOn(MON)?.schedule === "Regular · Mon/Thu",
+    J([slotOn(MON), slotOn(THU)]));
+  check("Tue/Fri -> slot 5 (P4): a regular Tuesday or Friday is pulled from P4",
+    slotOn(TUE)?.slot === 5 && slotOn(TUE)?.period === "P4" && slotOn(FRI)?.slot === 5, J([slotOn(TUE), slotOn(FRI)]));
+  const SIX = { 2: 40, 3: 40, 4: 40, 5: 40 };
+  check("Wed/Min/Stack -> slot 5 (P4): a Wednesday, a marked Minimum or Stack Day, and a six-period Thursday the list detected",
+    slotOn(WED)?.slot === 5 && slotOn(THU, { schedule: "Minimum Day" })?.slot === 5
+      && slotOn(MON, { schedule: "Stack Day / Return from Holiday" })?.slot === 5
+      && R.scheduleKindFor({ date: THU, rowCounts: SIX }).kind === "minimum" && slotOn(THU, { rowCounts: SIX })?.slot === 5,
+    J([slotOn(WED), slotOn(THU, { schedule: "Minimum Day" }), slotOn(THU, { rowCounts: SIX })]));
+  check("a Monday marked with the Tue/Fri schedule pulls from P4 (the marked schedule, not the weekday), a Tuesday marked Mon/Thu from P3",
+    slotOn(MON, { schedule: "Regular · Tue/Fri" })?.slot === 5 && slotOn(TUE, { schedule: "Regular · Mon/Thu" })?.slot === 4);
+  check("a schedule of the office's own on a day no regular schedule runs: no period at all, rather than a guess",
+    slotOn(SAT, { schedule: "Rally Saturday" }) === null && slotOn(WED, { schedule: "Assembly Wednesday", kind: "regular" }) === null);
+
+  // ---- The student's class in that period, from the roster snapshot.
+  const pr = (slot, sectionId, last, extra = {}) => ({ studentNumber: "M1", gradeLevel: "7", period: `${slot}(A-E)`, sectionId,
+    courseName: "Class", teacherFirstName: "Ms", teacherLastName: last, ...extra });
+  const base = [pr(2, "P1-A", "Lee"), pr(4, "P3-A", "Ortiz", { courseName: "Math 7" }), pr(5, "P4-A", "Park"), pr(9, "PU-7", "Ruiz", { courseName: "Power Up 7A" })];
+  const snapOf = (rows) => R.rosterSnapshotRows(rows)[0];
+  const P3 = { slot: 4, period: "P3" }, P4 = { slot: 5, period: "P4" };
+  const found = R.lunchClassOf(snapOf(base), P3);
+  check("MS row shows the slot's teacher: the period, the teacher and the course of the class before lunch (never Power-Up)",
+    J(found) === J({ slot: 4, period: "P3", sectionId: "P3-A", teacher: "Ms Ortiz", course: "Math 7", flag: null, problem: null })
+      && R.lunchClassOf(snapOf(base), P4).teacher === "Ms Park", J(found));
+  const twice = R.lunchClassOf(snapOf([...base, pr(4, "P3-B", "Second")]), P3);
+  check("two classes in the slot: check PowerSchool, neither teacher named",
+    twice.problem === "Check PowerSchool: 2 classes in P3" && twice.teacher === null && twice.course === null && twice.period === "P3", J(twice));
+  const noP3 = R.lunchClassOf(snapOf(base.filter((r) => r.sectionId !== "P3-A")), P3);
+  check("no class in the slot: not found, check PowerSchool (never blank, never a guess)",
+    noP3.problem === R.LUNCH_NOT_FOUND && R.LUNCH_NOT_FOUND === "Class before lunch not found — check PowerSchool"
+      && noP3.teacher === null && noP3.period === "P3", J(noP3));
+  check("...nor for a student with no roster row, or a day whose period is not known",
+    R.lunchClassOf(null, P3).problem === R.LUNCH_NOT_FOUND && R.lunchClassOf(snapOf(base), null).problem === R.LUNCH_NOT_FOUND
+      && R.lunchClassOf(snapOf(base), null).period === null);
+  const rsp = R.lunchClassOf(snapOf([...base.filter((r) => r.sectionId !== "P3-A"), pr(4, "RSP-3", "Mendez", { courseName: "RSP A" })]), P3);
+  const z = R.lunchClassOf(snapOf([...base.filter((r) => r.sectionId !== "P3-A"), pr(4, "Z-3", "Moe", { courseName: "", courseNumber: "7002A" })]), P3);
+  check("an RSP, ELD or 7002A class before lunch keeps its flag (pulled like everyone else, the runner told the room)",
+    rsp.flag === "RSP" && rsp.teacher === "Ms Mendez" && rsp.course === "RSP A" && z.flag === "7002A" && z.course === "Course 7002A", J([rsp, z]));
+  const old = { ...snapOf(base) };
+  delete old.classBySlot;
+  const fromOld = R.lunchClassOf(old, P3);
+  check("a snapshot taken before 10/9 (no classBySlot) still names the slot's section and teacher, with no course",
+    fromOld.teacher === "Ms Ortiz" && fromOld.sectionId === "P3-A" && fromOld.course === null && fromOld.problem === null, J(fromOld));
+
+  // ---- When, on the Los Angeles clock.
+  const words = (kind, div, s = ON) => R.pullWords(kind, div, s);
+  check("MS pull 12:29 regular, 11:40 Wednesday and Minimum, 12:20 Stack (2 minutes before Lunch & Power Up); HS unchanged",
+    words("regular", "ms") === "pull at 12:29 PM from the class before lunch" && words("wed", "ms") === "pull at 11:40 AM from the class before lunch"
+      && words("minimum", "ms") === "pull at 11:40 AM from the class before lunch" && words("stack", "ms") === "pull at 12:20 PM from the class before lunch"
+      && words("regular", "hs") === "pull at 12:57 PM, 5 minutes before the end of Power-Up"
+      && words("stack", "hs") === "pull at 12:48 PM, 5 minutes before the end of Power-Up",
+    ["regular", "wed", "stack"].map((k) => words(k, "ms")).join(" | "));
+  check("...and the lead is a setting (msPullLeadMinutes, default 2)",
+    ON.msPullLeadMinutes === 2 && words("regular", "ms", { ...ON, msPullLeadMinutes: 4 }) === "pull at 12:27 PM from the class before lunch");
+  const laMinute = (iso) => { const w = R.wallClock(iso, TZ); return w.ok ? `${w.dateKey} ${w.minuteOfDay}` : null; };
+  const msPull = (d, k) => R.pullInstant(d, k, "ms", ON, TZ);
+  check("MS pull is 12:29 on the Los Angeles clock in standard time too (11/2, 11/4)",
+    msPull("2026-10-29", "regular") === "2026-10-29T19:29:00.000Z" && msPull("2026-11-02", "regular") === "2026-11-02T20:29:00.000Z"
+      && msPull("2026-11-04", "wed") === "2026-11-04T19:40:00.000Z" && msPull("2027-03-15", "regular") === "2027-03-15T19:29:00.000Z"
+      && ["2026-10-29", "2026-11-02", "2027-03-15"].every((d) => laMinute(msPull(d, "regular")) === `${d} 749`),
+    J(["2026-10-29", "2026-11-02", "2027-03-15"].map((d) => msPull(d, "regular"))));
 }
 
 // ===========================================================================

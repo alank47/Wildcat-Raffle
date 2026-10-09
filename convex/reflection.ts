@@ -4,13 +4,13 @@ import type { Doc, Id } from "./_generated/dataModel";
 import { internal } from "./_generated/api";
 import { v } from "convex/values";
 import {
-  absentThisMorning, admitState, blankSections, buildCodeBook, carriedUnit, carryVerdict, claimAtFreeze,
+  absentThisMorning, admitState, beforeLunchSlot, blankSections, buildCodeBook, carriedUnit, carryVerdict, claimAtFreeze,
   dayTimes, decideTick, decodeRows, divisionOfGrade, fallbackDayReview, freezeBanner, freezeVerdict, idSetHash,
-  initialTardyState, LEASE_MS, listsBeforeSeen, nextSchoolDayGuess, noListBanner, provesNoSchool, pullInstant, QUEUED_TAG,
+  initialTardyState, LEASE_MS, listsBeforeSeen, lunchClassOf, nextSchoolDayGuess, noListBanner, provesNoSchool, pullInstant, QUEUED_TAG,
   reclassify, reconcileDate, reflectionSettingsOrDefault, rejoinsReleasedDetention, removalVerdict, rosterAgeBanner,
   rosterSnapshotVerdict, SCHEDULE_KINDS, scheduleKindFor, schoolDayVerdict, studentMap, summarizeDay, tardyCandidates,
   tardyKey, termBanner, unitReleased, wallClock,
-  type CarryVerdict, type DayState, type DaySummary, type Division, type Marked, type ReflectionSettings,
+  type CarryVerdict, type DayState, type DaySummary, type Division, type LunchClass, type Marked, type ReflectionSettings,
   type RosterMeta, type RosterSnap, type ScheduleKind, type TardyItem, type UniformItem, type UnitItem,
 } from "./reflectionRules";
 
@@ -97,6 +97,13 @@ const snapRow = v.object({
   enrolledSlots: v.array(v.number()),
   sectionBySlot: v.record(v.string(), v.string()),
   teacherBySlot: v.record(v.string(), v.string()),
+  classBySlot: v.optional(v.record(v.string(), v.object({
+    sectionId: v.union(v.string(), v.null()),
+    teacher: v.union(v.string(), v.null()),
+    course: v.union(v.string(), v.null()),
+    flag: v.union(v.string(), v.null()),
+    sections: v.number(),
+  }))),
 });
 
 /**
@@ -153,6 +160,7 @@ export const writeRosterSnapshot = internalMutation({
         puSlot: or(r.puSlot), puSectionId: or(r.puSectionId), puTeacherName: or(r.puTeacherName),
         puTeacherEmail: or(r.puTeacherEmail), puCourse: or(r.puCourse), puFlag: or(r.puFlag), puCheck: r.puCheck,
         enrolledSlots: r.enrolledSlots, sectionBySlot: r.sectionBySlot, teacherBySlot: r.teacherBySlot,
+        ...(r.classBySlot ? { classBySlot: r.classBySlot } : {}),
         snapAt: now, rosterSyncedAt: rosterSyncedAt!, termId: a.termId,
       };
       const old = bySn.get(r.studentNumber);
@@ -256,6 +264,7 @@ const rosterSnapOf = (r: Doc<"reflectionRoster">): RosterSnap => ({
   puSlot: r.puSlot ?? null, puSectionId: r.puSectionId ?? null, puTeacherName: r.puTeacherName ?? null,
   puTeacherEmail: r.puTeacherEmail ?? null, puCourse: r.puCourse ?? null, puFlag: r.puFlag ?? null,
   puCheck: r.puCheck, enrolledSlots: r.enrolledSlots, sectionBySlot: r.sectionBySlot, teacherBySlot: r.teacherBySlot,
+  ...(r.classBySlot ? { classBySlot: r.classBySlot } : {}),
 });
 
 export async function loadRoster(ctx: Ctx): Promise<Record<string, RosterSnap>> {
@@ -289,6 +298,36 @@ export function puSnapshotOf(snap: RosterSnap | null): Doc<"reflectionUnits">["p
     slot: or(snap.puSlot), sectionId: or(snap.puSectionId), teacherName: or(snap.puTeacherName),
     teacherEmail: or(snap.puTeacherEmail), course: or(snap.puCourse), flag: or(snap.puFlag), check: snap.puCheck,
   };
+}
+
+/** The MS class before lunch, as copied onto a detention when its list is made. */
+export function lunchSnapshotOf(c: LunchClass): NonNullable<Doc<"reflectionUnits">["lunchSnapshot"]> {
+  return {
+    slot: or(c.slot), period: or(c.period), sectionId: or(c.sectionId), teacherName: or(c.teacher),
+    course: or(c.course), flag: or(c.flag), problem: or(c.problem),
+  };
+}
+
+/** A detention's copy back as the list shows it. */
+export function lunchOfSnapshot(s: NonNullable<Doc<"reflectionUnits">["lunchSnapshot"]>): LunchClass {
+  return {
+    slot: s.slot ?? null, period: s.period ?? null, sectionId: s.sectionId ?? null, teacher: s.teacherName ?? null,
+    course: s.course ?? null, flag: s.flag ?? null, problem: s.problem ?? null,
+  };
+}
+
+/**
+ * Day D's schedule type (the one its row recorded, else worked out as the
+ * reads work it out) and the class period right before Lunch & Power-Up on
+ * it, where MS students are pulled from (reflectionRules.beforeLunchSlot).
+ */
+export async function dayKindOf(ctx: Ctx, date: string, settings: ReflectionSettings, row?: Doc<"reflectionDays"> | null):
+  Promise<{ kind: ScheduleKind; marked: Marked; lunch: { slot: number; period: string } | null }> {
+  const dRow = row === undefined ? await getDay(ctx, date) : row;
+  const marked = await markedOf(ctx, date);
+  const kind = (SCHEDULE_KINDS as string[]).includes(String(dRow?.kind)) ? dRow!.kind as ScheduleKind
+    : scheduleKindFor({ date, marked, scheduleKinds: settings.scheduleKinds, rowCounts: dRow?.rowCounts ?? null }).kind;
+  return { kind, marked, lunch: beforeLunchSlot({ date, kind, marked }) };
 }
 
 const addDays = (iso: string, n: number) =>
@@ -384,11 +423,16 @@ async function freezeDay(ctx: MutationCtx, f: {
     tardies: tardies.map(tardyItemOf), uniforms: uniforms.map(uniformItemOf), units: pending.map(unitItemOf), days,
   });
 
+  // MS is pulled from the class before lunch (owner, 10/9): copied now, with
+  // the Power-Up class, so a past list still names the right room after the
+  // semester changes.
+  const { lunch } = await dayKindOf(ctx, date, f.settings);
   let ms = 0, hs = 0;
   for (const row of claim.rows) {
     const snap = f.roster[row.studentNumber] ?? null;
     const shown = {
       puSnapshot: puSnapshotOf(snap),
+      lunchSnapshot: row.division === "ms" ? lunchSnapshotOf(lunchClassOf(snap, lunch)) : undefined,
       absentMorning: f.summary ? absentThisMorning(f.summary, row.studentNumber, snap) : undefined,
       listedAt: nowIso,
       owes: row.owes > 1 ? row.owes : undefined,
@@ -724,9 +768,7 @@ async function rejoinDetention(ctx: MutationCtx, unitId: Id<"reflectionUnits"> |
     if (next.serveDay) last = next;
   }
   const serveDay = last.serveDay!;
-  const dRow = await getDay(ctx, serveDay);
-  const kind = (SCHEDULE_KINDS as string[]).includes(String(dRow?.kind)) ? dRow!.kind as ScheduleKind
-    : scheduleKindFor({ date: serveDay, marked: await markedOf(ctx, serveDay), scheduleKinds: settings.scheduleKinds, rowCounts: dRow?.rowCounts ?? null }).kind;
+  const { kind } = await dayKindOf(ctx, serveDay, settings);
   const pullAt = pullInstant(serveDay, kind, last.division, settings, tz);
   if (rejoinsReleasedDetention({ releasedAt: u.releasedAt, pullAt })) {
     await unrelease(ctx, u._id, u.releasedAt);
@@ -741,7 +783,8 @@ async function rejoinDetention(ctx: MutationCtx, unitId: Id<"reflectionUnits"> |
   // list's row details.
   await unrelease(ctx, u._id, u.releasedAt);
   await ctx.db.patch(last._id, {
-    state: "pending", serveDay: undefined, listedAt: undefined, owes: undefined, puSnapshot: undefined, absentMorning: undefined,
+    state: "pending", serveDay: undefined, listedAt: undefined, owes: undefined, puSnapshot: undefined, lunchSnapshot: undefined,
+    absentMorning: undefined,
     tags: last.tags.filter((tag) => !/^Owes \d+$/.test(tag)),
   });
   return "restored";
@@ -1458,16 +1501,15 @@ export const saveSettings = internalMutation({
       minimum: v.optional(v.union(v.number(), v.null())), stack: v.optional(v.union(v.number(), v.null())),
     })),
     hsPullLeadMinutes: v.optional(v.number()),
-    slipAddresseeByDivision: v.optional(v.object({
-      ms: v.optional(v.union(v.literal("powerup"), v.literal("before-lunch"))),
-      hs: v.optional(v.union(v.literal("powerup"), v.literal("before-lunch"))),
-    })),
+    // Owner, 10/9: MS is pulled from the class before lunch this many minutes
+    // before Lunch & Power-Up starts (default 2).
+    msPullLeadMinutes: v.optional(v.number()),
   },
   handler: async (ctx, a): Promise<Record<string, any>> => {
     const raw = (await readState(ctx, SETTINGS_KEY)) ?? {};
     const current = reflectionSettingsOrDefault(raw);
     const next: Record<string, any> = { ...raw };
-    const NESTED = ["closeMinuteByKind", "capacity", "swapMinuteByKind", "slipAddresseeByDivision"];
+    const NESTED = ["closeMinuteByKind", "capacity", "swapMinuteByKind"];
     for (const [k, val] of Object.entries(a)) {
       if (val === undefined) continue;
       next[k] = NESTED.includes(k) ? { ...(current as any)[k], ...(val as object) } : val;

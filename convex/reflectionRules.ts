@@ -118,27 +118,71 @@ export const BLOCK_END_MINUTE: Record<ScheduleKind, number> = { regular: 814, we
 
 /**
  * THE ROOM RUNS DURING LUNCH (owner, 2026-10-08). MS eats first, so MS
- * serves in the FIRST half of Lunch & Power-Up and is pulled at the block
- * start; HS serves in the SECOND half and is pulled out of Power-Up
- * `hsPullLeadMinutes` (5) before the swap. Nobody has said the exact swap
- * minute, so it is a per-schedule setting that defaults to the block's
- * midpoint: 13:02 / 12:13 / 12:13 / 12:53, so HS is pulled at about 12:57 /
- * 12:08 / 12:08 / 12:48. The ready time and the latest freeze do not move:
- * MS is pulled at the block start, so the list must be ready before it.
+ * serves in the FIRST half of Lunch & Power-Up; HS serves in the SECOND half
+ * and is pulled out of Power-Up `hsPullLeadMinutes` (5) before the swap. The
+ * swap is a per-schedule setting that defaults to the block's midpoint (the
+ * owner confirmed halfway): 13:02 / 12:13 / 12:13 / 12:53, so HS is pulled at
+ * 12:57 / 12:08 / 12:08 / 12:48.
+ *
+ * MS IS PULLED A COUPLE OF MINUTES BEFORE LUNCH BEGINS, FROM THE CLASS THEY
+ * ARE IN (owner, 2026-10-09), not from Power-Up: `msPullLeadMinutes` (2)
+ * before the block start, so 12:29 regular, 11:40 Wednesday and Minimum,
+ * 12:20 Stack. The ready time and the latest freeze do not move: both are
+ * well before the MS pull (the lead must stay under the latest-freeze margin,
+ * which reflectionSettingsOrDefault enforces).
  */
-export function pullTimes(kind: ScheduleKind, settings: Pick<ReflectionSettings, "swapMinuteByKind" | "hsPullLeadMinutes">):
+export function pullTimes(kind: ScheduleKind,
+  settings: Pick<ReflectionSettings, "swapMinuteByKind" | "hsPullLeadMinutes" | "msPullLeadMinutes">):
   { msMinute: number; swapMinute: number; hsMinute: number } {
   const start = POWER_UP_MINUTE[kind];
   const swap = settings.swapMinuteByKind?.[kind] ?? Math.floor((start + BLOCK_END_MINUTE[kind]) / 2);
-  return { msMinute: start, swapMinute: swap, hsMinute: swap - settings.hsPullLeadMinutes };
+  return { msMinute: start - settings.msPullLeadMinutes, swapMinute: swap, hsMinute: swap - settings.hsPullLeadMinutes };
+}
+
+/** "12:29 PM" from minutes after local midnight. */
+export function minuteText(minute: number): string {
+  const h = Math.floor(minute / 60), m = minute % 60;
+  return `${h % 12 || 12}:${String(m).padStart(2, "0")} ${h >= 12 ? "PM" : "AM"}`;
 }
 
 /**
- * Who a pull slip is addressed to, per division (owner, 10/8, still open for
- * MS): the Power-Up teacher (the default for both, and the column the owner
- * asked for), or the teacher of the class right before lunch.
+ * WHEN AND FROM WHERE EACH DIVISION IS PULLED, as the section heading, the
+ * printed page and the slips say it:
+ *   MS  "pull at 12:29 PM from the class before lunch"
+ *   HS  "pull at 12:57 PM, 5 minutes before the end of Power-Up"
  */
-export type SlipAddressee = "powerup" | "before-lunch";
+export function pullWords(kind: ScheduleKind, division: Division,
+  settings: Pick<ReflectionSettings, "swapMinuteByKind" | "hsPullLeadMinutes" | "msPullLeadMinutes">): string {
+  const p = pullTimes(kind, settings);
+  if (division === "ms") return `pull at ${minuteText(p.msMinute)} from the class before lunch`;
+  const lead = settings.hsPullLeadMinutes;
+  return `pull at ${minuteText(p.hsMinute)}, ${lead} minute${lead === 1 ? "" : "s"} before the end of Power-Up`;
+}
+
+/**
+ * THE SEEDED BELL SCHEDULES (seedBellSchedules.ts, the office's printed
+ * 2026-27 schedule), as the list needs them: the schedule type the list
+ * gives each one (scheduleKindFor matches these names), the weekdays it runs
+ * on, and its LAST CLASS PERIOD BEFORE LUNCH & POWER UP:
+ *   Regular Mon/Thu    1, Nutrition, 3, Lunch & Power Up   -> P3 (slot 4)
+ *   Regular Tue/Fri    2, Nutrition, 4, Lunch & Power Up   -> P4 (slot 5)
+ *   Regular Wednesday  1, 2, Nutrition, 3, 4, Lunch & ...  -> P4 (slot 5)
+ *   Stack Day          1, 2, Nutrition, 3, 4, Lunch & ...  -> P4 (slot 5)
+ *   Minimum Day        the Wednesday clock                 -> P4 (slot 5)
+ * Copied, not imported, because this file imports nothing but the school
+ * clock. reflectionRules.test.mjs reads seedBellSchedules.ts itself and
+ * requires every value here to match what it derives from the periods there,
+ * so a change to the printed schedule that is not made here fails npm test.
+ */
+export const SEEDED_SCHEDULES: ReadonlyArray<{
+  name: string; kind: ScheduleKind; weekdays: number[]; lastPeriodBeforeLunch: number;
+}> = [
+  { name: "Regular · Mon/Thu", kind: "regular", weekdays: [1, 4], lastPeriodBeforeLunch: 3 },
+  { name: "Regular · Tue/Fri", kind: "regular", weekdays: [2, 5], lastPeriodBeforeLunch: 4 },
+  { name: "Regular · Wednesday", kind: "wed", weekdays: [3], lastPeriodBeforeLunch: 4 },
+  { name: "Stack Day / Return from Holiday", kind: "stack", weekdays: [], lastPeriodBeforeLunch: 4 },
+  { name: "Minimum Day", kind: "minimum", weekdays: [], lastPeriodBeforeLunch: 4 },
+];
 
 /** The fixed reads of a day (LA minutes). Closing, fallback and latest-freeze are windows, not items. */
 export const OPENING_MINUTE = 450;              // 07:30
@@ -168,7 +212,8 @@ export type ReflectionSettings = {
   /** The minute MS and HS swap halves of Lunch & Power-Up; null = the block's midpoint. */
   swapMinuteByKind: Record<ScheduleKind, number | null>;
   hsPullLeadMinutes: number;
-  slipAddresseeByDivision: Record<Division, SlipAddressee>;
+  /** MS is pulled from the class before lunch this many minutes before Lunch & Power-Up starts (owner, 10/9). */
+  msPullLeadMinutes: number;
 };
 
 /** The repo default: OFF for both divisions. Turning it on is a command-line act. */
@@ -186,7 +231,7 @@ export const DEFAULT_REFLECTION_SETTINGS: ReflectionSettings = {
   capacity: { ms: null, hs: null },
   swapMinuteByKind: { regular: null, wed: null, minimum: null, stack: null },
   hsPullLeadMinutes: 5,
-  slipAddresseeByDivision: { ms: "powerup", hs: "powerup" },
+  msPullLeadMinutes: 2,
 };
 
 const DAY_RE = /^\d{4}-\d{2}-\d{2}$/;
@@ -232,18 +277,21 @@ export function reflectionSettingsOrDefault(raw: unknown): ReflectionSettings {
     const x = s.swapMinuteByKind?.[k];
     swap[k] = Number.isInteger(x) && x > POWER_UP_MINUTE[k] && x < BLOCK_END_MINUTE[k] ? x : null;
   }
-  const addressee = (x: unknown): SlipAddressee => (x === "before-lunch" ? "before-lunch" : "powerup");
+  const margin = int(s.lastFreezeMarginMin, 5, 30, d.lastFreezeMarginMin);
   return {
     swapMinuteByKind: swap,
     hsPullLeadMinutes: int(s.hsPullLeadMinutes, 0, 30, d.hsPullLeadMinutes),
-    slipAddresseeByDivision: { ms: addressee(s.slipAddresseeByDivision?.ms), hs: addressee(s.slipAddresseeByDivision?.hs) },
+    // The MS pull stays after the latest a list may be made (Lunch &
+    // Power-Up less the margin): a lead that reaches it would pull students
+    // before their list could exist.
+    msPullLeadMinutes: int(s.msPullLeadMinutes, 0, margin - 1, d.msPullLeadMinutes),
     modeByDivision: { ms: asMode(s.modeByDivision?.ms), hs: asMode(s.modeByDivision?.hs) },
     countFromDateByDivision: {
       ms: isDay(s.countFromDateByDivision?.ms) ? s.countFromDateByDivision.ms : null,
       hs: isDay(s.countFromDateByDivision?.hs) ? s.countFromDateByDivision.hs : null,
     },
     closeMinuteByKind: close,
-    lastFreezeMarginMin: int(s.lastFreezeMarginMin, 5, 30, d.lastFreezeMarginMin),
+    lastFreezeMarginMin: margin,
     scheduleKinds: kinds,
     lateEntryLists: int(s.lateEntryLists, 1, 30, d.lateEntryLists),
     maxCarries: int(s.maxCarries, 1, 30, d.maxCarries),
@@ -394,10 +442,36 @@ export type RosterSnap = {
   enrolledSlots: number[];
   sectionBySlot: Record<string, string>;
   teacherBySlot: Record<string, string>;
+  /**
+   * The class in each slot, whole: section, teacher, course, flag, and how
+   * many different sections the student has in that slot (two means
+   * PowerSchool must be checked, never one of them guessed). Added 10/9 for
+   * the MS class before lunch; a snapshot taken before then has none until
+   * the next opening read takes a new one.
+   */
+  classBySlot?: Record<string, SlotClass>;
 };
+
+export type SlotClass = { sectionId: string | null; teacher: string | null; course: string | null; flag: string | null; sections: number };
 
 const teacherName = (r: any) => [r?.teacherFirstName, r?.teacherLastName]
   .map((x) => String(x ?? "").trim()).filter(Boolean).join(" ");
+
+/**
+ * The class's name as staff see it, and its flag: RSP, Designated ELD and
+ * course 7002A are flagged so the runner knows the room (those students are
+ * pulled like everyone else, owner 10/8). 7002A's name is blank in every
+ * synced table (the COURSES join misses it), so it is named by its number.
+ */
+function courseAndFlag(r: any): { course: string | null; flag: string | null } {
+  const course = String(r?.courseName ?? "").trim();
+  const number = String(r?.courseNumber ?? "").trim();
+  let flag: string | null = null;
+  if (/\bRSP\b/i.test(course)) flag = "RSP";
+  else if (/\bELD\b/i.test(course)) flag = "ELD";
+  else if (number.toUpperCase() === "7002A") flag = "7002A";
+  return { course: course || (number ? `Course ${number}` : null), flag };
+}
 
 /**
  * What the student is in at Power-Up time.
@@ -419,18 +493,13 @@ export function powerUpFrom(rows: any[]): Pick<RosterSnap,
     return { puSlot: null, puSectionId: null, puTeacherName: null, puTeacherEmail: null, puCourse: null, puFlag: null, puCheck: false };
   }
   const { r, slot } = pu[0];
-  const course = String(r?.courseName ?? "").trim();
-  const number = String(r?.courseNumber ?? "").trim();
-  let flag: string | null = null;
-  if (/\bRSP\b/i.test(course)) flag = "RSP";
-  else if (/\bELD\b/i.test(course)) flag = "ELD";
-  else if (number.toUpperCase() === "7002A") flag = "7002A";
+  const { course, flag } = courseAndFlag(r);
   return {
     puSlot: slot,
     puSectionId: r?.sectionId ? String(r.sectionId) : null,
     puTeacherName: teacherName(r) || null,
     puTeacherEmail: r?.teacherEmail ? String(r.teacherEmail) : null,
-    puCourse: course || (number ? `Course ${number}` : null),
+    puCourse: course,
     puFlag: flag,
     puCheck: pu.length > 1,
   };
@@ -455,16 +524,26 @@ export function rosterSnapshotRows(psRosterRows: any[]): RosterSnap[] {
   for (const [sn, rows] of [...bySn.entries()].sort((a, b) => a[0].localeCompare(b[0]))) {
     const sectionBySlot: Record<string, string> = {};
     const teacherBySlot: Record<string, string> = {};
+    const classBySlot: Record<string, SlotClass> = {};
+    const sectionsIn: Record<string, Set<string>> = {};
     const slots = new Set<number>();
     const sorted = rows.slice().sort((a, b) => String(a?.sectionId ?? "").localeCompare(String(b?.sectionId ?? "")));
-    for (const r of sorted) {
+    sorted.forEach((r, i) => {
       const slot = slotOfExpression(r?.period ?? r?.sectionExpression);
-      if (slot === null) continue;
+      if (slot === null) return;
+      const k = String(slot);
       slots.add(slot);
-      if (!(String(slot) in sectionBySlot) && r?.sectionId) sectionBySlot[String(slot)] = String(r.sectionId);
+      if (!(k in sectionBySlot) && r?.sectionId) sectionBySlot[k] = String(r.sectionId);
       const t = teacherName(r);
-      if (!(String(slot) in teacherBySlot) && t) teacherBySlot[String(slot)] = t;
-    }
+      if (!(k in teacherBySlot) && t) teacherBySlot[k] = t;
+      // A row with no section id is a class of its own: it can never be
+      // folded into another and hide a second class in the slot.
+      (sectionsIn[k] ??= new Set()).add(r?.sectionId ? String(r.sectionId) : `row:${i}`);
+      if (!(k in classBySlot)) {
+        classBySlot[k] = { sectionId: r?.sectionId ? String(r.sectionId) : null, teacher: t || null, ...courseAndFlag(r), sections: 0 };
+      }
+    });
+    for (const k of Object.keys(classBySlot)) classBySlot[k].sections = sectionsIn[k].size;
     const grade = String(rows.find((r) => r?.gradeLevel)?.gradeLevel ?? "").trim();
     out.push({
       studentNumber: sn,
@@ -474,6 +553,7 @@ export function rosterSnapshotRows(psRosterRows: any[]): RosterSnap[] {
       enrolledSlots: [...slots].sort((a, b) => a - b),
       sectionBySlot,
       teacherBySlot,
+      classBySlot,
     });
   }
   return out;
@@ -2090,22 +2170,74 @@ export function carryVerdict(input: {
 }
 
 /**
- * The class right before lunch, for a pull slip addressed to it (the
- * per-division setting slipAddresseeByDivision = "before-lunch"; the owner's
- * open question for MS, 10/8). It is the student's own class slot that comes
- * last before Lunch & Power-Up in the day's order and met that day; with no
- * day's counts, the last one they are enrolled in. Null when there is none.
+ * WHICH CLASS PERIOD COMES RIGHT BEFORE LUNCH & POWER UP on day D (owner,
+ * 2026-10-09: an MS student is pulled from it a couple of minutes before
+ * lunch begins). Read off the seeded bell schedules (SEEDED_SCHEDULES), never
+ * guessed from the slot order alone, because it is a different period on
+ * different days: P3 (slot 4) on a regular Monday or Thursday, P4 (slot 5)
+ * on a regular Tuesday or Friday, and P4 on a Wednesday, a Minimum Day, a
+ * Stack Day and a six-period day the list detected (treated as Minimum).
+ *
+ *   1. A day marked in Settings > Bell Schedule with one of the seeded
+ *      schedules: that schedule, by name -- so a Monday marked with the
+ *      Tue/Fri schedule says P4.
+ *   2. Otherwise the seeded schedules of the day's type (the type the list
+ *      already uses for its times, scheduleKindFor): the one that runs on
+ *      D's weekday, or, if none does, the one answer they all agree on.
+ *   3. Otherwise null: the list says the class was not found and to check
+ *      PowerSchool, rather than guess (a regular-type day marked with a
+ *      schedule of the office's own, on a weekday no regular schedule runs).
  */
-export function beforeLunchClass(snap: RosterSnap | null | undefined, rowCounts: Record<string, number> | null | undefined):
-  { slot: number; label: string; teacher: string | null } | null {
-  if (!snap) return null;
-  const enrolled = new Set(snap.enrolledSlots ?? []);
-  const counts = rowCounts ?? null;
-  const before = SLOT_ORDER.filter((x) => CLASS_SLOTS.includes(x) && orderOf(x) < orderOf(8) && enrolled.has(x)
-    && (!counts || (counts[String(x)] ?? 0) >= MET_MIN_ROWS));
-  const slot = before.pop();
-  if (slot === undefined) return null;
-  return { slot, label: slotLabel(slot), teacher: snap.teacherBySlot?.[String(slot)] ?? null };
+export function beforeLunchSlot(input: { date: string; kind: ScheduleKind; marked?: Marked }):
+  { slot: number; period: string; schedule: string } | null {
+  const pick = (s: (typeof SEEDED_SCHEDULES)[number]) => {
+    const slot = s.lastPeriodBeforeLunch + 1;
+    return { slot, period: slotLabel(slot), schedule: s.name };
+  };
+  const named = input.marked?.scheduleId
+    ? SEEDED_SCHEDULES.find((s) => s.name === String(input.marked?.scheduleName ?? "").trim()) : undefined;
+  if (named) return pick(named);
+  const ofKind = SEEDED_SCHEDULES.filter((s) => s.kind === input.kind);
+  const today = ofKind.find((s) => s.weekdays.includes(weekdayOf(input.date)));
+  if (today) return pick(today);
+  const answers = [...new Set(ofKind.map((s) => s.lastPeriodBeforeLunch))];
+  return answers.length === 1 ? pick(ofKind[0]) : null;
+}
+
+/** What the list says when it cannot name the class before lunch. Never a blank, never a guess. */
+export const LUNCH_NOT_FOUND = "Class before lunch not found — check PowerSchool";
+
+/**
+ * AN MS STUDENT'S CLASS BEFORE LUNCH on day D, from the roster snapshot:
+ * the period, the teacher, the course and the RSP/ELD/7002A flag of their
+ * section in that slot. `problem` instead, never a guess, when:
+ *   - the day's period is not known, or the student has no section in it
+ *     (or no roster row at all): LUNCH_NOT_FOUND;
+ *   - the student has two sections in it: "Check PowerSchool: 2 classes in
+ *     P3", with neither teacher named.
+ * A snapshot taken before 10/9 knows only each slot's section and teacher
+ * (no course, and not whether there are two); the next opening read takes a
+ * whole one.
+ */
+export type LunchClass = {
+  slot: number | null; period: string | null; sectionId: string | null;
+  teacher: string | null; course: string | null; flag: string | null; problem: string | null;
+};
+export function lunchClassOf(snap: RosterSnap | null | undefined, at: { slot: number; period: string } | null): LunchClass {
+  const none = { sectionId: null, teacher: null, course: null, flag: null };
+  if (!at) return { slot: null, period: null, ...none, problem: LUNCH_NOT_FOUND };
+  const k = String(at.slot);
+  const base = { slot: at.slot, period: at.period };
+  if (!snap) return { ...base, ...none, problem: LUNCH_NOT_FOUND };
+  if (snap.classBySlot) {
+    const c = snap.classBySlot[k];
+    if (!c) return { ...base, ...none, problem: LUNCH_NOT_FOUND };
+    if (c.sections > 1) return { ...base, ...none, problem: `Check PowerSchool: ${c.sections} classes in ${at.period}` };
+    return { ...base, sectionId: c.sectionId, teacher: c.teacher, course: c.course, flag: c.flag, problem: null };
+  }
+  const sectionId = snap.sectionBySlot?.[k] ?? null;
+  if (!sectionId) return { ...base, ...none, problem: LUNCH_NOT_FOUND };
+  return { ...base, sectionId, teacher: snap.teacherBySlot?.[k] ?? null, course: null, flag: null, problem: null };
 }
 
 /**
@@ -2136,8 +2268,9 @@ export function roomWindow(input: {
 }
 
 /**
- * WHEN A DIVISION IS PULLED on day D, as an instant: MS at the block start,
- * HS at the swap minus the lead (pullTimes).
+ * WHEN A DIVISION IS PULLED on day D, as an instant: MS from the class
+ * before lunch, its lead before the block start; HS at the swap minus its
+ * lead (pullTimes). On the Los Angeles clock, whatever the season.
  */
 export function pullInstant(dateKey: string, kind: ScheduleKind, division: Division, settings: ReflectionSettings, tz: string): string | null {
   const p = pullTimes(kind, settings);

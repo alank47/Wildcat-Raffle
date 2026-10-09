@@ -322,8 +322,17 @@ function oracle(w, endMs) {
   const calendar = cfg.calendar;
   const dates = Object.keys(calendar).sort();
   const kindOf = (d) => calendar[d].kind ?? (weekday(d) === 3 ? "wed" : "regular");
-  // Owner, 10/8: MS pulled at the block start, HS at the midpoint less 5 minutes.
-  const pullAt = (d, div) => (div === "ms" ? LA(d, TIMES[kindOf(d)].pu) : LA(d, TIMES[kindOf(d)].swap) - 5 * MIN);
+  // Owner, 10/9: MS pulled from the class before lunch 2 minutes before the block starts; (10/8) HS at the
+  // midpoint less 5 minutes.
+  const pullAt = (d, div) => (div === "ms" ? LA(d, TIMES[kindOf(d)].pu) - 2 * MIN : LA(d, TIMES[kindOf(d)].swap) - 5 * MIN);
+  // Owner, 10/9: the class an MS student is pulled from is the one right before Lunch & Power Up on the day
+  // of the list -- P3 on a regular Monday or Thursday (the printed Mon/Thu schedule), P4 on a regular
+  // Tuesday or Friday and on every Wednesday, Minimum, Stack and six-period day. HS: none (Power-Up).
+  const lunchOf = (sn, d) => {
+    if (roster[sn].div !== "ms") return null;
+    const p = kindOf(d) === "regular" && [1, 4].includes(weekday(d)) ? 3 : 4;
+    return roster[sn].sections[p + 1] ? `P${p} Ms ${TEACHER[p + 1]}` : "Class before lunch not found \u2014 check PowerSchool";
+  };
 
   const modeEvents = L.mode.slice().sort((a, b) => a.at - b.at);
   const settingsAt = (ms) => {
@@ -708,7 +717,7 @@ function oracle(w, endMs) {
     for (const [sn, U] of Object.entries(rows)) {
       out[D][sn] = {
         div: U.div, mode: U.mode, kind: U.kind, lines: U.lines.slice().sort(), tags: U.tags.slice().sort(),
-        carryCount: U.carryCount, state: U.state,
+        carryCount: U.carryCount, state: U.state, lunch: lunchOf(sn, D),
       };
     }
   }
@@ -725,9 +734,11 @@ function actual(w) {
     if (!u.serveDay || u.state === "expired" || u.state === "before-start") continue;
     const day = (lists[u.serveDay] ??= {});
     if (day[u.studentNumber]) dup.push(`${u.serveDay} ${u.studentNumber}`);
+    const l = u.lunchSnapshot;
     day[u.studentNumber] = {
       div: u.division, mode: u.mode, kind: u.kind, lines: (u.lines ?? []).slice().sort(), tags: (u.tags ?? []).slice().sort(),
       carryCount: u.carryCount, state: u.state === "carried" ? "carried" : u.state,
+      lunch: !l ? (u.division === "ms" ? "none copied" : null) : l.problem ?? `${l.period} ${l.teacherName}`,
     };
   }
   const days = Object.fromEntries(w.store.rows("reflectionDays").map((d) => [d.date, d]));
@@ -755,7 +766,7 @@ function compare(name, w, endMs) {
     for (const sn of es.filter((x) => gs.includes(x))) {
       const a = e[sn], b = g[sn];
       const diffs = [];
-      for (const f of ["div", "mode", "kind", "lines", "tags", "carryCount", "state"]) if (J(a[f]) !== J(b[f])) diffs.push(`${f}: oracle ${J(a[f])} code ${J(b[f])}`);
+      for (const f of ["div", "mode", "kind", "lines", "tags", "carryCount", "state", "lunch"]) if (J(a[f]) !== J(b[f])) diffs.push(`${f}: oracle ${J(a[f])} code ${J(b[f])}`);
       check(`${name} ${lbl(D)} ${sn}: lines, tags, carry count and what became of it`, diffs.length === 0, diffs.join("; "));
     }
   }
@@ -1051,6 +1062,47 @@ try {
       at(THU, "12:30", () => w.mark(THU, "V3", 6, "T")),
     ]);
     compare("A2", w, Date.parse("2026-11-16T23:55:00Z"));
+  }
+
+  // ==========================================================================
+  realLog("\nP. MS IS PULLED FROM THE CLASS BEFORE LUNCH, 2 MINUTES BEFORE LUNCH & POWER UP (owner, 10/9): A RELEASE AT 11:41 ON A WEDNESDAY\n");
+  // ==========================================================================
+  // Wednesday's Lunch & Power Up starts at 11:42, so MS is pulled at 11:40.
+  // PA's mark is deleted and the deletion read at 11:41 -- after PA was
+  // pulled -- so when the mark is typed back and counts again, it rejoins
+  // Wednesday's detention (served once). PB's is read at 11:38, before the
+  // pull: PB was told not to come, and the tardy goes on Thursday's list,
+  // pulled there from Thursday's class before lunch (P3, a regular Thursday).
+  {
+    const WED = "2026-10-21", THU = "2026-10-22";
+    const w = await makeWorld({
+      calendar: { [WED]: school("wed", SLOTS.all), [THU]: school("regular", SLOTS.mon), "2026-10-23": school("regular", SLOTS.tue) },
+      students: { PA: "ms", PB: "ms", PH: "hs", PC: "ms" },
+      settings: { modeByDivision: { ms: "shadow", hs: "shadow" }, countFromDateByDivision: { ms: "2026-10-21", hs: "2026-10-21" } },
+    });
+    const at = (d, t, fn) => [LA(d, t), fn];
+    const ids = {};
+    const readNow = async () => { const r = await w.readNow(); if (!r.ok) throw new Error(J(r)); };
+    await drive(w, WED, "2026-10-23", [
+      ...calendarHooks(w),
+      at(WED, "08:10", () => { ids.pa = w.mark(WED, "PA", 2, "T"); ids.pb = w.mark(WED, "PB", 2, "T"); ids.ph = w.mark(WED, "PH", 2, "T"); }),
+      at(WED, "09:30", () => w.mark(WED, "PC", 3, "T")),
+      at(WED, "11:34", () => { w.unmark(ids.pb); w.unmark(ids.ph); }),
+      at(WED, "11:38", readNow),                                                  // PB and PH released before their pulls
+      at(WED, "11:39", () => w.unmark(ids.pa)),
+      at(WED, "11:41", readNow),                                                  // PA released after the MS pull at 11:40
+      at(WED, "13:10", () => {                                                    // typed back, as arrivals ...
+        for (const sn of ["PA", "PB", "PH"]) { w.mark(WED, sn, 2, "T"); ids[sn + "pt"] = w.mark(WED, sn, 1, "A"); }
+      }),
+      at(WED, "14:30", () => { for (const sn of ["PA", "PB", "PH"]) w.unmark(ids[sn + "pt"]); }),   // ... and counted again
+      at(THU, "08:10", () => w.mark(THU, "PC", 2, "T")),
+    ]);
+    const { got } = compare("P", w, Date.parse("2026-10-23T23:55:00Z"));
+    const wedPA = got.lists[WED]?.PA, thuPB = got.lists[THU]?.PB;
+    check("P: released at 11:41, after the 11:40 MS pull: PA's tardy rejoins Wednesday's detention, pulled from P4; never on Thursday's list",
+      wedPA?.state === "listed" && wedPA.lunch === "P4 Ms Park" && !got.lists[THU]?.PA, J([wedPA, got.lists[THU]?.PA]));
+    check("P: released at 11:38, before the pull: PB's tardy is on Thursday's list, pulled from Thursday's class before lunch (P3)",
+      got.lists[WED]?.PB?.state === "released" && thuPB?.lunch === "P3 Ms Ortiz", J([got.lists[WED]?.PB, thuPB]));
   }
 
   // ==========================================================================

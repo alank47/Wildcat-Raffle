@@ -219,7 +219,7 @@ try {
     J(row(shown, "M4")?.tags) === J(["From Wed 10/7 P5 (after Power-Up)"])
       && J(row(shown, "M9")?.lines) === J(["Wed 10/7: Tardy P6 (Ms Kim)", "Thu 10/8: Tardy P1 (Ms Lee)", "Thu 10/8: Tardy P3 (Ms Ortiz)"])
       && row(shown, "M7")?.absentMorning === true && row(shown, "R1")?.pu?.flag === "RSP" && row(shown, "R1")?.pu?.teacher === "Ms Ruiz"
-      && J(shown.sections.map((s) => [s.division, s.count, s.pullAt])) === J([["ms", 5, "12:31"], ["hs", 1, "12:57"]]),
+      && J(shown.sections.map((s) => [s.division, s.count, s.pullAt])) === J([["ms", 5, "12:29"], ["hs", 1, "12:57"]]),
     J(shown.sections.map((s) => s.rows)));
   check("...and never the arrival, today's P5, yesterday's P2 (yesterday's own list), the Excused Tardy, the held tardy or the two-mark period",
     !["M2", "M3", "M5", "M8", "H2", "H3"].some((sn) => numbers(shown).includes(sn)), J(numbers(shown)));
@@ -474,6 +474,85 @@ try {
       leak.fire("afterprint");
     } else {
       console.log("  SKIP  the 61309f3 screen against this server (git or that commit not available here)");
+    }
+  }
+
+  // ==========================================================================
+  console.log("\n10. MIDDLE SCHOOL FROM THE CLASS BEFORE LUNCH (owner, 2026-10-09), ON EVERY SCREEN\n");
+  // ==========================================================================
+  // Thursday is a regular Mon/Thu day: MS is pulled from P3 (Ms Ortiz), two
+  // minutes before Lunch & Power Up, never from Power-Up (Ms Ruiz).
+  {
+    const BROWSER = Object.entries(NAMES).map(([studentNumber, [firstName, lastName]]) => ({ studentNumber, firstName, lastName }));
+    const row = (res, sn) => res.sections.flatMap((s) => s.rows).find((r) => r.studentNumber === sn);
+    check("a TEST list built now carries each MS row's class before lunch, exactly as the real list made the same day: P3, Ms Ortiz",
+      row(shown, "M1")?.lunch?.period === "P3" && row(shown, "M1").lunch.teacher === "Ms Ortiz" && row(shown, "R1")?.lunch?.teacher === "Ms Ortiz"
+        && row(shown, "R1").pu.flag === "RSP" && row(shown, "H1")?.lunch === null
+        && J(row(shown, "M9")?.lunch) === J(row(realList, "M9")?.lunch) && doc[0].rows.every((r) => "lunch" in r),
+      J([row(shown, "M1")?.lunch, row(realList, "M9")?.lunch]));
+
+    // A TEST list stored before 10/9 has no class before lunch on its rows.
+    const legacy = await school({ modeByDivision: { ms: "shadow", hs: "shadow" }, countFromDateByDivision: { ms: FRI, hs: FRI } });
+    await legacy.store.db.insert("reflectionDemoLists", {
+      ...doc[0], _id: undefined, _creationTime: undefined,
+      rows: doc[0].rows.map(({ lunch, ...r }) => r),
+    });
+    clock.set(la(THU, "12:05"));
+    const legacyShown = await legacy.tryRun("admin", "reflectionList.listForDay", { day: THU, demoOk: true });
+    const lms = legacyShown.sections?.find((s) => s.division === "ms");
+    check("a TEST list stored before 10/9 still shows, with the Power-Up class it was built with, under a Power-Up heading",
+      legacyShown.demo === true && lms?.column === "Power-Up" && lms.pullFrom === "powerup" && lms.rows.length === 5
+        && lms.rows.every((r) => !("lunch" in r) && r.slipTo === null && r.pu?.teacher === "Ms Ruiz"), J(lms));
+    const legacyScreen = makeWorld(read("./script.js"), {
+      query: (args, path) => legacy.as("admin").run(path.replace(":", "."), args),
+      mutation: (args, path) => legacy.as("admin").run(path.replace(":", "."), args),
+    }, BROWSER);
+    await legacyScreen.app.loadReflectionList();
+    const legacyHtml = legacyScreen.fixed.rrList.innerHTML;
+    check("...and this build's screen draws it: Power-Up column, Ms Ruiz, no 'Class before lunch'",
+      /Power-Up/.test(legacyHtml) && /Ms Ruiz/.test(legacyHtml) && !/Class before lunch/.test(legacyHtml) && NAME_RE.test(legacyHtml),
+      legacyHtml.slice(0, 400));
+
+    // Thursday's REAL list (made by the shipped system in section 1), on this
+    // build's screen and on the screen open tabs run today (339e1be, stamp
+    // 20261008e), both against the shipped server.
+    const server = {
+      query: (args, path) => real.as("admin").run(path.replace(":", "."), args),
+      mutation: (args, path) => real.as("admin").run(path.replace(":", "."), args),
+    };
+    clock.set(la(THU, "12:05"));
+    const now = makeWorld(read("./script.js"), server, BROWSER);
+    await now.app.loadReflectionList();
+    const html = now.fixed.rrList.innerHTML;
+    check("this build's screen: MS column 'Class before lunch', 'P3 · Ms Ortiz', and the pull time from the class before lunch",
+      /Class before lunch/.test(html) && /P3 · Ms Ortiz/.test(html) && /pull at 12:29 PM from the class before lunch/.test(html)
+        && /pull at 12:57 PM, 5 minutes before the end of Power-Up/.test(html), html.slice(0, 600));
+    await now.app.printReflectionSlips();
+    const slips = now.prints[0]?.sheet ?? "";
+    const outside = [...slips.matchAll(/<div class="rr-slip-out">([^<]*)/g)].map((m) => m[1].trim());
+    check("pull slips: MS grouped under the class-before-lunch teacher (Ms Ortiz), HS under the Power-Up teacher (Ms Cruz)",
+      J(outside) === J(["Ms Ortiz", "Ms Cruz"]) && /Middle school \(grades 6-8\) — pull at 12:29 PM from the class before lunch/.test(slips)
+        && !/Ms Ruiz/.test(slips), J(outside));
+
+    let oldSrc = null;
+    try {
+      oldSrc = execFileSync("git", ["show", "339e1be:script.js"],
+        { cwd: fileURLToPath(new URL("./", import.meta.url)), stdio: ["ignore", "pipe", "ignore"], maxBuffer: 256 << 20 }).toString();
+    } catch { /* no git here */ }
+    if (oldSrc) {
+      const old = makeWorld(oldSrc, server, BROWSER);
+      await old.app.loadReflectionList();
+      const oldHtml = old.fixed.rrList.innerHTML;
+      check("an open tab on the 339e1be screen (stamp 20261008e) still draws the list against this server: every student, names, both sections",
+        old.app.data?.view === "made" && NAME_RE.test(oldHtml) && /Middle school/.test(oldHtml) && /High school/.test(oldHtml)
+          && /pull at about 12:29/.test(oldHtml) && !old.alerts.length, J({ why: old.app.why, alerts: old.alerts }));
+      await old.app.printReflectionSlips();
+      const oldSlips = old.prints[0]?.sheet ?? "";
+      const oldOut = [...oldSlips.matchAll(/<div class="rr-slip-out">([^<]*)/g)].map((m) => m[1].trim());
+      check("...and its pull slips send the runner to the class before lunch (Ms Ortiz, P3), never to Power-Up (Ms Ruiz)",
+        J(oldOut) === J(["Ms Ortiz", "Ms Cruz"]) && /rr-slip-extra">P3</.test(oldSlips) && !/Ms Ruiz/.test(oldSlips), J(oldOut));
+    } else {
+      console.log("  SKIP  the 339e1be screen against this server (git or that commit not available here)");
     }
   }
 } finally {

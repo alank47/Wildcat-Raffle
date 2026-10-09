@@ -41775,11 +41775,34 @@
             { label: 'Student', type: 'text', text: (r, st) => rrSortName(st) },
             { label: 'Student #', type: 'num', text: r => r.studentNumber },
             { label: 'Grade', type: 'num', text: r => r.grade },
-            { label: 'Power-Up', type: 'text', text: r => (r.pu && r.pu.teacher) || '' },
+            { label: 'Power-Up', type: 'text', text: r => rrPullTeacher(r) },
             { label: 'Violations', type: 'text', text: r => (r.lines || []).join(' ') },
             { label: 'Tag', type: 'text', text: r => (r.tags || []).join(' ') },
             { label: 'Absent this morning: check if arrived', type: 'text', text: r => r.absentMorning ? 'Absent this morning' : '' }
         ];
+
+        /**
+         * One section's columns. WHERE A STUDENT IS PULLED FROM is the
+         * server's word for the section (owner, 2026-10-09): middle school
+         * from the CLASS BEFORE LUNCH, a couple of minutes before lunch
+         * begins; high school from Power-Up. A server from before says
+         * nothing, and the column stays Power-Up.
+         */
+        function rrCols(section) {
+            const column = section && section.column;
+            return column ? RR_COLS.map((c, i) => (i === 3 ? Object.assign({}, c, { label: column }) : c)) : RR_COLS;
+        }
+
+        /** The teacher a row is pulled from: the class before lunch (MS), or Power-Up. */
+        function rrPullTeacher(r) {
+            if (r && r.lunch) return r.lunch.teacher || '';
+            return (r && r.pu && r.pu.teacher) || '';
+        }
+
+        /** "pull at 12:29 PM from the class before lunch", or what a server from before says. */
+        function rrPullText(section) {
+            return section.pullWords || ('pull at about ' + section.pullAt);
+        }
 
         /** An instant as the school's clock reads it: "11:46 AM". */
         function rrClock(iso) {
@@ -41820,17 +41843,23 @@
         function rrTableId(division) { return division === 'hs' ? 'rrHs' : 'rrMs'; }
 
         /**
-         * One section's rows in the order the screen shows them: Power-Up
-         * teacher, then student -- or the column a heading was pressed on. The
-         * printed sheet calls this too, so paper and screen agree.
+         * One section's rows in the order the screen shows them -- or the
+         * column a heading was pressed on. Middle school by the teacher of the
+         * class before lunch, then grade, then last name (owner, 10/9): the
+         * order a runner walks the rooms. High school by Power-Up teacher, then
+         * student. The printed sheet and the slips call this too, so paper and
+         * screen agree.
          */
         function rrRowsInOrder(section, byNumber) {
             const rows = (section && section.rows ? section.rows : []).slice();
-            rows.sort((a, b) => rrCompareWords((a.pu && a.pu.teacher) || '', (b.pu && b.pu.teacher) || '')
+            const lunch = section && section.pullFrom === 'before-lunch';
+            const cols = rrCols(section);
+            rows.sort((a, b) => rrCompareWords(rrPullTeacher(a), rrPullTeacher(b))
+                || (lunch ? rrCompareWords(a.grade || '', b.grade || '') : 0)
                 || rrCompareWords(rrSortName(byNumber[a.studentNumber]), rrSortName(byNumber[b.studentNumber]))
                 || String(a.studentNumber).localeCompare(String(b.studentNumber), undefined, { numeric: true }));
             return wcSortItems(rrTableId(section.division), rows,
-                (r, col) => (RR_COLS[col] ? RR_COLS[col].text(r, byNumber[r.studentNumber]) : ''));
+                (r, col) => (cols[col] ? cols[col].text(r, byNumber[r.studentNumber]) : ''));
         }
 
         /** What listForDay is asked for, in the view on screen. */
@@ -41944,6 +41973,33 @@
                 bits.push('<span class="print-note">&mdash;</span>');
             }
             return bits.join(' ');
+        }
+
+        /**
+         * MIDDLE SCHOOL: THE CLASS BEFORE LUNCH (owner, 2026-10-09), where the
+         * student is pulled from a couple of minutes before lunch begins: the
+         * period and teacher, the course, and the flag the runner needs -- or,
+         * when the server could not name it, its words ("Class before lunch not
+         * found — check PowerSchool"), never a blank and never a guess.
+         */
+        function rrLunchHtml(r) {
+            const c = r.lunch;
+            if (c.problem) {
+                const period = c.period && c.problem.indexOf(c.period) < 0 ? escapeHtml(c.period) + ' ' : '';
+                return period + '<div class="rr-check">' + escapeHtml(c.problem) + '</div>'
+                    + (r.notOnRoster ? '<div class="print-note">Not on current PowerSchool roster</div>' : '');
+            }
+            const bits = [escapeHtml((c.period ? c.period + ' · ' : '') + (c.teacher || 'no teacher on record'))];
+            if (c.course) bits.push('<div class="print-note">' + escapeHtml(c.course) + '</div>');
+            // RSP, ELD and 7002A students are pulled like everyone else; the
+            // flag sends the runner to the right room.
+            if (c.flag) bits.push('<span class="rr-flag">' + escapeHtml(c.flag) + ': pull from this class</span>');
+            return bits.join(' ');
+        }
+
+        /** Where the student is pulled from: the class before lunch (MS), else the Power-Up class. */
+        function rrPullFromHtml(r) {
+            return r.lunch ? rrLunchHtml(r) : rrPowerUpHtml(r);
         }
 
         /**
@@ -42100,7 +42156,7 @@
                     + '<h4 class="rr-section-head">' + escapeHtml(section.label)
                     + ' <span class="wc-chip">' + section.count + cap + ' student' + (section.count === 1 && !cap ? '' : 's') + '</span>'
                     + (section.mode === 'off' ? ' <span class="print-note">switched off</span>'
-                        : ' <span class="print-note">pull at about ' + escapeHtml(section.pullAt) + '</span>')
+                        : ' <span class="print-note">' + escapeHtml(rrPullText(section)) + '</span>')
                     + (res.demo === true ? ' <span class="rr-test-chip">TEST: do not assign</span>'
                         : section.mode === 'shadow' ? ' <span class="rr-pilot">PILOT: do not assign</span>' : '')
                     // The count against the room's capacity for this sitting.
@@ -42127,14 +42183,14 @@
                 };
                 html += '<div class="wu-scroll-x"><table class="student-table wc-att-table rr-table"><thead><tr>'
                     + (room ? '<th>Not here</th>' : '')
-                    + RR_COLS.map((col, i) => wcSortTh(tableId, i, escapeHtml(col.label), { type: col.type })).join('')
+                    + rrCols(section).map((col, i) => wcSortTh(tableId, i, escapeHtml(col.label), { type: col.type })).join('')
                     + '</tr></thead><tbody>'
                     + rows.map(r => '<tr' + (r.released ? ' class="rr-released"' : '') + '>'
                         + notHereCell(r)
                         + '<td><b>' + escapeHtml(rrName(byNumber[r.studentNumber], r.studentNumber)) + '</b></td>'
                         + '<td>' + escapeHtml(r.studentNumber) + '</td>'
                         + '<td>' + escapeHtml(r.grade || '') + '</td>'
-                        + '<td>' + rrPowerUpHtml(r) + '</td>'
+                        + '<td>' + rrPullFromHtml(r) + '</td>'
                         + '<td>' + rrViolationsHtml(r) + '</td>'
                         + '<td>' + rrTagHtml(r) + '</td>'
                         + '<td>' + (r.absentMorning ? 'Absent this morning: check if arrived' : '') + '</td>'
@@ -42208,8 +42264,8 @@
             const head = 'As of ' + asOf + ' · ' + (test ? 'TEST ONLY' : final ? 'Final' : 'NOT FINAL') + ' · ' + total + ' student' + (total === 1 ? '' : 's')
                 + ' (' + counts.map(c => c.s.division.toUpperCase() + ' ' + c.rows.length + (c.s.capacity ? ' of ' + c.s.capacity : '')).join(', ') + ')';
             const foot = 'Printed by ' + (o.printedBy || 'staff') + ' at ' + rrClock(o.printedAt || res.asOf) + ' on ' + res.dayLabel;
-            const cols = ['Served'].concat(RR_COLS.map(c => c.label));
             const pages = counts.map(c => {
+                const cols = ['Served'].concat(rrCols(c.s).map(x => x.label));
                 const marks = [];
                 if (test) marks.push(RR_TEST_MARK);
                 if (!test && c.s.mode === 'shadow') marks.push('PILOT: do not assign');
@@ -42225,7 +42281,7 @@
                         + '<td>' + escapeHtml(rrName(byNumber[r.studentNumber], r.studentNumber)) + '</td>'
                         + '<td>' + escapeHtml(r.studentNumber) + '</td>'
                         + '<td>' + escapeHtml(r.grade || '') + '</td>'
-                        + '<td>' + rrPowerUpHtml(r) + '</td>'
+                        + '<td>' + rrPullFromHtml(r) + '</td>'
                         + '<td>' + rrViolationsHtml(r) + '</td>'
                         + '<td>' + rrTagHtml(r) + '</td>'
                         + '<td>' + (r.absentMorning ? 'Absent this morning: check if arrived' : '') + '</td>'
@@ -42235,7 +42291,7 @@
                     + (marks.length ? ' data-rr-mark="' + escapeHtml(marks.join(' · ')) + '"' : '') + '>'
                     + '<h2>' + escapeHtml('Reflection Room — ' + c.s.label + ' — ' + res.dayLabel) + '</h2>'
                     + (test ? '<p class="rr-test-banner" data-rr-test>' + escapeHtml(rrDemoBannerText(res)) + '</p>' : '')
-                    + '<p class="print-sub">' + escapeHtml(head) + ' · pull at about ' + escapeHtml(c.s.pullAt) + '</p>'
+                    + '<p class="print-sub">' + escapeHtml(head + ' · ' + rrPullText(c.s)) + '</p>'
                     + '<table class="print-table"><thead>' + markRow + '<tr>'
                     + cols.map(l => '<th>' + escapeHtml(l) + '</th>').join('') + '</tr></thead>'
                     + '<tbody>' + body + '</tbody>'
@@ -42415,13 +42471,25 @@
         // ---------------------------------------------------------------
 
         /**
-         * Who a slip goes to: the Power-Up class's teacher (the default), or
-         * the class right before lunch where the division's slips are set that
-         * way. An RSP, Designated ELD or 7002A class is named with its flag, so
-         * the runner finds the right room: those students are pulled like
-         * everyone else (owner, 10/8).
+         * Who a slip goes to: in middle school the teacher of the CLASS BEFORE
+         * LUNCH, where the student is pulled from (owner, 10/9), with its
+         * period and course; one the server could not name goes out under its
+         * words ("check PowerSchool"), never to a guessed room. In high school
+         * the Power-Up teacher. An RSP, Designated ELD or 7002A class is named
+         * with its flag, so the runner finds the right room: those students are
+         * pulled like everyone else (owner, 10/8).
          */
         function rrSlipAddressee(r) {
+            if (r.lunch) {
+                const c = r.lunch;
+                if (c.problem) return { name: c.problem, extra: c.period && c.problem.indexOf(c.period) < 0 ? c.period : '' };
+                // One slip per teacher and period (a class of two courses is
+                // one room); the course only where it is flagged.
+                return {
+                    name: c.teacher || ('the ' + (c.period || 'class before lunch') + ' teacher'),
+                    extra: [c.period, c.flag ? (c.course || '') + ' (' + c.flag + ')' : ''].filter(Boolean).join(' ')
+                };
+            }
             if (r.slipTo && (r.slipTo.teacher || r.slipTo.label)) {
                 return { name: r.slipTo.teacher || ('the ' + r.slipTo.label + ' teacher'), extra: r.slipTo.label || '' };
             }
@@ -42479,7 +42547,7 @@
                         + '</tbody></table></div>').join('');
                 const mark = sec.mode === 'shadow' ? '<p class="rr-slip-mark">PILOT: do not pull</p>' : '';
                 return '<section class="print-page rr-slips-page" data-rr-division="' + escapeHtml(sec.division) + '">'
-                    + '<h2>' + escapeHtml(sec.label + ' — pull at about ' + sec.pullAt + ' — ' + res.dayLabel) + '</h2>' + mark
+                    + '<h2>' + escapeHtml(sec.label + ' — ' + rrPullText(sec) + ' — ' + res.dayLabel) + '</h2>' + mark
                     + (slips || '<p class="print-empty">Nobody to pull.</p>') + '</section>';
             });
             return toolbar + '<div class="print-pages">' + pages.join('') + '</div>';
@@ -42498,7 +42566,10 @@
             const ch = res.myPrintChanges || { added: [], release: [], cleared: [], voided: [] };
             const added = new Set(ch.added || []);
             const rows = (res.sections || []).flatMap(sec => rrRowsInOrder(sec, byNumber).filter(r => !r.released && added.has(String(r.studentNumber))));
-            const cols = ['Served'].concat(RR_COLS.map(c => c.label));
+            // One table for both divisions, so the column says where each is
+            // pulled from: MS from the class before lunch, HS from Power-Up.
+            const lunchCol = (res.sections || []).some(sec => sec.pullFrom === 'before-lunch');
+            const cols = ['Served'].concat(RR_COLS.map((c, i) => (i === 3 && lunchCol ? 'Pull from (MS: class before lunch; HS: Power-Up)' : c.label)));
             const marks = [];
             // One page for both divisions, so the pilot mark NAMES the
             // division in shadow: "PILOT (HS): do not assign".
@@ -42521,7 +42592,7 @@
                         + '<td>' + escapeHtml(name(r.studentNumber)) + '</td>'
                         + '<td>' + escapeHtml(r.studentNumber) + '</td>'
                         + '<td>' + escapeHtml(r.grade || '') + '</td>'
-                        + '<td>' + rrPowerUpHtml(r) + '</td>'
+                        + '<td>' + rrPullFromHtml(r) + '</td>'
                         + '<td>' + rrViolationsHtml(r) + '</td>'
                         + '<td>' + rrTagHtml(r) + '</td>'
                         + '<td>' + (r.absentMorning ? 'Absent this morning: check if arrived' : '') + '</td></tr>').join('')

@@ -39,10 +39,10 @@
  * rows do; the browser adds names from the records it already holds.
  */
 import {
-  absentThisMorning, admitState, claimAtFreeze, divisionOfGrade, hasEvidence, initialTardyState, PERIOD_ID_BASE, reconcileDate,
-  scheduleKindFor, servesSameDay, summarizeDay, tardyCandidates, weekdayOf,
-  type AttRow, type CodeBook, type Division, type Marked, type ReflectionSettings, type RosterSnap, type ScheduleKind,
-  type TardyItem,
+  absentThisMorning, admitState, beforeLunchSlot, claimAtFreeze, divisionOfGrade, hasEvidence, initialTardyState, lunchClassOf,
+  PERIOD_ID_BASE, reconcileDate, scheduleKindFor, servesSameDay, summarizeDay, tardyCandidates, weekdayOf,
+  type AttRow, type CodeBook, type Division, type LunchClass, type Marked, type ReflectionSettings, type RosterSnap,
+  type ScheduleKind, type TardyItem,
 } from "./reflectionRules";
 
 const addDays = (iso: string, n: number) => new Date(Date.parse(iso + "T00:00:00Z") + n * 86400000).toISOString().slice(0, 10);
@@ -73,12 +73,14 @@ export type DemoRow = {
   after: null;
   notHere: boolean;
   slipTo: null;
+  /** MS: the class before lunch on the day, as a made list copies it (owner, 10/9). Null on an HS row. */
+  lunch: LunchClass | null;
 };
 
 /** The only keys a stored TEST row may have: numbers, grades and the list's own words, never a name. */
 export const DEMO_ROW_KEYS = [
   "key", "unitId", "studentNumber", "grade", "division", "mode", "state", "pu", "notOnRoster", "lines", "tags", "owes",
-  "absentMorning", "released", "cleared", "voided", "after", "notHere", "slipTo",
+  "absentMorning", "released", "cleared", "voided", "after", "notHere", "slipTo", "lunch",
 ];
 
 /**
@@ -213,6 +215,10 @@ export function demoListRows(input: {
     else counts.previousDayTardies++;
   }
 
+  // The day's type is worked out as the reader works it out, and with it the
+  // class period right before Lunch & Power-Up, where MS is pulled from.
+  const kind = scheduleKindFor({ date: day, marked: input.marked, scheduleKinds: input.settings.scheduleKinds, rowCounts: daySummary.rowCounts }).kind;
+  const lunchSlot = beforeLunchSlot({ date: day, kind, marked: input.marked });
   const rows: DemoRow[] = claim.rows.map((r) => {
     const snap = roster[r.studentNumber] ?? null;
     if (r.division === "ms") counts.ms++;
@@ -237,9 +243,9 @@ export function demoListRows(input: {
       after: null,
       notHere: false,
       slipTo: null,
+      lunch: r.division === "ms" ? lunchClassOf(snap, lunchSlot) : null,
     };
   });
   counts.total = rows.length;
-  const kind = scheduleKindFor({ date: day, marked: input.marked, scheduleKinds: input.settings.scheduleKinds, rowCounts: daySummary.rowCounts }).kind;
   return { rows, counts, kind };
 }

@@ -632,22 +632,27 @@ try {
     const d = R.reflectionSettingsOrDefault({});
     const hhmm = (m) => `${Math.floor(m / 60)}:${String(m % 60).padStart(2, "0")}`;
     const pt = (k, st = d) => { const p = R.pullTimes(k, st); return [p.msMinute, p.swapMinute, p.hsMinute].map(hhmm).join(" "); };
-    check("MS is pulled at the block start; the swap defaults to the block's midpoint; HS 5 minutes before it (owner, 10/8)",
-      pt("regular") === "12:31 13:02 12:57" && pt("wed") === "11:42 12:13 12:08" && pt("minimum") === "11:42 12:13 12:08"
-      && pt("stack") === "12:22 12:53 12:48", ["regular", "wed", "stack"].map((k) => pt(k)).join(" | "));
-    check("slips go to the Power-Up teacher in both divisions until someone says otherwise",
-      J(d.slipAddresseeByDivision) === J({ ms: "powerup", hs: "powerup" }) && d.hsPullLeadMinutes === 5);
+    check("MS is pulled 2 minutes before the block starts (owner, 10/9); the swap defaults to the block's midpoint; HS 5 minutes before it (owner, 10/8)",
+      pt("regular") === "12:29 13:02 12:57" && pt("wed") === "11:40 12:13 12:08" && pt("minimum") === "11:40 12:13 12:08"
+      && pt("stack") === "12:20 12:53 12:48" && d.msPullLeadMinutes === 2 && d.hsPullLeadMinutes === 5,
+      ["regular", "wed", "stack"].map((k) => pt(k)).join(" | "));
+    check("the MS lead never reaches the latest time a list may be made: one at or past the margin falls back to 2",
+      R.reflectionSettingsOrDefault({ msPullLeadMinutes: 10 }).msPullLeadMinutes === 2
+      && R.reflectionSettingsOrDefault({ msPullLeadMinutes: 9 }).msPullLeadMinutes === 9
+      && R.reflectionSettingsOrDefault({ msPullLeadMinutes: 5, lastFreezeMarginMin: 5 }).msPullLeadMinutes === 2
+      && R.reflectionSettingsOrDefault({ msPullLeadMinutes: -1 }).msPullLeadMinutes === 2
+      && !("slipAddresseeByDivision" in d));
 
     const w = await world({ students: {}, settings: { modeByDivision: { ms: "shadow", hs: "off" }, countFromDateByDivision: { ms: "2026-10-12", hs: null } } });
     clock.set(la("2026-10-13", "18:00"));
     const saved = await w.rt.run("reflection.saveSettings", {
-      swapMinuteByKind: { regular: 790, stack: 850 }, hsPullLeadMinutes: 7, slipAddresseeByDivision: { ms: "before-lunch" },
+      swapMinuteByKind: { regular: 790, stack: 850 }, hsPullLeadMinutes: 7, msPullLeadMinutes: 3,
       closeMinuteByKind: { regular: 707 }, holdFirstClassOnPtNoRow: true,
     });
     const st = saved.settings;
-    check("saveSettings takes a swap minute inside the block, the HS lead, and the MS slip addressee",
-      st.swapMinuteByKind.regular === 790 && st.hsPullLeadMinutes === 7 && st.slipAddresseeByDivision.ms === "before-lunch"
-      && st.slipAddresseeByDivision.hs === "powerup" && st.holdFirstClassOnPtNoRow === true && pt("regular", st) === "12:31 13:10 13:03", J(st));
+    check("saveSettings takes a swap minute inside the block, the HS lead, and the MS lead",
+      st.swapMinuteByKind.regular === 790 && st.hsPullLeadMinutes === 7 && st.msPullLeadMinutes === 3
+      && st.holdFirstClassOnPtNoRow === true && pt("regular", st) === "12:28 13:10 13:03", J(st));
     check("...refuses what does not make sense, and says so: a swap outside the block, a close that is not a 5-minute step",
       st.swapMinuteByKind.stack === null && st.closeMinuteByKind.regular === 705
       && saved.refused.includes("swapMinuteByKind") && saved.refused.includes("closeMinuteByKind") && !saved.refused.includes("hsPullLeadMinutes"),
@@ -737,7 +742,7 @@ try {
     check("before the close, today is the list SO FAR: not final, never made",
       early.view === "so-far" && early.frozen === false && early.isToday && early.banners.some((b) => b.id === "not-final" && /^NOT FINAL: do not pull/.test(b.text)), J(early.banners));
     check("MS and HS sections, MS first (MS serves in the first half of lunch), each with its own count and pull time",
-      J(early.sections.map((s) => [s.division, s.count, s.pullAt])) === J([["ms", 5, "12:31"], ["hs", 1, "12:57"]]), J(early.sections.map((s) => [s.division, s.count, s.pullAt])));
+      J(early.sections.map((s) => [s.division, s.count, s.pullAt])) === J([["ms", 5, "12:29"], ["hs", 1, "12:57"]]), J(early.sections.map((s) => [s.division, s.count, s.pullAt])));
     check("...exactly the students the freeze would claim: never S6 (P6 today)",
       J(sns(early, "ms")) === J(["A", "C", "U9", "W", "Z"]) && J(sns(early, "hs")) === J(["X"]), J([sns(early, "ms"), sns(early, "hs")]));
     const rowA = rowsOf(early, "ms").find((r) => r.studentNumber === "A");
@@ -839,6 +844,81 @@ try {
     check("a past day with no list made says so", past.view === "not-made" && past.banners.some((b) => b.id === "not-made"), J(past.view));
     const future = await list("admin", "2026-10-20");
     check("only today, the next school day and past days can be shown", future.ok === false, J(future));
+  }
+
+  // ==========================================================================
+  console.log("\n9b. MIDDLE SCHOOL IS PULLED FROM THE CLASS BEFORE LUNCH (owner, 2026-10-09)\n");
+  // ==========================================================================
+  // MS eats first, so an MS student is pulled a couple of minutes before
+  // lunch begins from the class they are in right before Lunch & Power Up:
+  // P3 on a regular Monday, P4 on a regular Tuesday. The shipped reader makes
+  // Monday's list; the shipped listForDay shows it, and Tuesday so far.
+  {
+    const MON = "2026-10-12", TUE = "2026-10-13";
+    const ms = (grade, extra = {}) => ({ grade, sections: { ...MS, ...extra } });
+    const noP3 = { ...MS };
+    delete noP3[4];
+    const w = await world({
+      students: {
+        B1: ms(8), B2: ms(6), B3: ms(7), B4: { grade: 7, sections: noP3 }, B5: ms(7, { 4: "RSP-3" }), H9: { grade: 10, sections: HS },
+      },
+      days: [{ date: MON, slots: MON_SLOTS }],
+      settings: { modeByDivision: { ms: "shadow", hs: "shadow" }, countFromDateByDivision: { ms: MON, hs: MON } },
+    });
+    // B3 is in two P3 sections; B5's P3 is RSP, with its own teacher.
+    await w.store.db.insert("psRoster", { studentNumber: "B3", firstName: "F", lastName: "L", gradeLevel: "7", sectionId: "P3-X",
+      period: "4(A-E)", courseName: "Class", teacherFirstName: "Ms", teacherLastName: "Second", syncedAt: "2026-10-01T13:00:05.000Z" });
+    const rsp = w.store.rows("psRoster").find((r) => r.studentNumber === "B5" && r.sectionId === "RSP-3");
+    await w.store.db.patch(rsp._id, { courseName: "RSP A", teacherLastName: "Mendez" });
+    await w.store.db.insert("teachers", { name: "Staff", ticketsAwarded: 0, email: "admin@school.test", role: "admin" });
+    const list = (day) => { w.rt.signIn({ issuer: STAFF_ISSUER, email: "admin@school.test" }); return w.rt.run("reflectionList.listForDay", { day }); };
+    for (const sn of ["B1", "B2", "B3", "B4", "B5", "H9"]) w.mark(MON, sn, 2, "T");   // late to P1
+    w.mark(MON, "B1", 6, "T");                                                       // P5: Tuesday's list
+    await drive(w, la(MON, "07:30"), la(MON, "11:45"));
+    clock.set(la(MON, "11:50"));
+    const made = await list("today");
+    const msRows = made.sections.find((s) => s.division === "ms").rows;
+    const by = Object.fromEntries(made.sections.flatMap((s) => s.rows).map((r) => [r.studentNumber, r]));
+    check("Monday's list is made at 11:45, and every MS row names its class before lunch: P3, its teacher and course",
+      made.view === "made" && by.B1?.lunch?.period === "P3" && by.B1.lunch.teacher === "Ms Ortiz" && by.B1.lunch.course === "Class"
+        && by.B1.lunch.problem === null && by.B1.pu?.teacher === "Ms Ruiz", J(by.B1));
+    check("...copied onto the detention when the list was made (lunchSnapshot), as the Power-Up class is",
+      w.units("B1").find((u) => u.serveDay === MON)?.lunchSnapshot?.teacherName === "Ms Ortiz"
+        && w.units("H9").find((u) => u.serveDay === MON)?.lunchSnapshot === undefined, J(w.units("B1")));
+    check("HS unchanged: pulled from Power-Up, no class before lunch, slip to the Power-Up teacher",
+      by.H9?.lunch === null && by.H9.slipTo === null && by.H9.pu?.teacher === "Ms Cruz", J(by.H9));
+    check("two P3 classes: 'Check PowerSchool', neither teacher; no P3 class: 'not found -- check PowerSchool'; RSP flagged",
+      by.B3?.lunch?.problem === "Check PowerSchool: 2 classes in P3" && by.B3.lunch.teacher === null
+        && by.B4?.lunch?.problem === R.LUNCH_NOT_FOUND && by.B5?.lunch?.flag === "RSP" && by.B5.lunch.teacher === "Ms Mendez",
+      J([by.B3?.lunch, by.B4?.lunch, by.B5?.lunch]));
+    check("a screen from before 10/9 slips each MS row to the class before lunch (slipTo), or to the server's words, never a guess",
+      J(by.B1.slipTo) === J({ teacher: "Ms Ortiz", label: "P3" }) && J(by.B4.slipTo) === J({ teacher: R.LUNCH_NOT_FOUND, label: "" }), J([by.B1.slipTo, by.B4.slipTo]));
+    check("MS sorted by the class-before-lunch teacher, then grade (the screen adds last name); the unnamed last",
+      J(msRows.map((r) => r.studentNumber)) === J(["B5", "B2", "B1", "B3", "B4"]), J(msRows.map((r) => r.studentNumber)));
+    check("the sections say when and from where: MS 'pull at 12:29 PM from the class before lunch', HS 'pull at 12:57 PM, 5 minutes before the end of Power-Up'",
+      J(made.sections.map((s) => [s.division, s.pullAt, s.pullWords, s.column, s.pullFrom])) === J([
+        ["ms", "12:29", "pull at 12:29 PM from the class before lunch", "Class before lunch", "before-lunch"],
+        ["hs", "12:57", "pull at 12:57 PM, 5 minutes before the end of Power-Up", "Power-Up", "powerup"]]),
+      J(made.sections.map((s) => [s.division, s.pullAt, s.pullWords, s.column])));
+    const next = await list("next");
+    const nB1 = next.sections.flatMap((s) => s.rows).find((r) => r.studentNumber === "B1");
+    check("Tomorrow so far uses tomorrow's schedule: Tuesday's class before lunch is P4",
+      next.date === TUE && next.view === "so-far" && nB1?.lunch?.period === "P4" && nB1.lunch.teacher === "Ms Park", J(nB1));
+    // The office marks Tuesday with the Mon/Thu schedule: P3 again.
+    const sid = await w.store.db.insert("bellSchedules", { name: "Regular · Mon/Thu", periods: [], weekdays: [1, 4], active: true,
+      createdAt: "2026-08-17T00:00:00Z", updatedAt: "2026-08-17T00:00:00Z" });
+    await w.store.db.insert("bellScheduleDays", { date: TUE, scheduleId: sid, noSchool: false, setAt: "2026-10-12T19:00:00Z" });
+    const marked = (await list("next")).sections.flatMap((s) => s.rows).find((r) => r.studentNumber === "B1");
+    check("...and a Tuesday marked with the Mon/Thu schedule in Settings > Bell Schedule is pulled from P3",
+      marked?.lunch?.period === "P3" && marked.lunch.teacher === "Ms Ortiz", J(marked?.lunch));
+    // The roster changes after the list was made: the list made keeps its copy.
+    const snapB1 = w.store.rows("reflectionRoster").find((r) => r.studentNumber === "B1");
+    await w.store.db.patch(snapB1._id, { classBySlot: { ...snapB1.classBySlot, 4: { ...snapB1.classBySlot[4], teacher: "Ms Changed" } } });
+    const unitB2 = w.units("B2").find((u) => u.serveDay === MON);
+    await w.store.db.patch(unitB2._id, { lunchSnapshot: undefined });
+    const again = Object.fromEntries((await list(MON)).sections.flatMap((s) => s.rows).map((r) => [r.studentNumber, r]));
+    check("a list already made keeps the class it was made with; one made before 10/9 (no copy) is shown from the roster snapshot",
+      again.B1?.lunch?.teacher === "Ms Ortiz" && again.B2?.lunch?.period === "P3" && again.B2.lunch.teacher === "Ms Ortiz", J([again.B1?.lunch, again.B2?.lunch]));
   }
 
   // ==========================================================================

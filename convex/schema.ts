@@ -1874,6 +1874,18 @@ export default defineSchema({
       flag: v.optional(v.string()),
       check: v.boolean(),
     })),
+    // MS only (owner, 2026-10-09): the class before lunch on the serve day,
+    // where the student is pulled from, copied when the list is made like
+    // the Power-Up class. `problem` when it could not be named (never a guess).
+    lunchSnapshot: v.optional(v.object({
+      slot: v.optional(v.number()),
+      period: v.optional(v.string()),
+      sectionId: v.optional(v.string()),
+      teacherName: v.optional(v.string()),
+      course: v.optional(v.string()),
+      flag: v.optional(v.string()),
+      problem: v.optional(v.string()),
+    })),
     absentMorning: v.optional(v.boolean()),
     puAbsent: v.optional(v.boolean()),
     roomNotHere: v.optional(v.boolean()),
@@ -2013,6 +2025,15 @@ export default defineSchema({
     enrolledSlots: v.array(v.number()),
     sectionBySlot: v.record(v.string(), v.string()),
     teacherBySlot: v.record(v.string(), v.string()),
+    // Each slot's class whole (10/9: the MS class before lunch). Absent on a
+    // snapshot taken before then.
+    classBySlot: v.optional(v.record(v.string(), v.object({
+      sectionId: v.union(v.string(), v.null()),
+      teacher: v.union(v.string(), v.null()),
+      course: v.union(v.string(), v.null()),
+      flag: v.union(v.string(), v.null()),
+      sections: v.number(),
+    }))),
     snapAt: v.string(),
     rosterSyncedAt: v.string(),
     termId: v.optional(v.string()),
@@ -2062,6 +2083,17 @@ export default defineSchema({
       after: v.null(),
       notHere: v.boolean(),
       slipTo: v.null(),
+      // MS rows built from 10/9 on: the class before lunch. A TEST list built
+      // before has none, and shows the Power-Up class it was built with.
+      lunch: v.optional(v.union(v.null(), v.object({
+        slot: v.union(v.number(), v.null()),
+        period: v.union(v.string(), v.null()),
+        sectionId: v.union(v.string(), v.null()),
+        teacher: v.union(v.string(), v.null()),
+        course: v.union(v.string(), v.null()),
+        flag: v.union(v.string(), v.null()),
+        problem: v.union(v.string(), v.null()),
+      }))),
     })),
     counts: v.record(v.string(), v.number()),
   }).index("by_day", ["day"]),

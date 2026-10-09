@@ -5,14 +5,15 @@ import { v } from "convex/values";
 import { requireStaff } from "./identity";
 import { canAdminReflection, canReadReflection } from "./accessRules";
 import {
-  claimInputs, dayStateOf, getDay, loadSettings, MAPS_KEY, markedOf, readState, ROSTER_KEY, rosterFor, schoolTimeZone,
-  tardyItemOf, uniformItemOf, unitItemOf,
+  claimInputs, dayKindOf, dayStateOf, getDay, loadSettings, lunchOfSnapshot, MAPS_KEY, markedOf, readState, ROSTER_KEY, rosterFor,
+  schoolTimeZone, tardyItemOf, uniformItemOf, unitItemOf,
 } from "./reflection";
 import {
-  beforeLunchClass, claimAtFreeze, clockText, dayLabel, dayTimes, freezeBanner, idSetHash, lastReadBanner, nextSchoolDayGuess, noListBanner,
-  provesNoSchool, pullTimes, QUEUED_TAG, roomWindow, rosterAgeBanner, scheduleKindFor, schoolDayVerdict, studentMap, tardyKey, tardyLine,
-  termBanner, uniformLine, unitReleased, wallClock,
-  type ClaimResult, type Division, type Mode, type ReflectionSettings, type RosterMeta, type RosterSnap, type ScheduleKind, type UnitItem,
+  claimAtFreeze, clockText, dayLabel, dayTimes, freezeBanner, idSetHash, lastReadBanner, lunchClassOf, minuteText, nextSchoolDayGuess,
+  noListBanner, provesNoSchool, pullTimes, pullWords, QUEUED_TAG, roomWindow, rosterAgeBanner, schoolDayVerdict, studentMap, tardyKey,
+  tardyLine, termBanner, uniformLine, unitReleased, wallClock,
+  type ClaimResult, type Division, type LunchClass, type Mode, type ReflectionSettings, type RosterMeta, type RosterSnap,
+  type ScheduleKind, type UnitItem,
 } from "./reflectionRules";
 import { countingDivision } from "./reflectionDemoRules";
 
@@ -118,12 +119,34 @@ export type ListRowOut = {
   /** The room ticked this student Not here (screen only, never printed). */
   notHere: boolean;
   /**
-   * Who the pull slip goes to when the division's slips are addressed to the
-   * class right before lunch (setting slipAddresseeByDivision); null means the
-   * Power-Up teacher, the default.
+   * Who an MS pull slip goes to: the class before lunch (owner, 10/9), in the
+   * words a screen from before 10/9 already prints on a slip (teacher, and
+   * the period). Null on an HS row: its slip goes to the Power-Up teacher.
+   * Kept, alongside `lunch`, for tabs still running the older screen.
    */
   slipTo: { teacher: string | null; label: string } | null;
+  /**
+   * MIDDLE SCHOOL (owner, 2026-10-09): the class the student is in right
+   * before Lunch & Power-Up on the list's day, where they are pulled from a
+   * couple of minutes before lunch begins -- period, teacher, course, the
+   * RSP/ELD/7002A flag, or `problem` when it could not be named. Null on an
+   * HS row (pulled from Power-Up, `pu`), and absent from a TEST list built
+   * before 10/9. `pu` stays on every row, for tabs still running the older
+   * screen.
+   */
+  lunch?: LunchClass | null;
 };
+
+/** An MS row's class before lunch, and the slip words an older screen prints from it. */
+function lunchFields(division: Division, lunch: LunchClass | null): Pick<ListRowOut, "lunch" | "slipTo"> {
+  if (division !== "ms" || !lunch) return { slipTo: null, lunch: null };
+  return {
+    // An older screen names the slip "<teacher>", or "the <label> teacher":
+    // a class it could not name says so on the slip, never a guess.
+    slipTo: lunch.problem ? { teacher: lunch.problem, label: "" } : { teacher: lunch.teacher, label: lunch.period ?? "" },
+    lunch,
+  };
+}
 
 function puOf(snap: RosterSnap | null | undefined, frozen?: Doc<"reflectionUnits">["puSnapshot"]): ListRowOut["pu"] {
   if (frozen) {
@@ -149,7 +172,7 @@ const DISMISSED_RELEASE = "Dismissed in admin review";
  * Not here box, no slip, and "release this student" on every earlier print.
  */
 async function rowsOfMadeList(ctx: Ctx, date: string, tz: string, gradeOf: Record<string, string>, frozenAt: string | null,
-  roles: boolean, slips?: { settings: ReflectionSettings; rowCounts: Record<string, number> | null }): Promise<ListRowOut[]> {
+  roles: boolean, lunchSlot: { slot: number; period: string } | null): Promise<ListRowOut[]> {
   const units = await ctx.db.query("reflectionUnits").withIndex("by_serveDay", (q) => q.eq("serveDay", date)).collect();
   const roster = await rosterFor(ctx, units.map((u) => u.studentNumber));
   const out: ListRowOut[] = [];
@@ -193,8 +216,9 @@ async function rowsOfMadeList(ctx: Ctx, date: string, tz: string, gradeOf: Recor
           : `In admin review: ${u.reviewReason ?? "waiting for a decision"}`;
     }
     const snap = roster[u.studentNumber] ?? null;
-    const lunch = slips && slips.settings.slipAddresseeByDivision[u.division] === "before-lunch"
-      ? beforeLunchClass(snap, slips.rowCounts) : null;
+    // Copied when the list was made; a list made before 10/9 has no copy,
+    // and is shown from the roster snapshot.
+    const lunch = u.lunchSnapshot ? lunchOfSnapshot(u.lunchSnapshot) : lunchClassOf(snap, lunchSlot);
     out.push({
       key: u._id, unitId: u._id, studentNumber: u.studentNumber,
       grade: snap?.grade || gradeOf[u.studentNumber] || uniforms[0]?.studentGrade || "",
@@ -204,7 +228,7 @@ async function rowsOfMadeList(ctx: Ctx, date: string, tz: string, gradeOf: Recor
       lines: u.lines, tags: u.tags, owes: u.owes ?? 1, absentMorning: !!u.absentMorning,
       released, cleared, voided, after,
       notHere: !!u.roomNotHere,
-      slipTo: lunch ? { teacher: lunch.teacher, label: lunch.label } : null,
+      ...lunchFields(u.division, lunch),
     });
   }
   return out;
@@ -212,7 +236,7 @@ async function rowsOfMadeList(ctx: Ctx, date: string, tz: string, gradeOf: Recor
 
 /** Rows of a list the next freeze would make, from a claim worked out read-only. */
 function rowsOfClaim(claim: ClaimResult, roster: Record<string, RosterSnap>, gradeOf: Record<string, string>,
-  uniformGrade: Record<string, string>): ListRowOut[] {
+  uniformGrade: Record<string, string>, lunchSlot: { slot: number; period: string } | null): ListRowOut[] {
   return claim.rows.map((r) => {
     const snap = roster[r.studentNumber] ?? null;
     return {
@@ -223,7 +247,8 @@ function rowsOfClaim(claim: ClaimResult, roster: Record<string, RosterSnap>, gra
       division: r.division, mode: r.mode, state: "so-far",
       pu: puOf(snap), notOnRoster: !snap,
       lines: r.lines, tags: r.tags, owes: r.owes, absentMorning: false,
-      released: null, cleared: [], voided: [], after: null, notHere: false, slipTo: null,
+      released: null, cleared: [], voided: [], after: null, notHere: false,
+      ...lunchFields(r.division, lunchClassOf(snap, lunchSlot)),
     };
   });
 }
@@ -239,7 +264,7 @@ function rowsOfClaim(claim: ClaimResult, roster: Record<string, RosterSnap>, gra
  */
 async function soFar(ctx: Ctx, f: {
   first: string | null; target: string; tz: string; settings: Awaited<ReturnType<typeof loadSettings>>;
-  gradeOf: Record<string, string>; nowIso: string;
+  gradeOf: Record<string, string>; nowIso: string; lunchSlot: { slot: number; period: string } | null;
 }): Promise<{ rows: ListRowOut[]; roster: Record<string, RosterSnap> }> {
   const inp = await claimInputs(ctx, { upTo: f.target, gradeOf: f.gradeOf });
   const uniformGrade = Object.fromEntries(inp.uniforms.map((u) => [u.studentNumber, u.studentGrade]));
@@ -269,7 +294,7 @@ async function soFar(ctx: Ctx, f: {
   const claim = claimAtFreeze({
     day: f.target, tz: f.tz, settings: f.settings, divisionOf: inp.divisionOf, tardies, uniforms, units, days: inp.days,
   });
-  const rows = rowsOfClaim(claim, inp.roster, f.gradeOf, uniformGrade)
+  const rows = rowsOfClaim(claim, inp.roster, f.gradeOf, uniformGrade, f.lunchSlot)
     // A queued detention worked out above has no id yet.
     .map((r) => (r.unitId && r.unitId.startsWith("queued:") ? { ...r, key: `new:${r.studentNumber}`, unitId: null } : r));
   return { rows, roster: inp.roster };
@@ -398,9 +423,18 @@ function modeWords(m: Record<Division, Mode>): string {
 
 const hhmm = (m: number) => `${Math.floor(m / 60) % 12 || 12}:${String(m % 60).padStart(2, "0")}`;
 
-/** Power-Up teacher, then student number: the order every list starts in (the screen may re-sort it). */
+/** The teacher a row is pulled from: MS, the class before lunch (owner, 10/9); HS, Power-Up. */
+const pullTeacher = (r: ListRowOut) => (r.lunch ? r.lunch.teacher : r.pu?.teacher) ?? "\uffff";
+
+/**
+ * The order every list starts in (the screen may re-sort it, and adds the
+ * last name, which only it knows): MS by the class-before-lunch teacher,
+ * then grade; HS by Power-Up teacher; then student number.
+ */
 function sortRows(rows: ListRowOut[]): void {
-  rows.sort((a, b) => (a.pu?.teacher ?? "\uffff").localeCompare(b.pu?.teacher ?? "\uffff") || a.studentNumber.localeCompare(b.studentNumber));
+  rows.sort((a, b) => pullTeacher(a).localeCompare(pullTeacher(b))
+    || (a.lunch && b.lunch ? a.grade.localeCompare(b.grade, undefined, { numeric: true }) : 0)
+    || a.studentNumber.localeCompare(b.studentNumber));
 }
 
 /** A fingerprint of what the list says now: a print records it, and a later read tells it apart. */
@@ -411,27 +445,41 @@ function versionOf(rows: ListRowOut[]): string {
 }
 
 /**
- * The sections: MS first (pulled at the block start), then HS, each with its
- * count against the room's capacity for that sitting and its pull time.
+ * The sections: MS first (it eats first, so it is pulled first), then HS,
+ * each with its count against the room's capacity for that sitting, when
+ * and from where it is pulled, and the heading of the column that says
+ * where each student is: MS from the class before lunch, a couple of minutes
+ * before lunch begins (owner, 10/9); HS from Power-Up, 5 minutes before it
+ * ends. `pullAt` ("12:29") is what a screen from before 10/9 shows.
+ *
+ * A TEST list built before 10/9 (`legacyMs`) has no class before lunch on
+ * its rows, only the Power-Up class it was built with: its MS column keeps
+ * the Power-Up heading, so a Power-Up teacher is never shown under "Class
+ * before lunch".
  */
-function sectionsOf(rows: ListRowOut[], modes: Record<Division, Mode>, settings: ReflectionSettings,
-  pull: { msMinute: number; hsMinute: number }) {
+function sectionsOf(rows: ListRowOut[], modes: Record<Division, Mode>, settings: ReflectionSettings, kind: ScheduleKind,
+  legacyMs = false) {
   const capacity = settings.capacity;
+  const pull = pullTimes(kind, settings);
   return (["ms", "hs"] as Division[]).map((division) => {
     const mine = rows.filter((r) => r.division === division);
     const count = mine.filter((r) => r.state !== "released").length;
     const pullMinute = division === "ms" ? pull.msMinute : pull.hsMinute;
+    const lunch = division === "ms" && !legacyMs;
     return {
       division,
       label: division === "ms" ? "Middle school (grades 6-8)" : "High school (grades 9-12)",
       mode: modes[division],
       pullAt: hhmm(pullMinute),
+      pullWords: lunch || division === "hs" ? pullWords(kind, division, settings) : `pull at ${minuteText(pullMinute)}`,
+      pullFrom: lunch ? "before-lunch" as const : "powerup" as const,
+      column: lunch ? "Class before lunch" : "Power-Up",
       count,
       capacity: capacity[division],
       // More students than the room holds at this division's sitting: shown,
       // never decided here (an over-capacity rule is the owner's, later).
       overCapacity: capacity[division] !== null && count > (capacity[division] as number),
-      slipTo: settings.slipAddresseeByDivision[division],
+      slipTo: lunch ? "before-lunch" as const : "powerup" as const,
       rows: mine,
     };
   });
@@ -467,10 +515,16 @@ function demoAnswer(f: {
   demo: Doc<"reflectionDemoLists">; date: string; today: string; next: string; nowIso: string; roles: boolean;
   settings: ReflectionSettings;
 }) {
-  const rows: ListRowOut[] = f.demo.rows.map((r) => ({ ...r, pu: r.pu ? { ...r.pu } : null }));
+  // A TEST list built from 10/9 on carries each MS row's class before lunch;
+  // one built before carries only the Power-Up class, and is shown as built.
+  const rows: ListRowOut[] = f.demo.rows.map((r) => ({
+    ...r, pu: r.pu ? { ...r.pu } : null,
+    ...(r.lunch === undefined ? { slipTo: null } : lunchFields(r.division, r.lunch ? { ...r.lunch } : null)),
+  }));
   sortRows(rows);
   const modes: Record<Division, Mode> = { ms: "shadow", hs: "shadow" };
   const kind: ScheduleKind = f.demo.kind ?? "regular";
+  const legacyMs = f.demo.rows.some((r) => r.division === "ms" && r.lunch === undefined);
   return {
     allowed: true as const,
     ok: true as const,
@@ -490,7 +544,7 @@ function demoAnswer(f: {
     kind,
     times: null,
     mode: modes,
-    sections: sectionsOf(rows, modes, f.settings, pullTimes(kind, f.settings)),
+    sections: sectionsOf(rows, modes, f.settings, kind, legacyMs),
     listVersion: versionOf(rows),
     banners: [] as Banner[],
     review: null,
@@ -557,25 +611,24 @@ export const listForDay = query({
       if (demo && demoOk !== true) return { allowed: true as const, ok: false as const, reason: DEMO_NEEDS_UPDATE };
       if (demo) return demoAnswer({ demo, date, today, next, nowIso, roles, settings });
     }
-    const marked = await markedOf(ctx, date);
+    // The day's schedule type, and the class period right before Lunch &
+    // Power-Up on it, where MS students are pulled from (owner, 10/9). For
+    // "Tomorrow so far", tomorrow's.
+    const { kind, marked, lunch: lunchSlot } = await dayKindOf(ctx, date, settings, row);
     const st = dayStateOf(date, row, marked);
-    const kind = (row?.kind as ScheduleKind | undefined)
-      ?? scheduleKindFor({ date, marked, scheduleKinds: settings.scheduleKinds, rowCounts: row?.rowCounts ?? null }).kind;
     const times = dayTimes(date, kind, settings, tz);
-    const pull = pullTimes(kind, settings);
 
     // Is today's list still to be made? Not if made, given up, not a school
     // day, or past the latest time a list may be made.
     const todayRow = date === today ? row : await getDay(ctx, today);
-    const todayMarked = date === today ? marked : await markedOf(ctx, today);
+    const todayDay = date === today ? { kind, marked } : await dayKindOf(ctx, today, settings, todayRow);
+    const todayMarked = todayDay.marked;
     const todaySt = dayStateOf(today, todayRow, todayMarked);
     const todaySd = schoolDayVerdict({
       date: today, marked: todayMarked, rowCounts: todayRow?.rowCounts ?? null,
       adminMarked: !!todayRow?.adminMarkedSchoolDay, readSucceeded: provesNoSchool(todaySt, tz),
     });
-    const todayKind = (todayRow?.kind as ScheduleKind | undefined)
-      ?? scheduleKindFor({ date: today, marked: todayMarked, scheduleKinds: settings.scheduleKinds, rowCounts: todayRow?.rowCounts ?? null }).kind;
-    const todayTimes = dayTimes(today, todayKind, settings, tz);
+    const todayTimes = dayTimes(today, todayDay.kind, settings, tz);
     const pastLatest = todayTimes.ok && Date.parse(nowIso) >= todayTimes.lastFreezeMs;
     const todayOpen = !todayRow?.frozenAt && !todayRow?.noList && todaySd.verdict !== "no" && !pastLatest;
 
@@ -583,13 +636,13 @@ export const listForDay = query({
     let view: "made" | "so-far" | "no-list" | "no-school" | "not-made";
     if (row?.frozenAt) {
       view = "made";
-      rows = await rowsOfMadeList(ctx, date, tz, gradeOf, row.frozenAt, roles, { settings, rowCounts: row.rowCounts ?? null });
+      rows = await rowsOfMadeList(ctx, date, tz, gradeOf, row.frozenAt, roles, lunchSlot);
     } else if (date === today && todayOpen) {
       view = "so-far";
-      rows = (await soFar(ctx, { first: null, target: today, tz, settings, gradeOf, nowIso })).rows;
+      rows = (await soFar(ctx, { first: null, target: today, tz, settings, gradeOf, nowIso, lunchSlot })).rows;
     } else if (date === next && date !== today) {
       view = "so-far";
-      rows = (await soFar(ctx, { first: todayOpen ? today : null, target: next, tz, settings, gradeOf, nowIso })).rows;
+      rows = (await soFar(ctx, { first: todayOpen ? today : null, target: next, tz, settings, gradeOf, nowIso, lunchSlot })).rows;
     } else if (row?.noList || (date === today && pastLatest && todaySd.verdict !== "no")) {
       view = "no-list";
     } else if (date === today && todaySd.verdict === "no") {
@@ -604,8 +657,8 @@ export const listForDay = query({
     sortRows(rows);
     const listVersion = versionOf(rows);
 
-    // ---- The sections: MS first (pulled at the block start), then HS.
-    const sections = sectionsOf(rows, modes, settings, pull);
+    // ---- The sections: MS first (it eats first, so it is pulled first), then HS.
+    const sections = sectionsOf(rows, modes, settings, kind);
 
     // ---- The room's own attendance for this day (build step 8b): Not here
     // and Attendance done from Lunch & Power-Up start until the next list is

@@ -523,5 +523,91 @@ console.log("\n11. A TEST LIST: SAID IN RED, ON SCREEN AND ON EVERY PAGE, AND NE
       && real.app.reflectionSheetTitle(RES()) === "Reflection Room list 2026-10-13", sheetPages(realHtml).map(thead).join(" | "));
 }
 
+// ======================================================================
+console.log("\n12. MIDDLE SCHOOL IS PULLED FROM THE CLASS BEFORE LUNCH (owner, 2026-10-09)\n");
+// ======================================================================
+// The server (from 10/9) sends each MS row its class before lunch, and each
+// section its column heading and when and from where it is pulled. The
+// fixtures above are a server from before, which this screen still draws.
+{
+  const lunch = (period, teacher, course, flag = null, problem = null) =>
+    ({ slot: period ? Number(period.slice(1)) + 1 : null, period, sectionId: teacher ? "S-" + teacher : null, teacher, course, flag, problem });
+  const LUNCH = () => {
+    const r = FRESH();
+    const ms = r.sections[0], hs = r.sections[1];
+    Object.assign(ms, { pullAt: "12:29", pullWords: "pull at 12:29 PM from the class before lunch", pullFrom: "before-lunch", column: "Class before lunch", slipTo: "before-lunch" });
+    Object.assign(hs, { pullAt: "12:57", pullWords: "pull at 12:57 PM, 5 minutes before the end of Power-Up", pullFrom: "powerup", column: "Power-Up", slipTo: "powerup" });
+    const set = (sn, grade, l) => Object.assign(ms.rows.find((x) => x.studentNumber === sn), { grade, lunch: l,
+      slipTo: l.problem ? { teacher: l.problem, label: "" } : { teacher: l.teacher, label: l.period } });
+    set("1001", "7", lunch("P3", "Ms Ortiz", "Math 7"));
+    set("1002", "8", lunch("P3", "Ms Ortiz", "Math 8"));
+    set("1003", "6", lunch("P3", "Ms Ortiz", "Math 6"));
+    set("1004", "7", lunch("P3", "Mr Abel", "RSP A", "RSP"));
+    set("1009", "7", lunch("P3", null, null, null, "Check PowerSchool: 2 classes in P3"));
+    hs.rows.forEach((x) => Object.assign(x, { lunch: null, slipTo: null }));
+    ms.rows.find((x) => x.studentNumber === "1004").released = null;
+    ms.rows.find((x) => x.studentNumber === "1004").state = "listed";
+    ms.count = 5;
+    return r;
+  };
+  const recorded = [];
+  const w = makeWorld(scriptSrc, { query: () => LUNCH(), mutation: (a) => { recorded.push(a); return { ok: true, at: "2026-10-13T18:50:00.000Z" }; } });
+  await w.app.loadReflectionList();
+  const html = w.fixed.rrList.innerHTML;
+  const [msHtml, hsHtml] = html.split('data-rr-section="hs"');
+  check("MS column header 'Class before lunch'; HS keeps 'Power-Up'",
+    /Class before lunch/.test(msHtml) && !/>Power-Up</.test(msHtml.replace(/<td>[\s\S]*?<\/td>/g, "")) && /Power-Up/.test(hsHtml) && !/Class before lunch/.test(hsHtml),
+    html.slice(0, 500));
+  check("each MS row shows the period, teacher and course of the class before lunch, never its Power-Up teacher",
+    /<td>P3 · Ms Ortiz <div class="print-note">Math 7<\/div><\/td>/.test(msHtml) && !/Ms Ruiz/.test(msHtml) && /Ms Cruz/.test(hsHtml), msHtml.slice(0, 800));
+  check("...an RSP class before lunch is flagged; a class that could not be named says so, never blank",
+    /P3 · Mr Abel <div class="print-note">RSP A<\/div> <span class="rr-flag">RSP: pull from this class<\/span>/.test(msHtml)
+      && /<div class="rr-check">Check PowerSchool: 2 classes in P3<\/div>/.test(msHtml));
+  check("the section headings say when and from where: MS 'pull at 12:29 PM from the class before lunch', HS 5 minutes before the end of Power-Up",
+    /pull at 12:29 PM from the class before lunch/.test(msHtml) && /pull at 12:57 PM, 5 minutes before the end of Power-Up/.test(hsHtml) && !/pull at about/.test(html));
+  const order = [...html.matchAll(/<tr(?: class="rr-released")?><td><b>([^<]*)<\/b>/g)].map((m) => m[1]);
+  check("MS in class-before-lunch teacher order, then grade, then last name (the unnamed class last); HS by Power-Up teacher",
+    J(order) === J(["Zane, Dee", "Moss, Cy", "Diaz, Ana", "Alvarez, Ben", "Comer, New", "Lopez, Xia"]), J(order));
+
+  await w.app.printReflectionList();
+  const pages = sheetPages(w.prints[0]?.sheet || "");
+  check("the printed MS page: the 'Class before lunch' column, the class in each row, and its pull time; the HS page Power-Up",
+    pages.length === 2 && /<th>Grade<\/th><th>Class before lunch<\/th><th>Violations<\/th>/.test(pages[0])
+      && /<th>Grade<\/th><th>Power-Up<\/th><th>Violations<\/th>/.test(pages[1]) && /P3 · Ms Ortiz/.test(pages[0]) && !/Ms Ruiz/.test(pages[0])
+      && /· pull at 12:29 PM from the class before lunch<\/p>/.test(pages[0]) && /· pull at 12:57 PM, 5 minutes before the end of Power-Up<\/p>/.test(pages[1])
+      && J(namesIn(pages[0])) === J(["Zane, Dee", "Moss, Cy", "Diaz, Ana", "Alvarez, Ben", "Comer, New"]),
+    pages.map((p) => (/<p class="print-sub">([^<]*)</.exec(p) || [])[1]).join(" | "));
+  w.app.closeReflectionSheet();
+  w.fire("afterprint");
+
+  await w.app.printReflectionSlips();
+  const slips = w.prints[1]?.sheet || "";
+  const outs = [...slips.matchAll(/<div class="rr-slip-out">([^<]*)(?: <span class="rr-slip-extra">([^<]*)<\/span>)?<\/div>/g)].map((m) => [m[1], m[2] || ""]);
+  check("pull slips: MS grouped by the class-before-lunch teacher (one the server could not name under its words), HS by Power-Up teacher",
+    J(outs) === J([["Check PowerSchool: 2 classes in P3", ""], ["Mr Abel", "P3 RSP A (RSP)"], ["Ms Ortiz", "P3"], ["Ms Cruz", ""]])
+      && (slips.match(/<tr data-rr-slip-row>/g) || []).length === 6, J(outs));
+  check("...MS slips headed with when and from where they are pulled",
+    /<h2>Middle school \(grades 6-8\) — pull at 12:29 PM from the class before lunch — Tue 10\/13<\/h2>/.test(slips)
+      && /<h2>High school \(grades 9-12\) — pull at 12:57 PM, 5 minutes before the end of Power-Up — Tue 10\/13<\/h2>/.test(slips));
+  w.fire("afterprint");
+
+  const ch = LUNCH();
+  ch.myPrintChanges = { printAt: "2026-10-13T18:31:07.000Z", kind: "master", final: true, count: 1, outOfDate: true,
+    added: ["1001"], release: [], cleared: [], voided: [] };
+  const sheet = w.app.reflectionChangesHtml(ch, { byNumber: w.app.rrStudentIndex(), printedBy: "Pat" });
+  check("'Print changes only' (both divisions in one table) says where each is pulled from, and shows the class before lunch",
+    /<th>Pull from \(MS: class before lunch; HS: Power-Up\)<\/th>/.test(sheet) && /P3 · Ms Ortiz/.test(sheet), sheet.slice(0, 600));
+
+  // A row of an older server, or a TEST list built before 10/9, has no `lunch`: the Power-Up class, as before.
+  const legacy = LUNCH();
+  legacy.sections[0].column = "Power-Up";
+  legacy.sections[0].pullFrom = "powerup";
+  legacy.sections[0].rows.forEach((x) => { delete x.lunch; x.slipTo = null; });
+  const lw = makeWorld(scriptSrc, { query: () => legacy, mutation: () => ({ ok: true }) });
+  await lw.app.loadReflectionList();
+  check("rows with no class before lunch (a TEST list built before 10/9) show the Power-Up class they have, under Power-Up",
+    /Ms Ruiz/.test(lw.fixed.rrList.innerHTML) && !/Class before lunch/.test(lw.fixed.rrList.innerHTML) && /Mr Abel <div class="print-note">RSP A/.test(lw.fixed.rrList.innerHTML));
+}
+
 console.log(`\n${pass} passed, ${fail} failed\n`);
 if (fail) process.exit(1);

@@ -173,18 +173,20 @@ parked. Every mode change is written to `reflectionAudit`.
 
 Other settings (close minutes, `lateEntryLists`, `maxCarries`, counting
 ditching or Power-Up tardies, `holdFirstClassOnPtNoRow`, capacity, the swap
-minute, the HS pull lead and the slip addressee) are changed the same way,
+minute, the HS pull lead and the MS pull lead) are changed the same way,
 never from a screen in v1. A value that does not make sense falls back to the
 default and is named in the answer's `refused`:
 
 ```
 npx convex run --prod reflection:saveSettings '{"holdFirstClassOnPtNoRow":true}'
-# The room runs during lunch, MS first (owner, 10/8). MS is pulled at the block
-# start; HS 5 minutes before the swap, which defaults to the block's midpoint
-# (13:02 regular, 12:13 Wednesday and Minimum, 12:53 Stack) until it is known:
+# The room runs during lunch, MS first (owner, 10/8). HS is pulled from
+# Power-Up 5 minutes before the swap, which is the block's midpoint (13:02
+# regular, 12:13 Wednesday and Minimum, 12:53 Stack):
 npx convex run --prod reflection:saveSettings '{"swapMinuteByKind":{"regular":785},"hsPullLeadMinutes":5}'
-# Who a slip is addressed to, per division: "powerup" (default) or "before-lunch"
-npx convex run --prod reflection:saveSettings '{"slipAddresseeByDivision":{"ms":"before-lunch"}}'
+# MS is pulled from the class before lunch this many minutes before Lunch &
+# Power-Up starts (owner, 10/9; default 2: 12:29 regular, 11:40 Wednesday and
+# Minimum, 12:20 Stack). It must stay under lastFreezeMarginMin (10):
+npx convex run --prod reflection:saveSettings '{"msPullLeadMinutes":2}'
 npx convex run --prod reflection:status '{}'          # today's state: reads done, last good read, list made?
 npx convex run --prod reflection:rosterStatus '{}'    # snapshot age and the term banner
 ```
@@ -215,10 +217,14 @@ prints the list on screen, unrecorded, and marks every page "STALE" when it
 is more than a minute old.
 
 - **Print slips** (optional, never on the main path): only once the list is
-  final. Several Power-Up teachers to a page with cut lines, MS first; each
-  slip folds to the teacher's name and carries only each student's name,
-  number, grade and "Reflection Room today". An RSP, Designated ELD or 7002A
-  student's slip names the class they are actually in, flagged.
+  final. Several teachers to a page with cut lines, MS first: an MS slip goes
+  to the teacher of the student's class before lunch (owner, 10/9), an HS slip
+  to the Power-Up teacher. Each slip folds to the teacher's name and carries
+  only each student's name, number, grade and "Reflection Room today". An RSP,
+  Designated ELD or 7002A class is named on the slip, flagged. A class the list
+  could not name goes out under "Class before lunch not found — check
+  PowerSchool" (or "Check PowerSchool: 2 classes in P3"), never to a guessed
+  room.
 - **Print changes only** appears when your own print is out of date: the
   students added since it, and a "release this student" list.
 - **Room attendance** (roles and grant holders), from Lunch & Power-Up start
@@ -379,9 +385,14 @@ The developer also keeps a calendar reminder for the first week of January.
   slips. If the screen says "No list today", nobody is pulled; everything moves
   to the next list by itself.
 - **The room runs during lunch** (owner, 10/8): MS eats first, so MS serves in
-  the first half of Lunch & Power-Up (pulled at the block start) and HS in the
-  second half (pulled from Power-Up about 5 minutes before the swap). The list
-  prints MS first, then HS.
+  the first half of Lunch & Power-Up and HS in the second half (pulled from
+  Power-Up 5 minutes before the swap). **MS is pulled a couple of minutes
+  before lunch begins, from the class before lunch** (owner, 10/9): 12:29
+  regular, 11:40 Wednesday and Minimum, 12:20 Stack, from P3 on a regular
+  Monday or Thursday and from P4 on every other day (read off the bell
+  schedule: a day marked in Settings > Bell Schedule uses the schedule marked).
+  The MS column says "Class before lunch" and is sorted by that teacher, then
+  grade, then last name. The list prints MS first, then HS.
 - **At each sitting:** the room supervisor checks the screen once (it updates
   itself: "Since your print: +2 added, release 1"), ticks Not here for anyone
   missing, then presses Attendance done. A student at school who does not come
