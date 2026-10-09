@@ -922,6 +922,64 @@ try {
   }
 
   // ==========================================================================
+  console.log("\n9c. A ROSTER SNAPSHOT TAKEN BY THE CODE BEFORE 10/9, ON THE DAY THIS SHIPS\n");
+  // ==========================================================================
+  // Shipped mid-morning: today's 07:30 snapshot was taken by the code before,
+  // which kept each slot's first section and teacher only -- it cannot see a
+  // second class in the slot before lunch, nor the course or the RSP flag.
+  // The opening read takes a snapshot once a day, so without more the list
+  // made at 11:45 would name the first class, a guess, and keep it for good.
+  // The next read of any kind takes a whole one instead, once.
+  {
+    const MON = "2026-10-12";
+    const ms = (grade, extra = {}) => ({ grade, sections: { ...MS, ...extra } });
+    const w = await world({
+      students: { B1: ms(8), B3: ms(7), B5: ms(7, { 4: "RSP-3" }) },
+      days: [{ date: MON, slots: MON_SLOTS }],
+      settings: { modeByDivision: { ms: "shadow", hs: "shadow" }, countFromDateByDivision: { ms: MON, hs: MON } },
+    });
+    await w.store.db.insert("psRoster", { studentNumber: "B3", firstName: "F", lastName: "L", gradeLevel: "7", sectionId: "P3-X",
+      period: "4(A-E)", courseName: "Class", teacherFirstName: "Ms", teacherLastName: "Second", syncedAt: "2026-10-01T13:00:05.000Z" });
+    const rsp = w.store.rows("psRoster").find((r) => r.studentNumber === "B5" && r.sectionId === "RSP-3");
+    await w.store.db.patch(rsp._id, { courseName: "RSP A", teacherLastName: "Mendez" });
+    await w.store.db.insert("teachers", { name: "Staff", ticketsAwarded: 0, email: "admin@school.test", role: "admin" });
+    const list = (day) => { w.rt.signIn({ issuer: STAFF_ISSUER, email: "admin@school.test" }); return w.rt.run("reflectionList.listForDay", { day, lunchOk: true }); };
+    const meta = () => w.store.rows("appState").find((r) => r.key === "reflection:roster")?.value;
+    for (const sn of ["B1", "B3", "B5"]) w.mark(MON, sn, 2, "T");   // late to P1
+    await drive(w, la(MON, "07:30"), la(MON, "07:30"));
+    // Today's snapshot, as the code before 10/9 wrote it: no classBySlot on
+    // any row, and a meta row that does not say it has one.
+    for (const r of w.store.rows("reflectionRoster")) await w.store.db.patch(r._id, { classBySlot: undefined });
+    const metaRow = w.store.rows("appState").find((r) => r.key === "reflection:roster");
+    const { classBySlot: _marker, ...oldMeta } = metaRow.value;
+    await w.store.db.patch(metaRow._id, { value: oldMeta });
+    clock.set(la(MON, "07:32"));
+    const before = Object.fromEntries((await list("today")).sections.flatMap((s) => s.rows).map((r) => [r.studentNumber, r]));
+    check("the control: from a snapshot taken by the code before (today's, taken at 07:30), B3's two P3 classes read as one -- the first, a guess -- and B5's RSP flag is lost",
+      _marker === true && oldMeta.snapDay === MON && before.B3?.lunch?.teacher === "Ms Ortiz" && before.B3.lunch.problem === null
+        && before.B5?.lunch?.flag === null && before.B5.lunch.course === null, J([before.B3?.lunch, before.B5?.lunch]));
+
+    const readsBefore = readsOf(w).length;
+    await drive(w, la(MON, "07:35"), la(MON, "11:45"));
+    const later = readsOf(w).slice(readsBefore);
+    clock.set(la(MON, "11:50"));
+    const made = await list("today");
+    const by = Object.fromEntries(made.sections.flatMap((s) => s.rows).map((r) => [r.studentNumber, r]));
+    check("the next read takes a whole snapshot the same day, so the list made at 11:45 says 'Check PowerSchool: 2 classes in P3' for B3, and names B5's RSP class",
+      made.view === "made" && by.B3?.lunch?.problem === "Check PowerSchool: 2 classes in P3" && by.B3.lunch.teacher === null
+        && by.B5?.lunch?.flag === "RSP" && by.B5.lunch.course === "RSP A" && by.B5.lunch.teacher === "Ms Mendez" && by.B1?.lunch?.course === "Class",
+      J([by.B3?.lunch, by.B5?.lunch, by.B1?.lunch]));
+    check("...and the detentions keep that copy (lunchSnapshot), never the guess",
+      w.units("B3").find((u) => u.serveDay === MON)?.lunchSnapshot?.problem === "Check PowerSchool: 2 classes in P3"
+        && w.units("B3").find((u) => u.serveDay === MON)?.lunchSnapshot?.teacherName === undefined, J(w.units("B3")));
+    const m = meta();
+    check("...taken ONCE: the snapshot says it is whole, and the reads after the first do not take it again",
+      later.length >= 2 && m?.classBySlot === true && m.snapDay === MON && m.snapAt === later[0].at
+        && w.store.rows("reflectionRoster").every((r) => r.classBySlot && r.snapAt === m.snapAt),
+      J({ reads: later.length, snapAt: m?.snapAt, first: later[0]?.at, marker: m?.classBySlot }));
+  }
+
+  // ==========================================================================
   console.log("\n10. NO LIST TODAY, ON SCREEN\n");
   // ==========================================================================
   {

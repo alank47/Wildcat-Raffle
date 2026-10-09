@@ -310,8 +310,11 @@ export const read = internalAction({
     // The snapshot first: it needs no PowerSchool, so a morning when
     // PowerSchool is down still gets today's Power-Up teachers. ONCE A DAY:
     // an opening read retried every 5 minutes does not copy it again, but
-    // one refused (a sync mid-run, say) is tried again by the retry.
-    if ((a.reads.roster && c.rosterMeta?.snapDay !== a.date) || !c.rosterMeta) {
+    // one refused (a sync mid-run, say) is tried again by the retry. And
+    // whatever the read, whatever the day: a snapshot taken by the code
+    // before 10/9 (no classBySlot, so it cannot see a second class in the
+    // slot before lunch) is replaced by the next read, not the next morning.
+    if ((a.reads.roster && c.rosterMeta?.snapDay !== a.date) || !c.rosterMeta?.classBySlot) {
       const term = tok ? await readTerm(host, tok, schoolid, yearid, process.env.PS_TERM_ID, deadline) : { termId: process.env.PS_TERM_ID };
       try {
         stats.roster = await takeRosterSnapshot(ctx, term);

@@ -355,6 +355,11 @@ tick carries on.
   last snapshot. Otherwise yesterday's stays and the list says "Power-Up
   teachers from the 10/13 roster". `reflection:rosterStatus` shows the last
   refusal and why.
+- A snapshot taken by the code before 10/9 does not keep each slot's class
+  whole, so it cannot see a second class in the slot before lunch.
+  `reflection:rosterStatus` shows `classBySlot: true` on a whole one. One
+  without it is replaced by the next read of any kind, the same day, once:
+  on the day this ships, the list made at the close is never made from it.
 - **The PowerSchool sync no longer empties the roster on a bad read.** When
   the roster query comes back empty, or with under half the rows already here,
   the sync keeps the roster it has and records `rosterKept: true` and the

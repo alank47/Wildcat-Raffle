@@ -621,6 +621,13 @@ const CASES = [
     mustFail: "P: released at 11:41, after the 11:40 MS pull: PA's tardy rejoins Wednesday's detention, pulled from P4; never on Thursday's list" },
 
   // ---- Review of the class-before-lunch change (2026-10-09): the day it ships, open tabs, the stored TEST list.
+  { guard: "a snapshot taken by the code before 10/9 is kept until the next morning's opening read", file: READER, test: READER_TEST,
+    from: "    if ((a.reads.roster && c.rosterMeta?.snapDay !== a.date) || !c.rosterMeta?.classBySlot) {",
+    to: "    if ((a.reads.roster && c.rosterMeta?.snapDay !== a.date) || !c.rosterMeta) {",
+    mustFail: "the next read takes a whole snapshot the same day, so the list made at 11:45 says 'Check PowerSchool: 2 classes in P3' for B3, and names B5's RSP class" },
+  { guard: "the snapshot never says it is whole, so every read takes it again", file: SERVER, test: READER_TEST,
+    from: "      classBySlot: a.rows.every((r) => !!r.classBySlot),\n", to: "",
+    mustFail: "...taken ONCE: the snapshot says it is whole, and the reads after the first do not take it again" },
   { guard: "a list naming MS classes before lunch goes to a screen from before 10/9", file: LIST, test: DEMO_TEST,
     from: "    if (lunchOk !== true && namesLunch(rows)) return { allowed: true as const, ok: false as const, reason: LUNCH_NEEDS_UPDATE };\n", to: "",
     mustFail: "a screen that does not say it shows the class before lunch (every screen from before 10/9) is sent no row of a list that names one: words only, asking nobody to refresh" },

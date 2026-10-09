@@ -594,6 +594,13 @@ export type RosterMeta = {
   termEnd?: string | null;
   termName?: string | null;
   lastRefusal?: { at: string; reason: string } | null;
+  /**
+   * The snapshot keeps each slot's class whole (classBySlot, 10/9: the MS
+   * class before lunch). Missing on one taken by the code before: the next
+   * read of any kind takes a whole one, the same day, so no list is made
+   * from a snapshot that can only guess between two classes in a slot.
+   */
+  classBySlot?: boolean | null;
 };
 
 const monthDay = (dateKey: string) => {
