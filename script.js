@@ -41888,9 +41888,11 @@
             if (!day) { _rrData = null; _rrWhy = 'Pick a day.'; renderReflectionRoom(); return null; }
             try {
                 // demoOk: this screen marks a TEST list as TEST, on screen and on
-                // every printed page. The server sends a TEST list's rows only to
-                // a screen that says so; one from before is told in words.
-                const res = await auth.convexQuery('reflectionList:listForDay', { day: day, demoOk: true }, session.idToken);
+                // every printed page. lunchOk: it heads the MS column "Class
+                // before lunch" and pulls MS from it (owner, 10/9). The server
+                // sends such rows only to a screen that says so; one from
+                // before is told in words.
+                const res = await auth.convexQuery('reflectionList:listForDay', { day: day, demoOk: true, lunchOk: true }, session.idToken);
                 if (seq !== _rrSeq) return res;
                 if (res && res.allowed === false) { _rrData = null; _rrWhy = res.reason || 'Not available to your access level.'; }
                 else if (res && res.ok === false) { _rrData = null; _rrWhy = res.reason || 'The list could not be read.'; }

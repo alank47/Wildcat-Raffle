@@ -216,6 +216,14 @@ goes through the same Print button. Printing from the browser's own menu
 prints the list on screen, unrecorded, and marks every page "STALE" when it
 is more than a minute old.
 
+A list that names an MS class before lunch is sent only to a screen that shows
+it (`listForDay` with `lunchOk`, from the 2026-10-09 build on). A tab still
+running an older screen would head that column "Power-Up" and print the
+Power-Up room, so it shows "Middle school is now pulled from the class before
+lunch. The list shows it once the Hub updates itself." and has nothing to
+print; nobody needs to do anything. Deploy Convex before pushing the site, as
+always: an older server refuses the new screen's `lunchOk`.
+
 - **Print slips** (optional, never on the main path): only once the list is
   final. Several teachers to a page with cut lines, MS first: an MS slip goes
   to the teacher of the student's class before lunch (owner, 10/9), an HS slip

@@ -540,7 +540,7 @@ const CASES = [
     from: "      if (demo && demoOk !== true) return { allowed: true as const, ok: false as const, reason: DEMO_NEEDS_UPDATE };\n", to: "",
     mustFail: "a screen that does not say it marks a TEST list as TEST (every screen from before this build) is sent no TEST row: words only, asking nobody to refresh" },
   { guard: "this build's screen never says it marks a TEST list (so it is never shown one)", file: SCREEN, test: DEMO_TEST,
-    from: "{ day: day, demoOk: true }", to: "{ day: day }",
+    from: "{ day: day, demoOk: true, lunchOk: true }", to: "{ day: day, lunchOk: true }",
     mustFail: "this build's screen asks with demoOk and, through the shipped server, draws the TEST list under its red TEST ONLY banner" },
   { guard: "a TEST list is shown, and stops prints, on a day the switch was later moved to count", file: LIST, test: DEMO_TEST,
     from: "  if (countingDivision(settings, day)) return null;\n", to: "",
@@ -619,6 +619,17 @@ const CASES = [
     from: "  return { msMinute: start - settings.msPullLeadMinutes, swapMinute: swap, hsMinute: swap - settings.hsPullLeadMinutes };",
     to: "  return { msMinute: start, swapMinute: swap, hsMinute: swap - settings.hsPullLeadMinutes };",
     mustFail: "P: released at 11:41, after the 11:40 MS pull: PA's tardy rejoins Wednesday's detention, pulled from P4; never on Thursday's list" },
+
+  // ---- Review of the class-before-lunch change (2026-10-09): the day it ships, open tabs, the stored TEST list.
+  { guard: "a list naming MS classes before lunch goes to a screen from before 10/9", file: LIST, test: DEMO_TEST,
+    from: "    if (lunchOk !== true && namesLunch(rows)) return { allowed: true as const, ok: false as const, reason: LUNCH_NEEDS_UPDATE };\n", to: "",
+    mustFail: "a screen that does not say it shows the class before lunch (every screen from before 10/9) is sent no row of a list that names one: words only, asking nobody to refresh" },
+  { guard: "a TEST list naming MS classes before lunch goes to a screen from before 10/9", file: LIST, test: DEMO_TEST,
+    from: "      if (demo && lunchOk !== true && namesLunch(demo.rows)) return { allowed: true as const, ok: false as const, reason: LUNCH_NEEDS_UPDATE };\n", to: "",
+    mustFail: "...nor of a TEST list built now, which names them too; a TEST list stored before 10/9 (Power-Up, as built) is still sent" },
+  { guard: "this build's screen never says it shows the class before lunch (so it is never sent the list)", file: SCREEN, test: DEMO_TEST,
+    from: "{ day: day, demoOk: true, lunchOk: true }", to: "{ day: day, demoOk: true }",
+    mustFail: "this build's screen says it shows the class before lunch (lunchOk), and is sent the list" },
 ];
 
 // A builder's shortcut, never set in npm test: REFLECTION_TEETH_ONLY=<text>

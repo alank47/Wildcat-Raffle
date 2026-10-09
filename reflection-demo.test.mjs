@@ -195,7 +195,7 @@ try {
   await drive(real, la(THU, "07:30"), la(THU, "11:45"));
   const realDay = real.store.rows("reflectionDays").find((d) => d.date === THU);
   clock.set(la(THU, "11:46"));
-  const realList = await real.tryRun("admin", "reflectionList.listForDay", { day: THU });
+  const realList = await real.tryRun("admin", "reflectionList.listForDay", { day: THU, lunchOk: true });
   check("the reference: the shipped system made Thursday's list at its 11:45 closing read, from both days' marks",
     realDay?.frozenAt && realDay.freezeKind === "closing" && realList.view === "made"
       && J(numbers(realList)) === J(["H1", "M1", "M4", "M7", "M9", "R1"]), J({ frozen: realDay?.frozenAt, n: numbers(realList), view: realList.view }));
@@ -211,7 +211,7 @@ try {
   check("reflectionDemo:build reads Thursday and Wednesday from PowerSchool and stores a TEST list, answering in counts only",
     built.ok === true && built.previousDay === WED && built.rosterFrom === "snapshot" && built.counts.total === 6
       && !/"(M\d|R1|H\d)"/.test(J(built)) && !NAME_RE.test(J(built)), J(built));
-  const shown = await demo.tryRun("admin", "reflectionList.listForDay", { day: "today", demoOk: true });
+  const shown = await demo.tryRun("admin", "reflectionList.listForDay", { day: "today", demoOk: true, lunchOk: true });
   check("demo rows identical to the real list the shipped rules make for the same day: every row, line, tag, Power-Up and section",
     shown.demo === true && J(shape(shown)) === J(shape(realList)), J({ demo: shape(shown), real: shape(realList) }));
   const row = (res, sn) => res.sections.flatMap((s) => s.rows).find((r) => r.studentNumber === sn);
@@ -248,7 +248,7 @@ try {
       && demo.store.rows("reflectionDemoLists")[0].builtByEmail === "admin@school.test" && !("builtByEmail" in doc[0]), J(again));
   const bare = await school({ modeByDivision: { ms: "shadow", hs: "shadow" }, countFromDateByDivision: { ms: FRI, hs: FRI } });
   const bareBuilt = await bare.tryRun(null, "reflectionDemo.build", { day: THU });
-  const bareShown = await bare.tryRun("admin", "reflectionList.listForDay", { day: THU, demoOk: true });
+  const bareShown = await bare.tryRun("admin", "reflectionList.listForDay", { day: THU, demoOk: true, lunchOk: true });
   check("no roster snapshot yet: the Power-Up classes come from psRoster, made the way the snapshot is made, and nothing is written but the TEST list",
     bareBuilt.ok && bareBuilt.rosterFrom === "psRoster" && J(shape(bareShown)) === J(shape(realList))
       && bare.store.rows("reflectionRoster").length === 0 && bare.store.rows("appState").length === 1, J(bareBuilt));
@@ -276,7 +276,7 @@ try {
     // with Thursday's TEST list still stored.
     const beforeMove = demo.store.snapshot();
     await demo.store.db.patch(s._id, { value: { modeByDivision: { ms: "shadow", hs: "shadow" }, countFromDateByDivision: { ms: FRI, hs: THU } } });
-    const moved = await demo.tryRun("admin", "reflectionList.listForDay", { day: THU, demoOk: true });
+    const moved = await demo.tryRun("admin", "reflectionList.listForDay", { day: THU, demoOk: true, lunchOk: true });
     const movedPrint = await demo.tryRun("admin", "reflectionList.recordPrint", { day: THU, kind: "master", unitIds: [], studentNumbers: [], listVersion: "x" });
     const storedTest = demo.store.rows("reflectionDemoLists").length;
     demo.store.restore(beforeMove);
@@ -290,7 +290,7 @@ try {
       kind: "regular", schoolDay: true, modeByDivision: { ms: "shadow", hs: "shadow" }, updatedAt: la(THU, "11:45") });
     await demo.store.db.insert("reflectionUnits", { studentNumber: "M1", division: "ms", kind: "new", tardyIds: [], uniformIds: [],
       lines: ["Thu 10/8: Tardy P1 (Ms Lee)"], recordedAt: la(THU, "11:45"), state: "listed", serveDay: THU, mode: "shadow", carryCount: 0, tags: [] });
-    const wins = await demo.tryRun("admin", "reflectionList.listForDay", { day: THU, demoOk: true });
+    const wins = await demo.tryRun("admin", "reflectionList.listForDay", { day: THU, demoOk: true, lunchOk: true });
     check("a real frozen list for the same day hides the demo: the real list is shown, and nothing of the TEST list",
       wins.demo === false && wins.view === "made" && J(numbers(wins)) === J(["M1"]) && !("demoBuiltAt" in wins && wins.demoBuiltAt), J({ view: wins.view, n: numbers(wins) }));
     const printReal = await demo.tryRun("admin", "reflectionList.recordPrint", { day: THU, kind: "master", unitIds: [], studentNumbers: ["M1"], listVersion: "x" });
@@ -319,14 +319,14 @@ try {
   {
     const out = {};
     for (const who of ["teacher", "aide", "expired"]) {
-      const r = await demo.tryRun(who, "reflectionList.listForDay", { day: THU, demoOk: true });
+      const r = await demo.tryRun(who, "reflectionList.listForDay", { day: THU, demoOk: true, lunchOk: true });
       const p = await demo.tryRun(who, "reflectionList.recordPrint", { day: THU, kind: "master", unitIds: [], studentNumbers: [], listVersion: "x" });
       out[who] = r.allowed === false && !/M1|M9|demo/i.test(J(r)) && p.ok === false && /limited to administrators/.test(p.reason) ? "refused" : J([r, p]);
     }
     check("access refused for a teacher and a campus aide without the grant, and for an expired grant: no TEST list, no TEST row",
       Object.values(out).every((x) => x === "refused"), J(out));
-    const g = await demo.tryRun("granted", "reflectionList.listForDay", { day: THU, demoOk: true });
-    const p = await demo.tryRun("pbis", "reflectionList.listForDay", { day: "today", demoOk: true });
+    const g = await demo.tryRun("granted", "reflectionList.listForDay", { day: THU, demoOk: true, lunchOk: true });
+    const p = await demo.tryRun("pbis", "reflectionList.listForDay", { day: "today", demoOk: true, lunchOk: true });
     check("...while PBIS, and a staff member an admin gave the list to, see it as they would see the real one",
       g.demo === true && g.roles === false && J(numbers(g)) === J(numbers(shown)) && p.demo === true && p.roles === true, J({ g: g.view, p: p.view }));
   }
@@ -337,7 +337,7 @@ try {
   {
     const beforeClear = demo.store.snapshot();
     const cleared = await demo.tryRun(null, "reflectionDemo.clear", { day: THU });
-    const after = await demo.tryRun("admin", "reflectionList.listForDay", { day: THU, demoOk: true });
+    const after = await demo.tryRun("admin", "reflectionList.listForDay", { day: THU, demoOk: true, lunchOk: true });
     check("reflectionDemo:clear takes the TEST list away, and the day shows what the real list says (no list was made)",
       cleared.ok && cleared.removed === 1 && demo.store.rows("reflectionDemoLists").length === 0 && after.demo === false
         && after.view !== "demo" && numbers(after).length === 0, J({ cleared, view: after.view }));
@@ -463,8 +463,10 @@ try {
         J({ prints: old.prints.length, calls: old.calls.map((c) => c.path) }));
 
       // THE CONTROL: the same old screen handed the TEST rows, as it was
-      // before demoOk. It shows what the gate keeps from it.
-      const leak = makeWorld(oldSrc, server((a) => ({ ...a, demoOk: true })), BROWSER);
+      // before demoOk. It shows what the gate keeps from it. (lunchOk too:
+      // Thursday's TEST list names MS classes before lunch, which section 10
+      // checks the old screens are not sent either.)
+      const leak = makeWorld(oldSrc, server((a) => ({ ...a, demoOk: true, lunchOk: true })), BROWSER);
       await leak.app.loadReflectionList();
       leak.fire("beforeprint");
       const leakSheet = leak.sheet()?.innerHTML || "";
@@ -498,7 +500,7 @@ try {
       rows: doc[0].rows.map(({ lunch, ...r }) => r),
     });
     clock.set(la(THU, "12:05"));
-    const legacyShown = await legacy.tryRun("admin", "reflectionList.listForDay", { day: THU, demoOk: true });
+    const legacyShown = await legacy.tryRun("admin", "reflectionList.listForDay", { day: THU, demoOk: true, lunchOk: true });
     const lms = legacyShown.sections?.find((s) => s.division === "ms");
     check("a TEST list stored before 10/9 still shows, with the Power-Up class it was built with, under a Power-Up heading",
       legacyShown.demo === true && lms?.column === "Power-Up" && lms.pullFrom === "powerup" && lms.rows.length === 5
@@ -539,18 +541,72 @@ try {
       oldSrc = execFileSync("git", ["show", "339e1be:script.js"],
         { cwd: fileURLToPath(new URL("./", import.meta.url)), stdio: ["ignore", "pipe", "ignore"], maxBuffer: 256 << 20 }).toString();
     } catch { /* no git here */ }
+    check("this build's screen says it shows the class before lunch (lunchOk), and is sent the list",
+      now.calls[0]?.args?.lunchOk === true && now.app.data?.view === "made", J(now.calls[0]?.args));
+
+    // What a screen from before 10/9 is sent: it never says lunchOk.
+    const toldLunch = { allowed: true, ok: false, reason: mods.reflectionList.LUNCH_NEEDS_UPDATE };
+    const shape = (r) => ({ ok: r.ok, view: r.view, reason: r.reason, rows: (r.sections || []).reduce((n, x) => n + x.rows.length, 0) });
+    const oldReal = await real.tryRun("admin", "reflectionList.listForDay", { day: THU, demoOk: true });
+    check("a screen that does not say it shows the class before lunch (every screen from before 10/9) is sent no row of a list that names one: words only, asking nobody to refresh",
+      J(oldReal) === J(toldLunch) && !/refresh|reload/i.test(toldLunch.reason), J(shape(oldReal)));
+    const oldBare = await bare.tryRun("admin", "reflectionList.listForDay", { day: THU, demoOk: true });
+    const oldLegacyAns = await legacy.tryRun("admin", "reflectionList.listForDay", { day: THU, demoOk: true });
+    check("...nor of a TEST list built now, which names them too; a TEST list stored before 10/9 (Power-Up, as built) is still sent",
+      J(oldBare) === J(toldLunch) && oldLegacyAns.demo === true
+        && oldLegacyAns.sections.find((x) => x.division === "ms")?.rows.every((r) => r.pu?.teacher === "Ms Ruiz"),
+      J([shape(oldBare), shape(oldLegacyAns)]));
     if (oldSrc) {
+      // An open tab on the 339e1be screen heads the MS column "Power-Up" and
+      // its sections "pull at about": handed this list, it would put the
+      // Power-Up teacher on the screen and on paper while its slips went to
+      // the class before lunch. So it is sent words, not rows.
+      const screenText = (w) => w.fixed.rrDayNote.textContent + w.fixed.rrBanners.innerHTML + w.fixed.rrList.innerHTML;
+      const printsBefore = real.store.rows("reflectionPrints").length;
       const old = makeWorld(oldSrc, server, BROWSER);
       await old.app.loadReflectionList();
-      const oldHtml = old.fixed.rrList.innerHTML;
-      check("an open tab on the 339e1be screen (stamp 20261008e) still draws the list against this server: every student, names, both sections",
-        old.app.data?.view === "made" && NAME_RE.test(oldHtml) && /Middle school/.test(oldHtml) && /High school/.test(oldHtml)
-          && /pull at about 12:29/.test(oldHtml) && !old.alerts.length, J({ why: old.app.why, alerts: old.alerts }));
+      const onScreen = screenText(old);
+      const told = mods.reflectionList.LUNCH_NEEDS_UPDATE;
+      check("an open tab on the 339e1be screen (stamp 20261008e), against this server on a day whose list names MS classes before lunch: no row, no name, no Power-Up teacher -- the server's words, asking nobody to refresh",
+        !("lunchOk" in (old.calls[0]?.args ?? {})) && old.app.data === null && !NAME_RE.test(onScreen) && !/Ms Ruiz|Ms Ortiz/.test(onScreen)
+          && onScreen.includes(told) && !/refresh|reload/i.test(told), onScreen.slice(0, 300));
+      await old.app.printReflectionList();
       await old.app.printReflectionSlips();
-      const oldSlips = old.prints[0]?.sheet ?? "";
-      const oldOut = [...oldSlips.matchAll(/<div class="rr-slip-out">([^<]*)/g)].map((m) => m[1].trim());
-      check("...and its pull slips send the runner to the class before lunch (Ms Ortiz, P3), never to Power-Up (Ms Ruiz)",
-        J(oldOut) === J(["Ms Ortiz", "Ms Cruz"]) && /rr-slip-extra">P3</.test(oldSlips) && !/Ms Ruiz/.test(oldSlips), J(oldOut));
+      old.fire("beforeprint");
+      const oldSheet = old.sheet()?.innerHTML || "";
+      old.fire("afterprint");
+      check("...and nothing to print: its Print and its slips print nothing, the browser's own print menu draws no list, and no print is recorded",
+        old.prints.length === 0 && !NAME_RE.test(oldSheet) && !old.calls.some((c) => c.kind === "mutation")
+          && real.store.rows("reflectionPrints").length === printsBefore, J({ prints: old.prints.length, calls: old.calls.map((c) => c.path) }));
+
+      // A TEST list built from 10/9 on names MS classes before lunch too: the
+      // 339e1be screen says it marks TEST (demoOk), but not that it shows them.
+      const oldTest = makeWorld(oldSrc, {
+        query: (args, path) => bare.as("admin").run(path.replace(":", "."), args),
+        mutation: (args, path) => bare.as("admin").run(path.replace(":", "."), args),
+      }, BROWSER);
+      await oldTest.app.loadReflectionList();
+      const oldTestText = screenText(oldTest);
+      check("...and on a day with only a TEST list built now: the same words, no TEST row, no Power-Up teacher",
+        oldTest.calls[0]?.args?.demoOk === true && !("lunchOk" in oldTest.calls[0].args) && oldTest.app.data === null
+          && !NAME_RE.test(oldTestText) && !/Ms Ruiz/.test(oldTestText) && oldTestText.includes(told), oldTestText.slice(0, 300));
+
+      // THE CONTROL: the same old screen handed the rows, as this server
+      // sent them before the gate. Its screen and paper say Power-Up (Ms Ruiz,
+      // "RSP: pull from this class", pull at about 12:29) while its slips go
+      // to Ms Ortiz in P3: two rooms for one student.
+      const leak = makeWorld(oldSrc, {
+        query: (args, path) => real.as("admin").run(path.replace(":", "."), { ...args, lunchOk: true }),
+        mutation: (args, path) => real.as("admin").run(path.replace(":", "."), args),
+      }, BROWSER);
+      await leak.app.loadReflectionList();
+      const leakHtml = leak.fixed.rrList.innerHTML;
+      await leak.app.printReflectionSlips();
+      const leakSlips = leak.prints[0]?.sheet ?? "";
+      const leakOut = [...leakSlips.matchAll(/<div class="rr-slip-out">([^<]*)/g)].map((m) => m[1].trim());
+      check("...the control: handed the rows, the 339e1be screen shows MS under Power-Up (Ms Ruiz, 'RSP: pull from this class', pull at about 12:29) while its slips go to Ms Ortiz",
+        /Ms Ruiz/.test(leakHtml) && /RSP: pull from this class/.test(leakHtml) && /pull at about 12:29/.test(leakHtml)
+          && J(leakOut) === J(["Ms Ortiz", "Ms Cruz"]), J({ leakOut, html: leakHtml.slice(0, 300) }));
     } else {
       console.log("  SKIP  the 339e1be screen against this server (git or that commit not available here)");
     }

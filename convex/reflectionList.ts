@@ -57,6 +57,24 @@ const REFUSED = "The Reflection Room list is limited to administrators, the PBIS
  */
 export const DEMO_NEEDS_UPDATE = "This day has only a TEST list. It shows, marked TEST, once the Hub updates itself.";
 
+/**
+ * What a tab that has not said it shows the MS class before lunch (owner,
+ * 10/9) is told when the list names one (listForDay, without `lunchOk`).
+ * That is every tab still running a screen from before 10/9: its column is
+ * headed "Power-Up" and its sections "pull at about 12:29", so it would draw
+ * and print the Power-Up teacher, course and RSP flag under a Power-Up
+ * heading while its slips went to the class before lunch -- paper and slips
+ * naming different rooms, at a time before Power-Up starts. So it is sent no
+ * row at all. Nobody is asked to do anything: the tab updates itself and
+ * then shows the list. A list with no MS row (HS only, or a TEST list built
+ * before 10/9, which names Power-Up as built) is still sent to it.
+ */
+export const LUNCH_NEEDS_UPDATE = "Middle school is now pulled from the class before lunch. The list shows it once the Hub "
+  + "updates itself.";
+
+/** Does an answer name an MS class before lunch, which a screen from before 10/9 cannot show? */
+const namesLunch = (rows: Array<{ lunch?: unknown }>) => rows.some((r) => !!r.lunch);
+
 /** Why a print of a TEST list is never recorded (recordPrint). */
 export const DEMO_PRINT_REFUSED = "This is a TEST list, not a real one, so no print of it is recorded and no slips or "
   + "changes-only sheet are printed from it. Print on the Reflection Room screen prints the TEST copy, marked "
@@ -122,7 +140,9 @@ export type ListRowOut = {
    * Who an MS pull slip goes to: the class before lunch (owner, 10/9), in the
    * words a screen from before 10/9 already prints on a slip (teacher, and
    * the period). Null on an HS row: its slip goes to the Power-Up teacher.
-   * Kept, alongside `lunch`, for tabs still running the older screen.
+   * A screen from before 10/9 is sent no MS row at all (LUNCH_NEEDS_UPDATE),
+   * because its list and printed page would name the Power-Up room; this is
+   * kept as a second line, so that its slips could never go there either.
    */
   slipTo: { teacher: string | null; label: string } | null;
   /**
@@ -131,8 +151,7 @@ export type ListRowOut = {
    * couple of minutes before lunch begins -- period, teacher, course, the
    * RSP/ELD/7002A flag, or `problem` when it could not be named. Null on an
    * HS row (pulled from Power-Up, `pu`), and absent from a TEST list built
-   * before 10/9. `pu` stays on every row, for tabs still running the older
-   * screen.
+   * before 10/9. `pu` stays on every row.
    */
   lunch?: LunchClass | null;
 };
@@ -577,6 +596,10 @@ function demoAnswer(f: {
  * the same check of who is asking: real data always wins. And only to a
  * screen that says it marks it as TEST (`demoOk`); any other is told so in
  * words, with no row (DEMO_NEEDS_UPDATE).
+ *
+ * A LIST THAT NAMES AN MS CLASS BEFORE LUNCH (owner, 10/9) is sent only to a
+ * screen that says it shows one (`lunchOk`); any other is told so in words,
+ * with no row (LUNCH_NEEDS_UPDATE).
  */
 export const listForDay = query({
   args: {
@@ -584,8 +607,11 @@ export const listForDay = query({
     // Sent by the screen from 2026-10-08 on, which says TEST ONLY over a TEST
     // list and on every page of it. A screen from before never sends it.
     demoOk: v.optional(v.boolean()),
+    // Sent by the screen from 2026-10-09 on, which heads the MS column "Class
+    // before lunch" and pulls MS from it. A screen from before never sends it.
+    lunchOk: v.optional(v.boolean()),
   },
-  handler: async (ctx, { day, demoOk }) => {
+  handler: async (ctx, { day, demoOk, lunchOk }) => {
     const staff = await requireStaff(ctx);
     const { tz, nowIso, today } = await schoolNow(ctx);
     // THE CHECK COMES FIRST: nothing below is read for someone refused.
@@ -609,6 +635,7 @@ export const listForDay = query({
     if (!row?.frozenAt) {
       const demo = await demoListOf(ctx, date, settings);
       if (demo && demoOk !== true) return { allowed: true as const, ok: false as const, reason: DEMO_NEEDS_UPDATE };
+      if (demo && lunchOk !== true && namesLunch(demo.rows)) return { allowed: true as const, ok: false as const, reason: LUNCH_NEEDS_UPDATE };
       if (demo) return demoAnswer({ demo, date, today, next, nowIso, roles, settings });
     }
     // The day's schedule type, and the class period right before Lunch &
@@ -654,6 +681,7 @@ export const listForDay = query({
     }
     const frozen = view === "made";
     const modes: Record<Division, Mode> = frozen && row?.modeByDivision ? row.modeByDivision : settings.modeByDivision;
+    if (lunchOk !== true && namesLunch(rows)) return { allowed: true as const, ok: false as const, reason: LUNCH_NEEDS_UPDATE };
     sortRows(rows);
     const listVersion = versionOf(rows);
 
