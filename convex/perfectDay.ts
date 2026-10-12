@@ -17,7 +17,7 @@ import { requireAdmin } from "./identity";
  * turns now into the school's wall clock and, on a weekday morning (06:30 to
  * 11:00 school time) when today's run is not done, books ONE run together
  * with a lease (perfectDayRead.run, an action: it needs PowerSchool). The run
- * reads the last ten school days, hands each date's verdict to `applyDate`,
+ * reads the last fifteen school days, hands each date's verdict to `applyDate`,
  * expires what stayed held past the lookback, and on the first good run on or
  * after Monday pays the week through `payBatch`, fifty students a mutation.
  * Every write re-checks the lease and the switch first, so turning the switch
@@ -45,6 +45,7 @@ import { requireAdmin } from "./identity";
  *   npx convex run perfectDay:configure '{"mode":"pilot","pilotAdd":["..."],"controls":["..."],"actorName":"..."}'
  *   npx convex run perfectDay:configure '{"mode":"off","actorName":"..."}'      <- the kill switch (pending days wait, they are not lost)
  *   npx convex run perfectDay:forfeitPending '{"from":"...","to":"...","reason":"...","actorName":"..."}'   <- counts; add "apply":true to forfeit
+ *   npx convex run perfectDay:releaseUnchecked '{"date":"...","reason":"...","actorName":"..."}'   <- counts; add "apply":true to release
  *   npx convex run perfectDay:status
  *   npx convex run perfectDay:correctPayout '{"txnId":"txn_...","removeDates":["2026-10-14"],"reason":"...","actorName":"..."}'
  */
@@ -61,6 +62,8 @@ async function writeState(ctx: MutationCtx, key: string, value: any): Promise<vo
   if (row) await ctx.db.patch(row._id, { value, mirroredAt: at });
   else await ctx.db.insert("appState", { key, value, mirroredAt: at });
 }
+/** A register day that still stands: re-read and settled whatever the start date says now. */
+const STANDING = ["pending", "held", "broken", "paid"] as const;
 export async function loadSettings(ctx: Ctx): Promise<R.Settings> {
   return R.settingsOrDefault(await readState(ctx, R.SETTINGS_KEY));
 }
@@ -149,12 +152,30 @@ export const runContext = internalQuery({
       marks[m.date] = { noSchool: !!m.noSchool, scheduled: !!m.scheduleId };
     }
     const dates = await ctx.db.query("perfectDayDates").withIndex("by_date", (q) => q.gte("date", from).lt("date", today)).collect();
+    // DAYS DECIDED BEFORE THE START (2026-10-12 review). Every switch from off
+    // to on moves countFromDate to that day, so a date decided before it is
+    // never decided again; but its days that still stand (pending, held,
+    // broken, paid) are re-read and settled like any other's, so a known break
+    // is applied and a held day released. One index probe per date and status.
+    const settleDates: string[] = [];
+    const fence = settings.countFromDate && settings.countFromDate < today ? settings.countFromDate : today;
+    for (let d = from; d < fence; d = R.addDays(d, 1)) {
+      for (const status of STANDING) {
+        if (await ctx.db.query("perfectDays").withIndex("by_status_date", (q) => q.eq("status", status).eq("date", d)).first()) {
+          settleDates.push(d);
+          break;
+        }
+      }
+    }
     return {
       settings,
       lastPayWeek: typeof state.lastPayWeek === "string" ? state.lastPayWeek : null,
       marks,
       adminNoSchool: dates.filter((d) => d.adminNoSchool).map((d) => d.date),
       decideAnyway: dates.filter((d) => d.adminDecideAnyway).map((d) => d.date),
+      // Decided by the job's own checks: the blocks those days ran are days the school runs (judgeDay).
+      decided: dates.filter((d) => d.state === "school" && !d.adminDecideAnyway).map((d) => d.date),
+      settleDates,
     };
   },
 });
@@ -213,13 +234,24 @@ export const screenMarks = internalQuery({
 // One date, written
 // ===========================================================================
 
-const personArg = v.object({ sn: v.string(), div: v.optional(v.union(v.string(), v.null())), why: v.optional(v.string()) });
+const personArg = v.object({
+  sn: v.string(), div: v.optional(v.union(v.string(), v.null())), why: v.optional(v.string()), existingOnly: v.optional(v.boolean()),
+});
 
 /**
  * One judged date into the register (perfectDayRules.planDateRows) and its
- * date record. A date before the start is never written. A date PowerSchool
- * now shows as no school, after perfect days were decided for it, is HELD
- * for an admin rather than quietly undone.
+ * date record. A date before the start is never DECIDED: nothing is inserted
+ * for it. But one decided before the switch last came on still has its days
+ * that stand settled by its own stamps (existingOnly), so a pause never pays
+ * over a known break nor lets a held day expire unread (2026-10-12 review).
+ *
+ * A DATE ALREADY DECIDED STAYS DECIDED. When its re-read failed (a read or a
+ * count that will be tried again), or PowerSchool or the calendar now says no
+ * school while days are pending, held or paid for it, its record keeps
+ * "decided" with a note and no day changes: a date-level "held" would later
+ * expire as "not paid" over days that were paid. Those days stand until an
+ * admin takes them out (removeDays, or correctPayout for a paid one); once
+ * none is pending, held or paid (markNoSchool's own test), "no school" sticks.
  *
  * A DATE ALREADY DECIDED WHOSE RE-READ IS HELD (too perfect, a block missing,
  * rows out of place, the screen disputing more than 1%) is not paid over
@@ -243,34 +275,49 @@ export const applyDate = internalMutation({
     const live = await liveRun(ctx, a.runId);
     if (!live.ok) return { stopped: true as const, reason: live.reason };
     const settings = live.settings;
-    if (!settings.countFromDate || a.date < settings.countFromDate) return { skipped: true as const, reason: "Before the start date." };
+    if (!settings.countFromDate) return { skipped: true as const, reason: "Before the start date." };
     const now = new Date().toISOString();
     const existing = await ctx.db.query("perfectDays").withIndex("by_date", (q) => q.eq("date", a.date)).collect();
-    let state: "school" | "no-school" | "held" = a.state;
-    let reason = a.reason;
-    const recheckHeld = a.state === "held" && !a.retryable && existing.length > 0;
-    if (state === "no-school" && existing.length) {
-      state = "held";
-      reason = `PowerSchool or the calendar now says no school on ${a.date}, but ${existing.length} perfect days were already decided for it. `
-        + "Those stand as decided until an admin takes them out (perfectDay:removeDays, or correctPayout for a paid one).";
+    const standing = existing.filter((r) => (STANDING as readonly string[]).includes(r.status)).length;
+    const beforeStart = a.date < settings.countFromDate;
+    if (beforeStart && !standing) return { skipped: true as const, reason: "Before the start date." };
+    const rec = await ctx.db.query("perfectDayDates").withIndex("by_date", (q) => q.eq("date", a.date)).first();
+    const failed = a.state === "held" && a.retryable;
+    // What blocks "no school": the days markNoSchool itself refuses over (a broken or removed day is no money either way).
+    const owed = existing.filter((r) => r.status === "pending" || r.status === "held" || r.status === "paid").length;
+    if (existing.length && (failed || (a.state === "no-school" && owed))) {
+      const why = failed
+        ? `This run's re-read failed (${a.reason}); tried again on the next run.`
+        : `PowerSchool or the calendar now says no school (${a.reason}), but ${owed} perfect days are pending, held or paid for it. `
+          + "They stand until an admin takes them out (perfectDay:removeDays, or correctPayout for a paid one).";
+      const note = {
+        state: "school" as const, retryable: failed, runId: a.runId, updatedAt: now,
+        reason: `Decided on an earlier run. ${why}`,
+        counts: { ...((rec?.counts as Record<string, any>) ?? {}), recheck: { at: now, reason: a.reason, register: null } },
+      };
+      if (rec) await ctx.db.patch(rec._id, note);
+      else await ctx.db.insert("perfectDayDates", { date: a.date, firstDecidedAt: now, rowCounts: {}, ...note });
+      return { ok: true as const, state: "school" as const, recheckHeld: true, retryable: failed, register: null };
     }
+    const state: "school" | "no-school" | "held" = a.state;
+    const recheckHeld = a.state === "held" && !a.retryable && existing.length > 0;
     let register: Record<string, number> | null = null;
     if (state === "school" || recheckHeld) {
       const plan = R.planDateRows({
         date: a.date, now, runId: a.runId, settings, existing: existing as unknown as R.RegRow[],
         judgement: {
-          perfect: a.perfect.map((p) => ({ sn: p.sn, div: p.div ?? null })),
-          held: a.held.map((h) => ({ sn: h.sn, why: h.why, div: h.div ?? null })),
+          perfect: a.perfect.map((p) => ({ sn: p.sn, div: p.div ?? null, ...(p.existingOnly ? { existingOnly: true } : {}) })),
+          held: a.held.map((h) => ({ sn: h.sn, why: h.why, div: h.div ?? null, ...(h.existingOnly ? { existingOnly: true } : {}) })),
           broken: a.broken.map((b) => ({ sn: b.sn, why: b.why ?? "marked" })),
           checked: a.checked,
         },
         onlyNotPayable: recheckHeld,
+        existingOnly: beforeStart,
       });
       for (const ins of plan.inserts) await ctx.db.insert("perfectDays", ins as any);
       for (const p of plan.patches) await ctx.db.patch(p.id, p.patch as any);
       register = plan.counts;
     }
-    const rec = await ctx.db.query("perfectDayDates").withIndex("by_date", (q) => q.eq("date", a.date)).first();
     if (recheckHeld) {
       // The date's earlier counts stand: this read was not believed, so its figures are not shown as the day's.
       const note = {
@@ -280,21 +327,30 @@ export const applyDate = internalMutation({
       };
       if (rec) await ctx.db.patch(rec._id, note);
       else await ctx.db.insert("perfectDayDates", { date: a.date, firstDecidedAt: now, rowCounts: a.rowCounts ?? {}, ...note });
-      return { ok: true as const, state: "school" as const, recheckHeld: true, register };
+      return { ok: true as const, state: "school" as const, recheckHeld: true, retryable: false, register };
     }
+    const reason = beforeStart && state === "school"
+      ? `${a.reason} Decided before the switch last came on: only the days already decided were settled.` : a.reason;
     const fields = {
       state, reason, retryable: a.retryable, runId: a.runId, updatedAt: now,
       counts: { ...(a.counts ?? {}), ...(register ? { register } : {}) }, rowCounts: a.rowCounts ?? {},
     };
     if (rec) await ctx.db.patch(rec._id, fields);
     else await ctx.db.insert("perfectDayDates", { date: a.date, firstDecidedAt: now, ...fields });
-    return { ok: true as const, state, recheckHeld: false, register };
+    return { ok: true as const, state, recheckHeld: false, retryable: state === "held" && a.retryable, register };
   },
 });
 
 /**
  * What stayed HELD until it left the lookback is not paid: the date and its
  * held students become "expired" (review H3: a hold never lasts for ever).
+ *
+ * EXCEPT A DAY HELD ONLY FOR THE SECOND CHECK (2026-10-12 review). PowerSchool
+ * found it perfect and the check never ran on it (the attendance rebuild was
+ * down or writing): that is not a doubt about the day, and an outage longer
+ * than the lookback must not forfeit the whole school's oldest days. It stays
+ * held, counted on the status, until an admin releases the date in one call
+ * (releaseUnchecked) or takes it out (forfeitPending, resolveHeld).
  */
 export const expireOld = internalMutation({
   args: { runId: v.string(), before: v.string() },
@@ -308,6 +364,7 @@ export const expireOld = internalMutation({
       dates++;
     }
     for (const r of await ctx.db.query("perfectDays").withIndex("by_status_date", (q) => q.eq("status", "held").lt("date", before)).take(4000)) {
+      if (r.why === R.UNCHECKED) continue;
       await ctx.db.patch(r._id, { status: "expired", why: `held-past-lookback${r.why ? `: ${r.why}` : ""}`, updatedAt: now, runId });
       rows++;
     }
@@ -625,6 +682,34 @@ export const resolveHeld = internalMutation({
 });
 
 /**
+ * RELEASE A DATE'S DAYS HELD ONLY FOR THE SECOND CHECK, in one call
+ * (2026-10-12 review). After an attendance-rebuild outage longer than the
+ * lookback, those days are never checked by a run and never expire: an admin
+ * who is satisfied PowerSchool's verdict stands releases them here. Each
+ * becomes pending (if it was stamped payable when decided) and is paid on the
+ * next payday; a held day the screen disputed is NOT touched (resolveHeld,
+ * one by one). Without apply: true it only counts. Recorded in perfectDayAudit.
+ */
+export const releaseUnchecked = internalMutation({
+  args: { date: v.string(), reason: v.string(), actorName: v.string(), apply: v.optional(v.boolean()) },
+  handler: async (ctx, a) => {
+    if (!R.isDay(a.date)) return { ok: false as const, reason: "date must be YYYY-MM-DD." };
+    const reason = a.reason.trim();
+    if (reason.length < 3) return { ok: false as const, reason: "Say why." };
+    const rows = (await ctx.db.query("perfectDays").withIndex("by_status_date", (q) => q.eq("status", "held").eq("date", a.date)).collect())
+      .filter((r) => r.why === R.UNCHECKED);
+    const counted = { days: rows.length, payable: rows.filter((r) => r.payable).length };
+    if (a.apply !== true) return { ok: true as const, applied: false, wouldRelease: counted };
+    const now = new Date().toISOString();
+    for (const r of rows) {
+      await ctx.db.patch(r._id, { status: r.payable ? "pending" : "unpayable", why: `admin: released without the second check: ${reason}`, updatedAt: now, runId: "admin" });
+    }
+    await audit(ctx, a.actorName, "releaseUnchecked", { date: a.date, days: counted.days, payable: counted.payable, reason });
+    return { ok: true as const, applied: true, released: counted };
+  },
+});
+
+/**
  * FORFEIT PENDING DAYS, ON PURPOSE. The switch never takes back a pending day:
  * switched off and on again, it is paid on the next payday it is on for. When
  * the days themselves are wrong (the job decided badly, and was switched off
@@ -827,6 +912,8 @@ export async function statusFor(ctx: QueryCtx, nDates = 10) {
   const dates = await ctx.db.query("perfectDayDates").withIndex("by_date").order("desc").take(Math.max(1, Math.min(40, nDates)));
 
   const held = await ctx.db.query("perfectDays").withIndex("by_status_date", (q) => q.eq("status", "held")).take(2000);
+  // Every held DATE, however old, so one that will expire (a block missing, too perfect) is seen before it does.
+  const heldDates = await ctx.db.query("perfectDayDates").withIndex("by_state_date", (q) => q.eq("state", "held")).take(50);
   const broke = await ctx.db.query("perfectDays").withIndex("by_afterPayBroken", (q) => q.eq("afterPayBroken", true)).take(2000);
   const paidThenBroken: Array<{ studentNumber: string; date: string; txnId: string | null; why: string | null }> = [];
   let handled = 0;
@@ -873,6 +960,7 @@ export async function statusFor(ctx: QueryCtx, nDates = 10) {
       adminNoSchool: !!d.adminNoSchool, adminDecideAnyway: !!d.adminDecideAnyway,
     })),
     held: { count: held.length, list: held.slice(0, 100).map((r) => ({ studentNumber: r.studentNumber, date: r.date, why: r.why ?? null })) },
+    heldDates: heldDates.map((d) => ({ date: d.date, reason: d.reason, retryable: d.retryable ?? false })),
     paidThenBroken: { count: paidThenBroken.length, handled, list: paidThenBroken.slice(0, 100) },
     nextPayday: { payWeek: nextPayWeek, students: willPay.size, days: payDays, total: payTotal, earnedNotPaid: notPaid },
     controls: { count: settings.controls.length, paidMovements: controlsPaid },

@@ -27,7 +27,13 @@ import * as R from "./perfectDayRules";
  * LEAVERS (exitdate on or after the window: enrolment on a day is
  * entrydate <= D < exitdate, not "on the roster today"); class enrolments
  * with their dates (at least one class must have met); and each of the last
- * ten school days in full. Logs carry counts only.
+ * fifteen school days in full. Logs carry counts only.
+ *
+ * WHICH DATES ARE JUDGED: every date in the window from countFromDate on, and
+ * every earlier one in the window with days that still stand (runContext
+ * settleDates). countFromDate fences what is DECIDED, never what is re-read:
+ * a pause must not leave days already decided unread, to be paid over a known
+ * break or to expire unpaid (2026-10-12 review).
  */
 
 const CC_FIELDS = "id,studentid,sectionid,expression,termid,dateenrolled,dateleft";
@@ -62,7 +68,10 @@ async function atMost<T, U>(n: number, items: T[], fn: (x: T) => Promise<U>): Pr
 
 type RunArgs = { runId: string; today: string; minute: number; startedAt: string; tz: string };
 type Body = { ok: boolean; done: boolean; reason?: string };
-type Context = { settings: R.Settings; lastPayWeek: string | null; marks: Record<string, R.Marked>; adminNoSchool: string[]; decideAnyway: string[] };
+type Context = {
+  settings: R.Settings; lastPayWeek: string | null; marks: Record<string, R.Marked>; adminNoSchool: string[]; decideAnyway: string[];
+  decided?: string[]; settleDates?: string[];
+};
 type Result = { date: string; state: string; retryable: boolean; recheckHeld: boolean };
 
 /**
@@ -129,7 +138,9 @@ async function readAndDecide(ctx: ActionCtx, a: RunArgs, c: Context, summary: Re
   if (!host || !id || !secret || !schoolid || !yearid || !termid) {
     return { ok: false, reason: "PowerSchool settings are not all present in this deployment." };
   }
-  const decidable = (d: string) => !!settings.countFromDate && d >= settings.countFromDate;
+  // Judged: from the start on, or earlier with days still standing (settled only: applyDate inserts nothing before the start).
+  const settle = new Set(c.settleDates ?? []);
+  const decidable = (d: string) => (!!settings.countFromDate && d >= settings.countFromDate) || settle.has(d);
 
   const tok = await token(host, id, secret);
   const codes = R.codeBookOf(await pagedRows(host, tok, "attendance_code", `schoolid==${schoolid};yearid==${yearid}`,
@@ -154,7 +165,7 @@ async function readAndDecide(ctx: ActionCtx, a: RunArgs, c: Context, summary: Re
       checked: false, perfect: [], held: [], broken: [], counts: {}, rowCounts: {}, retryable: false, ...args,
     } as any);
     if (r?.stopped) throw new Stopped(String(r.reason));
-    if (!r?.skipped) results.push({ date: args.date, state: r.state, retryable: args.retryable === true && r.state === "held", recheckHeld: r.recheckHeld === true });
+    if (!r?.skipped) results.push({ date: args.date, state: r.state, retryable: r.retryable === true, recheckHeld: r.recheckHeld === true });
     return r;
   };
 
@@ -195,12 +206,12 @@ async function readAndDecide(ctx: ActionCtx, a: RunArgs, c: Context, summary: Re
       const d = window[i];
       if (!decidable(d)) continue;
       const j = R.judgeDay({
-        date: d, read: reads[i], codes, students, cc, reference, screen, decideAnyway: c.decideAnyway.includes(d),
+        date: d, read: reads[i], codes, students, cc, reference, screen, decideAnyway: c.decideAnyway.includes(d), decided: c.decided ?? [],
       });
       await apply({
         runId: a.runId, date: d, state: j.state, reason: j.reason, retryable: j.retryable, checked: j.checked,
-        perfect: j.perfect.map((p) => ({ sn: p.sn, div: p.div })),
-        held: j.held.map((h) => ({ sn: h.sn, div: h.div, why: h.why })),
+        perfect: [...j.perfect.map((p) => ({ sn: p.sn, div: p.div })), ...j.keep.map((k) => ({ sn: k.sn, div: k.div, existingOnly: true }))],
+        held: j.held.map((h) => ({ sn: h.sn, div: h.div, why: h.why, ...(h.existingOnly ? { existingOnly: true } : {}) })),
         broken: j.broken.map((b) => ({ sn: b.sn, why: b.why })),
         counts: j.counts, rowCounts: j.rowCounts,
       });

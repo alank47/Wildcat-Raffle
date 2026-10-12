@@ -30,7 +30,9 @@
  * it. It waits while no money moves (off, shadow) or while the student is a
  * control, and is paid on the next payday after. Cancelling pending days is a
  * decision of its own (perfectDay:forfeitPending, removeDays), never a side
- * effect of the switch.
+ * effect of the switch. Nor does a switch stop the RE-READ of days already
+ * decided: countFromDate fences which days are decided, never which are
+ * settled, so a break entered during a pause is applied before payday.
  *
  * NAMES NEVER APPEAR HERE. Student numbers and counts only.
  */
@@ -60,8 +62,12 @@ export const SYSTEM_ACTOR = { id: "system:attendance", name: "Wildcat Hub (atten
 export const DEFAULT_AMOUNT = 100;
 /** Per perfect day. A week's movement is split at $5,000, so this bound is about sense, not the cap. */
 export const MAX_AMOUNT = 1000;
-/** School days re-read every run (late marks; Promise Time PM was entered 1-2 weeks late on 8/28 and 9/9). */
-export const DEFAULT_LOOKBACK = 10;
+/**
+ * School days re-read every run (late marks). Fifteen, not ten: Promise Time
+ * PM for 8/28 was bulk-entered about 9/9-9/16, 7 to 12 school days late, and
+ * a day held for a block not entered yet expires unpaid once it leaves this.
+ */
+export const DEFAULT_LOOKBACK = 15;
 /** How far back, in calendar days, the run looks for those school days. */
 export const CALENDAR_REACH_DAYS = 28;
 
@@ -105,6 +111,17 @@ export const MIN_REFERENCE_DAYS = 3;
  * the whole date held, because then something is wrong with a source.
  */
 export const DISAGREE_DAY_MAX = 0.01;
+
+/** A perfect student held only because the second check could not run. Never expired: an admin releases it (releaseUnchecked). */
+export const UNCHECKED = "second-check-unavailable";
+/**
+ * A day already decided for a student whose CURRENT PowerSchool enrolment
+ * starts after it, with no class record on the day either. PowerSchool's
+ * students row holds the current span only, so a student who left and came
+ * back reads as not enrolled on the days of the earlier span: that is a
+ * question for an admin, never a break.
+ */
+export const ENROLMENT_UNCONFIRMED = "enrolment-unconfirmed";
 
 /** Is there a school day here? The Reflection Room's rule: slot 1 alone, or enough rows across slots. */
 export const EVIDENCE_SLOT1_ROWS = 20;
@@ -554,7 +571,7 @@ export function hasEvidence(rowCounts: Record<string, number> | null | undefined
 
 export type StudentVerdict = {
   perfect: boolean;
-  why: "not-enrolled" | "no-class" | "ditching" | "unknown-code" | "marked" | null;
+  why: "not-enrolled" | "no-class" | "ditching" | "unknown-code" | "marked" | typeof ENROLMENT_UNCONFIRMED | null;
   /** Broken only by K: the Perfect Attendance screen counts K as present (the known difference). */
   kOnly: boolean;
   /** Broken only in Promise Time AM (slot 1): late to school. Counted, for the equity review. */
@@ -623,20 +640,26 @@ export type DayJudgement = {
   /** The second check was applied (else nothing new may become payable). */
   checked: boolean;
   perfect: Array<{ sn: string; div: string | null }>;
-  /** Perfect by PowerSchool, not by the screen: held, one by one. */
-  held: Array<{ sn: string; why: string; div: string | null }>;
+  /**
+   * Perfect by the marks, but enrolled on the day only by the class records
+   * (they entered PowerSchool again after it): a day ALREADY decided for them
+   * stands; a new one is never started on that evidence.
+   */
+  keep: Array<{ sn: string; div: string | null }>;
+  /** Perfect by PowerSchool, not by the screen: held, one by one (existingOnly: only a day already decided). */
+  held: Array<{ sn: string; why: string; div: string | null; existingOnly?: boolean }>;
   /** Everybody else PowerSchool knows, with why (not enrolled, a mark, ...). */
   broken: Array<{ sn: string; why: string }>;
   counts: Record<string, any>;
   rowCounts: Record<string, number>;
 };
 
-/** Broken by what the read shows (a mark) or by the students table: true of a held read too. */
-const MARK_BROKEN = new Set(["marked", "ditching", "unknown-code", "not-enrolled"]);
+/** Makes a decided day not payable by what the read shows (a mark) or by the students table: true of a held read too. */
+const MARK_BROKEN = new Set(["marked", "ditching", "unknown-code", "not-enrolled", ENROLMENT_UNCONFIRMED]);
 
 const emptyJudgement = (date: string, state: DayJudgement["state"], reason: string, retryable: boolean,
   extra: Partial<DayJudgement> = {}): DayJudgement => ({
-  date, state, reason, retryable, checked: false, perfect: [], held: [], broken: [], counts: {}, rowCounts: {}, ...extra,
+  date, state, reason, retryable, checked: false, perfect: [], keep: [], held: [], broken: [], counts: {}, rowCounts: {}, ...extra,
 });
 
 /**
@@ -650,6 +673,9 @@ const emptyJudgement = (date: string, state: DayJudgement["state"], reason: stri
  *   4. every student is judged (a held read too);
  *   5. the screen checks each perfect student; a disagreement holds THAT
  *      STUDENT, and only a disagreement about more than 1% holds the date.
+ * `decided` names the dates an earlier run decided by these same checks (not
+ * an admin's "decide anyway"): the blocks such a day ran are a kind of day the
+ * school runs, so a day that ran exactly those blocks is not short of one.
  * A HELD date makes nobody perfect, but still lists the students the screen
  * disputes and those with a breaking mark: for a date decided on an earlier
  * run, those pending days must stop (applyDate).
@@ -663,6 +689,7 @@ export function judgeDay(input: {
   reference: DayStats[];
   screen: ScreenView;
   decideAnyway: boolean;
+  decided?: string[];
 }): DayJudgement {
   const { date } = input;
   if (!input.read.ok) {
@@ -696,13 +723,36 @@ export function judgeDay(input: {
         counts: { usual: usualMarked },
       };
     } else {
-      // A BLOCK NOT ENTERED YET. Compared with the same weekday pattern, and a
-      // block is EXPECTED only if it ran (had any rows) on more than half of
-      // those days, its usual level taken over the days it ran. So one "stack"
-      // day where all ten blocks met (Thu 9/3, Tue 9/8) cannot make a block
-      // that never meets on this pattern look missing (measured: it held 8/27,
-      // 8/31, 9/10 and more against a usual of half the stack day's count).
-      const same = ref.filter((r) => patternOf(r.date) === patternOf(date));
+      // A BLOCK NOT ENTERED YET, OR ONE THAT DID NOT MEET: PowerSchool cannot
+      // tell them apart, so the question is which blocks a day like this runs.
+      //
+      // 1. A KIND OF DAY ALREADY VOUCHED FOR. The blocks that met today (each
+      //    at a quarter or more of its usual level) are exactly the blocks of
+      //    a reference day an earlier run DECIDED by these checks: the school
+      //    runs days like it, complete. So a Monday run on the Tue/Fri bell, or
+      //    a normal day after stack and minimum days, is not held (2026-10-12
+      //    review). A day an admin decided anyway vouches for nothing, and a
+      //    day still held cannot vouch, so a block entered late on two days
+      //    running is still caught.
+      // 2. Otherwise THE SAME WEEKDAY PATTERN: a block is EXPECTED only if it
+      //    ran (had any rows) on more than half of those days, its usual level
+      //    taken over the days it ran. So one "stack" day where all ten blocks
+      //    met (Thu 9/3, Tue 9/8) cannot make a block that never meets on this
+      //    pattern look missing (measured: it held 8/27, 8/31, 9/10 and more
+      //    against a usual of half the stack day's count).
+      const usualAll: number[] = [];
+      for (let slot = 1; slot <= 10; slot++) usualAll[slot] = median(ref.map((r) => r.rowCounts[String(slot)] ?? 0).filter((n) => n > 0));
+      const shapeOf = (rc: Record<string, number>) => {
+        const met: number[] = [];
+        for (let slot = 1; slot <= 10; slot++) {
+          if (usualAll[slot] >= SLOT_MIN_USUAL && (rc[String(slot)] ?? 0) >= SLOT_INCOMPLETE_RATIO * usualAll[slot]) met.push(slot);
+        }
+        return met.join(",");
+      };
+      const decided = new Set(input.decided ?? []);
+      const vouched = new Set(ref.filter((r) => decided.has(r.date)).map((r) => shapeOf(r.rowCounts)));
+      const today = shapeOf(stats.rowCounts);
+      const same = today !== "" && vouched.has(today) ? [] : ref.filter((r) => patternOf(r.date) === patternOf(date));
       for (let slot = 1; slot <= 10 && !hold; slot++) {
         const ran = same.map((r) => r.rowCounts[String(slot)] ?? 0).filter((n) => n > 0);
         if (ran.length * 2 <= same.length) continue;
@@ -710,7 +760,8 @@ export function judgeDay(input: {
         const now = stats.rowCounts[String(slot)] ?? 0;
         if (usual >= SLOT_MIN_USUAL && now < SLOT_INCOMPLETE_RATIO * usual) {
           hold = {
-            reason: `Block ${slot} has ${now} marks against a usual ${usual} on this kind of day: it looks not entered yet, so the day is held.`,
+            reason: `Block ${slot} has ${now} marks against a usual ${usual} on this kind of day: it has not been entered yet, `
+              + "or it did not meet that day. Held until it is entered; if it did not meet, an admin decides the date anyway (perfectDay:decideAnyway).",
             counts: { slot, slotNow: now, slotUsual: usual },
           };
         }
@@ -750,17 +801,32 @@ export function judgeDay(input: {
   const enrolledCount = { ms: 0, hs: 0, other: 0 };
   const perfectCount = { ms: 0, hs: 0, other: 0 };
   const perfect: Array<{ sn: string; div: string | null }> = [];
+  const keep: Array<{ sn: string; div: string | null }> = [];
   const broken: Array<{ sn: string; why: string }> = [];
   const verdictOf = new Map<string, StudentVerdict>();
-  let noClass = 0, kOnly = 0, ptAmOnly = 0;
+  let noClass = 0, kOnly = 0, ptAmOnly = 0, enteredLaterCount = 0;
   const unknownCodes: Record<string, number> = {};
   const seenSn = new Set<string>();
   for (const s of input.students) {
     if (seenSn.has(s.sn)) continue; // one verdict per student number
     seenSn.add(s.sn);
     const enrolled = isDay(s.entry) && isDay(s.exit) && s.entry <= date && date < s.exit;
+    // ENTERED AGAIN AFTER THIS DATE (2026-10-12 review). PowerSchool's students
+    // row holds the CURRENT enrolment only (earlier spans live in
+    // REENROLLMENTS, not granted), so a student who left and came back reads
+    // as not enrolled on the days of the earlier span. Their class records,
+    // dropped ones included, still say whether they sat a class that day: if
+    // so, a day already decided stands (keep), and the marks still break it;
+    // if not, it is a question for an admin, never a break. Only an exit on or
+    // before the date (a backdated withdrawal) is "not enrolled".
+    const enteredLater = !enrolled && isDay(s.entry) && s.entry > date;
     const div = divisionOfGrade(s.grade);
-    const v = studentDayVerdict({ enrolled, hasClass: (ccByPs.get(s.psId) ?? []).length > 0, marks: marksByPs.get(s.psId) ?? [] });
+    let v = studentDayVerdict({ enrolled: enrolled || enteredLater, hasClass: (ccByPs.get(s.psId) ?? []).length > 0, marks: marksByPs.get(s.psId) ?? [] });
+    if (enteredLater) {
+      enteredLaterCount++;
+      if (v.perfect) { verdictOf.set(s.sn, v); keep.push({ sn: s.sn, div }); continue; }
+      if (v.why === "no-class") v = { ...v, why: ENROLMENT_UNCONFIRMED };
+    }
     verdictOf.set(s.sn, v);
     if (enrolled) enrolledCount[div ?? "other"]++;
     if (v.perfect) {
@@ -775,17 +841,18 @@ export function judgeDay(input: {
     }
   }
   Object.assign(counts, {
-    enrolled: enrolledCount, perfect: perfectCount, noClass, kOnly, brokenByPromiseTimeAmOnly: ptAmOnly, unknownCodes,
+    enrolled: enrolledCount, perfect: perfectCount, noClass, kOnly, brokenByPromiseTimeAmOnly: ptAmOnly, unknownCodes, enteredLater: enteredLaterCount,
     classesMeeting: sectionsMeeting.size,
     classesNoMarks: [...sectionsMeeting].filter((x) => !rowsBySection.has(x)).length,
   });
 
   // ---- the second check
   const usable = input.screen.available && !!input.screen.asOf && input.screen.asOf > date;
-  const held: Array<{ sn: string; why: string; div: string | null }> = [];
+  const held: Array<{ sn: string; why: string; div: string | null; existingOnly?: boolean }> = [];
   const screenCounts = { checked: usable, reason: usable ? "" : (input.screen.available ? `The Perfect Attendance screen's data is from ${input.screen.asOf ?? "an unknown date"}, not after ${date}.` : input.screen.reason),
     agreedPerfect: 0, heldDisagree: 0, knownDitching: 0, stricterUnknownCode: 0, stricterOther: 0, notOnScreen: 0 };
   let agreed = perfect;
+  let kept = keep;
   if (usable) {
     agreed = [];
     for (const p of perfect) {
@@ -797,7 +864,7 @@ export function judgeDay(input: {
     screenCounts.heldDisagree = held.length;
     for (const b of broken) {
       const v = verdictOf.get(b.sn)!;
-      if (b.why === "not-enrolled" || b.why === "no-class") continue;
+      if (b.why === "not-enrolled" || b.why === "no-class" || b.why === ENROLMENT_UNCONFIRMED) continue;
       if (screenPerfect(input.screen.bySn[b.sn], date) !== true) continue;
       if (v.kOnly) screenCounts.knownDitching++;
       else if (v.why === "unknown-code") screenCounts.stricterUnknownCode++;
@@ -811,6 +878,16 @@ export function judgeDay(input: {
         counts: {},
       };
     }
+    // A student kept on their class records: the screen's entry date is their
+    // current one, after this day, so only its marks are asked. A dispute holds
+    // a day already decided; it never starts one.
+    kept = [];
+    for (const k of keep) {
+      const sv = input.screen.bySn[k.sn];
+      if (sv && sv.bad.includes(date)) {
+        held.push({ sn: k.sn, div: k.div, existingOnly: true, why: "The Perfect Attendance screen shows an absence or tardy that PowerSchool's read does not." });
+      } else kept.push(k);
+    }
   }
   counts.screen = screenCounts;
   if (hold) {
@@ -820,13 +897,13 @@ export function judgeDay(input: {
     // onlyNotPayable). "No class" is left out: it leans on which blocks the
     // read shows meeting, which is what an incomplete read gets wrong.
     return {
-      date, state: "held", reason: hold.reason, retryable: false, checked: usable, perfect: [], held,
+      date, state: "held", reason: hold.reason, retryable: false, checked: usable, perfect: [], keep: [], held,
       broken: broken.filter((b) => MARK_BROKEN.has(b.why)), counts: { ...counts, ...hold.counts }, rowCounts: stats.rowCounts,
     };
   }
   return {
     date, state: "school", reason: usable ? "Decided." : `Decided without the second check (${screenCounts.reason}): nothing new becomes payable until it runs.`,
-    retryable: false, checked: usable, perfect: agreed, held, broken, counts, rowCounts: stats.rowCounts,
+    retryable: false, checked: usable, perfect: agreed, keep: kept, held, broken, counts, rowCounts: stats.rowCounts,
   };
 }
 
@@ -861,12 +938,24 @@ export type RegRow = {
  * but a pending day the screen now disputes is held, one the read shows
  * broken is broken, and a paid one it shows broken is flagged: the same
  * direction that "always applies", so a hold never pays over a known break.
+ *
+ * ONLY DAYS ALREADY DECIDED (`existingOnly`, and per person `existingOnly`): a
+ * date before countFromDate, decided before the switch last came on, or a
+ * student kept only on their class records. Nothing is inserted, so a pause
+ * never decides a new day; the rows that exist settle by their own stamps
+ * exactly as on any other date, so a known break is applied (or flagged once
+ * paid) and a held day is released once the second check agrees.
+ *
+ * ENROLMENT UNCONFIRMED (a broken entry with that why) is not a break: a
+ * pending day becomes held for an admin, a paid one is flagged.
  */
 export function planDateRows(input: {
   date: string; now: string; runId: string; settings: Settings; existing: RegRow[];
-  judgement: { perfect: Array<{ sn: string; div: string | null }>; held: Array<{ sn: string; why?: string; div?: string | null }>;
+  judgement: { perfect: Array<{ sn: string; div: string | null; existingOnly?: boolean }>;
+    held: Array<{ sn: string; why?: string; div?: string | null; existingOnly?: boolean }>;
     broken: Array<{ sn: string; why: string }>; checked: boolean };
   onlyNotPayable?: boolean;
+  existingOnly?: boolean;
 }): { inserts: RegRow[]; patches: Array<{ id: any; patch: Partial<RegRow> }>; counts: Record<string, number> } {
   const { date, now, runId, settings } = input;
   const inserts: RegRow[] = [];
@@ -893,6 +982,7 @@ export function planDateRows(input: {
 
   for (const p of input.onlyNotPayable ? [] : input.judgement.perfect) {
     const r = bySn.get(p.sn);
+    if (!r && (input.existingOnly || p.existingOnly)) continue;
     if (r && (r.status === "removed" || r.status === "expired")) continue;
     if (r && r.status === "paid") {
       if (r.afterPayBroken) {
@@ -906,7 +996,7 @@ export function planDateRows(input: {
     // row's own when it has one, and never the settings of today.
     const stamp = r ? { payable: r.payable, why: r.stampWhy ?? null } : scopeOf(settings, p.sn, date);
     const status: Status = !stamp.payable ? "unpayable" : !input.judgement.checked ? "held" : "pending";
-    const why = status === "held" ? "second-check-unavailable" : undefined;
+    const why = status === "held" ? UNCHECKED : undefined;
     if (!r) {
       inserts.push(newRow(p.sn, p.div, status, stamp, why));
       counts.inserted++;
@@ -921,7 +1011,7 @@ export function planDateRows(input: {
     if (r && (r.status === "removed" || r.status === "expired" || r.status === "paid")) continue;
     // An admin already settled this disagreement (perfectDay.resolveHeld): it stays settled.
     if (r && (r.status === "pending" || r.status === "unpayable") && String(r.why ?? "").startsWith("admin:")) continue;
-    if (!r && input.onlyNotPayable) continue;
+    if (!r && (input.onlyNotPayable || input.existingOnly || h.existingOnly)) continue;
     if (!r) {
       inserts.push(newRow(h.sn, h.div ?? null, "held", scopeOf(settings, h.sn, date), "screen-disagrees"));
       counts.inserted++;
@@ -943,6 +1033,13 @@ export function planDateRows(input: {
       continue;
     }
     if (r.status === "broken") continue;
+    if (b.why === ENROLMENT_UNCONFIRMED) {
+      // A question for an admin (resolveHeld), never a break; one an admin already answered stays answered.
+      if (r.status === "unpayable" || (r.status === "held" && r.why === ENROLMENT_UNCONFIRMED) || String(r.why ?? "").startsWith("admin:")) continue;
+      settle(r, "held", ENROLMENT_UNCONFIRMED);
+      counts.nowHeld++;
+      continue;
+    }
     settle(r, "broken", b.why);
     counts.nowBroken++;
   }

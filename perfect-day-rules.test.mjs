@@ -243,7 +243,48 @@ const judge = (o = {}) => R.judgeDay({ date: D, read: { ok: true, rows: dayRows(
   check("a student the screen does not list (left the roster) is judged by PowerSchool alone", leaver.perfect.some((p) => p.sn === STU[160].sn) && leaver.counts.screen.notOnScreen === 1);
   const late = judge({ students: STU.map((s, i) => (i === 170 ? { ...s, entry: "2026-10-22" } : i === 171 ? { ...s, exit: D } : s)) });
   check("enrolled means entrydate <= D < exitdate", !late.perfect.some((p) => p.sn === STU[170].sn || p.sn === STU[171].sn)
-    && late.broken.filter((b) => b.why === "not-enrolled").length === 2);
+    && late.broken.filter((b) => b.why === "not-enrolled").length === 1 && late.broken.some((b) => b.sn === STU[171].sn && b.why === "not-enrolled"));
+
+  // A STUDENT WHO LEFT AND CAME BACK (2026-10-12 review): PowerSchool's students row holds the current span only.
+  const back = (i, cc = CC) => judge({ students: STU.map((s, k) => (k === i ? { ...s, entry: "2026-10-26" } : s)), cc });
+  const inClass = back(170);
+  check("RE-ENTERED LATER, IN CLASS THAT DAY: never a new perfect day, but a day already decided is kept",
+    !inClass.perfect.some((p) => p.sn === STU[170].sn) && !!inClass.keep?.some((k) => k.sn === STU[170].sn) && !inClass.broken.some((b) => b.sn === STU[170].sn),
+    J({ keep: inClass.keep?.length, broken: inClass.broken.find((b) => b.sn === STU[170].sn) }));
+  const noRecord = back(170, CC.filter((c) => c.psId !== STU[170].psId));
+  check("...with no class record that day either: a question for an admin (enrolment unconfirmed), never \"not enrolled\"",
+    noRecord.broken.some((b) => b.sn === STU[170].sn && b.why === R.ENROLMENT_UNCONFIRMED) && !noRecord.keep?.some((k) => k.sn === STU[170].sn));
+  const absentThen = back(5);
+  check("...and a breaking mark that day still breaks it", absentThen.broken.some((b) => b.sn === STU[5].sn && b.why === "marked"));
+  const screenSaysAbsent = judge({ students: STU.map((s, k) => (k === 170 ? { ...s, entry: "2026-10-26" } : s)), screen: screenOf({ [STU[170].sn]: [D] }) });
+  check("...a kept student the screen shows absent that day is held, for a day already decided only",
+    screenSaysAbsent.held.some((h) => h.sn === STU[170].sn && h.existingOnly === true) && !!screenSaysAbsent.keep && !screenSaysAbsent.keep.some((k) => k.sn === STU[170].sn));
+
+  // WHICH BLOCKS A DAY RUNS (2026-10-12 review): a block that did not meet is not "not entered yet".
+  const MONTHU = [1, 2, 4, 6, 8, 9, 10], TUEFRI = [1, 3, 5, 7, 8, 9, 10];
+  const shaped = (date, slots, n = 30) => R.dayStats(date, slots.flatMap((slot) => STU.slice(0, slot === 1 ? 60 : n).map((s) => ({ id: rid++, studentid: s.psId, att_date: date, periodid: 850 + slot, attendance_codeid: slot === 1 ? 2 : 1 }))), new Set(STU.map((s) => s.psId)));
+  const rowsShaped = (date, slots, n = 30) => slots.flatMap((slot) => STU.slice(0, slot === 1 ? 60 : n).map((s) => ({ id: rid++, studentid: s.psId, att_date: date, periodid: 850 + slot, attendance_codeid: slot === 1 ? 2 : 1, ccid: `${s.psId}-${slot}` })));
+  const WEEK = [["2026-10-12", MONTHU], ["2026-10-13", TUEFRI], ["2026-10-15", MONTHU], ["2026-10-16", TUEFRI], ["2026-10-19", MONTHU], ["2026-10-20", TUEFRI], ["2026-10-22", MONTHU], ["2026-10-23", TUEFRI]];
+  const REF2 = WEEK.map(([d, sl]) => shaped(d, sl));
+  const MON = "2026-10-26";
+  const CC10 = STU.flatMap((s, i) => Array.from({ length: 10 }, (_, k) => ({ id: `${s.psId}-${k + 1}`, psId: s.psId, section: `${k + 1}-${i % 5}`, slot: k + 1, from: "2026-08-12", to: "2027-06-05" })));
+  const judgeMon = (slots, decided, reference = REF2) => R.judgeDay({ date: MON, read: { ok: true, rows: rowsShaped(MON, slots) }, codes: CODEBOOK, students: STU, cc: CC10,
+    reference, screen: { ...screenOf(), asOf: "2026-10-27" }, decideAnyway: false, decided });
+  const swapped = judgeMon(TUEFRI, WEEK.map(([d]) => d));
+  check("A MONDAY RUN ON THE TUE/FRI BELL IS DECIDED: it ran exactly the blocks of days already decided",
+    swapped.state === "school", swapped.reason);
+  check("...while the same Monday with none of those days decided yet is still held (a block it did not run)",
+    judgeMon(TUEFRI, []).state === "held" && /did not meet/.test(judgeMon(TUEFRI, []).reason), judgeMon(TUEFRI, []).reason);
+  // Thursday 10/22 is still held with Promise Time PM not entered; Monday is missing it too.
+  const lateThu = [...REF2.filter((r) => r.date !== "2026-10-22"), shaped("2026-10-22", [1, 2, 4, 6, 8, 9])];
+  const lateMon = judgeMon([1, 2, 4, 6, 8, 9], WEEK.map(([d]) => d).filter((d) => d !== "2026-10-22"), lateThu);
+  check("ONLY A DECIDED DAY VOUCHES: a held Thursday missing Promise Time PM does not let a Monday missing it too through",
+    lateMon.state === "held" && /Block 10/.test(lateMon.reason), lateMon.reason);
+  const stack = [shaped("2026-10-19", MONTHU), shaped("2026-10-20", TUEFRI), shaped("2026-10-21", [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]), shaped("2026-10-22", [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]),
+    shaped("2026-10-23", TUEFRI), shaped("2026-10-15", [1, 2, 3, 4, 5, 6, 7, 8, 9, 10])];
+  const afterStacks = judgeMon(MONTHU, ["2026-10-19", "2026-10-20", "2026-10-21", "2026-10-22", "2026-10-23", "2026-10-15"], stack);
+  check("TWO ALL-TEN-BLOCK DAYS OF THE SAME PATTERN DO NOT HOLD A NORMAL DAY: a decided normal day of that pattern vouches for it",
+    afterStacks.state === "school" && judgeMon(MONTHU, [], stack).state === "held", afterStacks.reason);
 }
 
 // ---------------------------------------------------------------- the register
@@ -297,6 +338,32 @@ console.log("\nTHE REGISTER: STAMPED ONCE, SETTLED UNTIL PAID\n");
     patchOf("m1")?.status === "broken" && patchOf("m2")?.status === "held" && patchOf("m3")?.afterPayBroken === true && !("status" in (patchOf("m3") ?? {})), J(p11.patches));
   check("...and nothing becomes pending or is inserted from a read that was not believed",
     patchOf("m4") === null && p11.inserts.length === 0, J({ m4: patchOf("m4"), ins: p11.inserts.length }));
+
+  // A DATE DECIDED BEFORE THE SWITCH LAST CAME ON (2026-10-12 review): its days settle; none is started.
+  const off2on = R.planConfigure(R.planConfigure(live, { mode: "off" }, "2026-10-23").next, { mode: "live" }, "2026-10-26").next;
+  const before = [
+    { ...rows[0], studentNumber: "1", _id: "b1", status: "pending" }, { ...rows[0], studentNumber: "2", _id: "b2", status: "held", why: "second-check-unavailable" },
+    { ...rows[0], studentNumber: "3", _id: "b3", status: "paid", paidTxnId: "txn_1" }, { ...rows[0], studentNumber: "4", _id: "b4", status: "broken", why: "marked" },
+  ];
+  const p12 = R.planDateRows({ date: D, now: NOW, runId: "r12", settings: off2on, existing: before, existingOnly: true,
+    judgement: { perfect: [{ sn: "2", div: "ms" }, { sn: "4", div: "ms" }, { sn: "9", div: "ms" }], held: [{ sn: "8", why: "screen-disagrees" }],
+      broken: [{ sn: "1", why: "marked" }, { sn: "3", why: "marked" }], checked: true } });
+  const p12of = (id) => p12.patches.find((x) => x.id === id)?.patch ?? null;
+  check("A PAUSE NEVER STARTS A DAY: before the start, nothing is inserted, perfect or held", p12.inserts.length === 0, J(p12.inserts));
+  check("...but the days already decided settle by their own stamps: a known break applies, a paid one is flagged, a held one is released, a corrected one restored",
+    p12of("b1")?.status === "broken" && p12of("b3")?.afterPayBroken === true && p12of("b2")?.status === "pending" && p12of("b4")?.status === "pending", J(p12.patches));
+
+  // ENROLMENT UNCONFIRMED is a question for an admin, never a break.
+  const p13 = R.planDateRows({ date: D, now: NOW, runId: "r13", settings: live,
+    existing: [{ ...rows[0], studentNumber: "1", _id: "e1" }, { ...rows[0], studentNumber: "2", _id: "e2", status: "paid", paidTxnId: "txn_2" }],
+    judgement: { perfect: [], held: [], broken: [{ sn: "1", why: R.ENROLMENT_UNCONFIRMED }, { sn: "2", why: R.ENROLMENT_UNCONFIRMED }, { sn: "3", why: R.ENROLMENT_UNCONFIRMED }], checked: true } });
+  const p13of = (id) => p13.patches.find((x) => x.id === id)?.patch ?? null;
+  check("ENROLMENT UNCONFIRMED HOLDS, NEVER BREAKS: a pending day is held for an admin, a paid one flagged, and no day is started",
+    p13of("e1")?.status === "held" && p13of("e1")?.why === R.ENROLMENT_UNCONFIRMED && p13of("e2")?.afterPayBroken === true && p13.inserts.length === 0, J(p13.patches));
+  const p14 = R.planDateRows({ date: D, now: NOW, runId: "r14", settings: live, existing: [{ ...rows[0], studentNumber: "1", _id: "k1" }],
+    judgement: { perfect: [{ sn: "1", div: "ms", existingOnly: true }, { sn: "5", div: "ms", existingOnly: true }], held: [{ sn: "6", why: "screen-disagrees", existingOnly: true }], broken: [], checked: true } });
+  check("...and a student kept on class records keeps the day already decided, and starts none",
+    p14.patches.length === 0 && p14.inserts.length === 0, J(p14));
 }
 
 // ---------------------------------------------------------------- payday

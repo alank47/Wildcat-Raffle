@@ -28,6 +28,11 @@
 //   F. The browser cannot send the reserved behaviour, on any of the four
 //      write paths.
 //   G. One run at a time, the summary audit entry, the ledger check.
+//   M. A pause (off, then on) never stops the re-read of days already decided.
+//   N. Holds that must not cost the school a day: a day run on another
+//      weekday's bell, stack days, a block entered 11 school days late, an
+//      attendance-rebuild outage, a failed re-read, an admin's "no school",
+//      and a student who left and came back.
 //
 // Synthetic student numbers only; nothing here talks to a real deployment.
 import { readFileSync } from "node:fs";
@@ -171,7 +176,8 @@ async function rebuildScreen(w, atIso, { writing = false } = {}) {
   for (const r of w.store.rows("psAttendanceMarks")) await w.store.db.delete(r._id);
   const day = laOf(Date.parse(atIso)).date;
   for (const s of ALL) {
-    const exit = w.fake.tables.students.find((x) => x.id === s.psId).exitdate;
+    const ps = w.fake.tables.students.find((x) => x.id === s.psId);
+    const exit = ps.exitdate;
     if (exit <= day) continue;                      // the current roster only, as the rebuild reads it
     const m = { absent: new Set(), exAbs: new Set(), unexAbs: new Set(), tardy: new Set(), exTardy: new Set(), unexTardy: new Set() };
     for (const r of w.fake.tables.attendance.filter((x) => x.studentid === s.psId)) {
@@ -184,7 +190,7 @@ async function rebuildScreen(w, atIso, { writing = false } = {}) {
     for (const d of w.screenExtra[s.key] ?? []) { m.absent.add(d); m.unexAbs.add(d); }
     const L = (x) => [...x].sort();
     await w.store.db.insert("psAttendanceMarks", {
-      studentNumber: s.sn, entryDate: "2026-08-12", absentDates: L(m.absent), excusedAbsentDates: L(m.exAbs), tardyDates: L(m.tardy),
+      studentNumber: s.sn, entryDate: ps.entrydate, absentDates: L(m.absent), excusedAbsentDates: L(m.exAbs), tardyDates: L(m.tardy),
       excusedTardyDates: L(m.exTardy), unexcusedAbsentDates: L(m.unexAbs), unexcusedTardyDates: L(m.unexTardy), syncedAt: atIso,
     });
   }
@@ -814,6 +820,168 @@ console.log("\nK. A DATE ALREADY DECIDED WHOSE RE-READ IS HELD IS NEVER PAID OVE
   check("...once it leaves the lookback the disputed days expire unpaid, and the date is not called \"expired, not paid\" over the days it paid",
     ["S5", "S6"].every((k) => w.reg(k, "2026-10-22")?.status === "expired") && w.dateRec("2026-10-22")?.state === "school" && st.paidThenBroken.count === 0,
     J({ d: w.dateRec("2026-10-22")?.state, rows: ["S5", "S6"].map((k) => w.reg(k, "2026-10-22")?.status) }));
+}
+
+
+// ===========================================================================
+console.log("\nM. A PAUSE NEVER STOPS THE RE-READ OF A DAY ALREADY DECIDED\n");
+{
+  const w = await makeWorld();
+  for (const d of weekdaysBetween("2026-10-12", "2026-11-13")) w.school(d);
+  await configure(w, "2026-10-19T13:00:00Z", { mode: "live" });
+  for (const d of ["2026-10-20", "2026-10-21", "2026-10-22", "2026-10-23"]) await morning(w, d);
+  clock.set("2026-10-23T21:00:00Z");
+  w.mark("S1", "2026-10-22", 10, "A");                                     // Friday 14:00 PT: a late Promise Time PM absence for Thursday
+  await configure(w, "2026-10-23T21:30:00Z", { mode: "off" });             // Friday 14:30 PT: the kill switch
+  await configure(w, "2026-10-26T13:00:00Z", { mode: "live" });            // Monday 06:00 PT: back on, counting from 10/26
+  await morning(w, "2026-10-26");
+  check("AFTER AN OFF/ON, A DAY ALREADY DECIDED IS STILL RE-READ: S1's pending Thursday, absent before payday, is broken, not paid",
+    w.reg("S1", "2026-10-22")?.status === "broken" && J(paidDates(w, "S1")) === J(["2026-10-19", "2026-10-20", "2026-10-21"]),
+    J({ row: w.reg("S1", "2026-10-22")?.status, paid: paidDates(w, "S1") }));
+  check("...the rest of the school is paid for it, and Friday 10/23 (not decided when it went off) is never decided",
+    TEST.filter((s) => s.key !== "S1").every((s) => paidDates(w, s.key).includes("2026-10-22")) && !w.rows("perfectDays").some((r) => r.date === "2026-10-23"));
+  w.mark("S2", "2026-10-21", 3, "X");                                      // an absence entered for a day already paid
+  await morning(w, "2026-10-27");
+  const st = await status(w);
+  check("...and a paid day from before the switch that later breaks goes on the admin's paid-then-broken list",
+    w.reg("S2", "2026-10-21")?.afterPayBroken === true && st.paidThenBroken.list.some((x) => x.studentNumber === SN("S2") && x.date === "2026-10-21"), J(st.paidThenBroken));
+}
+{
+  const w = await makeWorld();
+  for (const d of weekdaysBetween("2026-10-12", "2026-11-13")) w.school(d);
+  await configure(w, "2026-10-19T13:00:00Z", { mode: "live" });
+  for (const d of ["2026-10-20", "2026-10-21", "2026-10-22", "2026-10-23"]) await morning(w, d);
+  await morning(w, "2026-10-26", { writing: true });                       // the rebuild still writing: Friday decided, held for the second check
+  const fri = w.reg("S1", "2026-10-23");
+  await configure(w, "2026-10-26T15:00:00Z", { mode: "off" });             // 08:00 PT, a false alarm
+  await configure(w, "2026-10-26T15:10:00Z", { mode: "live" });            // 08:10 PT, back on
+  for (const d of weekdaysBetween("2026-10-27", "2026-11-02")) await morning(w, d);
+  check("A DAY HELD FOR THE SECOND CHECK IS NOT FORFEITED BY AN OFF/ON: Friday 10/23 is released by the next run and paid on 11/2",
+    fri?.status === "held" && fri?.payable === true && TEST.every((s) => paidDates(w, s.key).includes("2026-10-23")),
+    J({ fri: fri?.status, now: w.reg("S1", "2026-10-23")?.status }));
+}
+
+// ===========================================================================
+console.log("\nN. HOLDS THAT MUST NOT COST THE SCHOOL A DAY\n");
+// A school day as PowerSchool shows it, block by block: the 25 others tardy to Promise Time AM, 21 of them absent from every other block that met.
+const MONTHU = [1, 2, 4, 6, 8, 9, 10], TUEFRI = [1, 3, 5, 7, 8, 9, 10], ALLTEN = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
+const bellOf = (d) => ([1, 4].includes(weekday(d)) ? MONTHU : [2, 5].includes(weekday(d)) ? TUEFRI : ALLTEN);
+const blocks = (w, date, slots) => {
+  for (const f of FILL) w.mark(f.key, date, 1, "T");
+  for (const slot of slots) if (slot !== 1) for (const f of FILL.slice(0, 21)) w.mark(f.key, date, slot, "A");
+};
+{
+  const w = await makeWorld();
+  for (const d of weekdaysBetween("2026-10-12", "2026-11-13")) {
+    blocks(w, d, d === "2026-10-26" || d === "2026-10-29" ? ALLTEN : d === "2026-11-02" ? TUEFRI : bellOf(d));
+  }
+  await configure(w, "2026-10-19T13:00:00Z", { mode: "live" });
+  for (const d of weekdaysBetween("2026-10-20", "2026-11-03")) await morning(w, d);
+  check("A MONDAY RUN ON THE TUE/FRI BELL IS DECIDED THE NEXT MORNING, NOT HELD AS \"NOT ENTERED\"",
+    w.dateRec("2026-11-02")?.state === "school" && w.reg("S1", "2026-11-02")?.status === "pending", J(w.dateRec("2026-11-02")?.reason));
+  for (const d of weekdaysBetween("2026-11-04", "2026-11-06")) await morning(w, d);
+  check("A NORMAL THURSDAY AFTER TWO ALL-TEN-BLOCK MON/THU DAYS IS DECIDED THE NEXT MORNING", w.dateRec("2026-11-05")?.state === "school",
+    J(w.dateRec("2026-11-05")?.reason));
+  await morning(w, "2026-11-09");
+  check("...and both are paid on time, with the stack days, on the 11/9 payday",
+    J(w.payouts("S1").find((p) => p.payWeek === "2026-11-09")?.dates) === J(["2026-11-02", "2026-11-03", "2026-11-04", "2026-11-05", "2026-11-06"])
+    && paidDates(w, "S1").includes("2026-10-26") && paidDates(w, "S1").includes("2026-10-29"), J(w.payouts("S1").map((p) => p.dates)));
+}
+{
+  // Promise Time PM for Friday 10/23 is bulk-entered during the 11th school day after it (8/28's was 7-12 school days late).
+  const w = await makeWorld();
+  for (const d of weekdaysBetween("2026-10-12", "2026-11-20")) blocks(w, d, d === "2026-10-23" ? TUEFRI.filter((x) => x !== 10) : bellOf(d));
+  await configure(w, "2026-10-19T13:00:00Z", { mode: "live" });
+  for (const d of weekdaysBetween("2026-10-20", "2026-10-27")) await morning(w, d);
+  const st = await status(w);
+  check("A DAY WITH A BLOCK MISSING SAYS IT MAY NOT HAVE MET, AND THE STATUS LISTS IT FOR AN ADMIN BEFORE IT EXPIRES",
+    w.dateRec("2026-10-23")?.state === "held" && /did not meet/.test(w.dateRec("2026-10-23")?.reason ?? "")
+    && (st.heldDates ?? []).some((x) => x.date === "2026-10-23" && /decideAnyway/.test(x.reason)), J(st.heldDates));
+  for (const d of weekdaysBetween("2026-10-28", "2026-11-09")) await morning(w, d);
+  clock.set("2026-11-09T20:00:00Z");
+  for (const f of FILL.slice(0, 21)) w.mark(f.key, "2026-10-23", 10, "A");
+  for (const d of weekdaysBetween("2026-11-10", "2026-11-16")) await morning(w, d);
+  check("A BLOCK ENTERED 11 SCHOOL DAYS LATE IS STILL READ: Friday 10/23 is decided, not expired, and paid on 11/16",
+    w.dateRec("2026-10-23")?.state === "school" && paidDates(w, "S1").includes("2026-10-23"), J({ d: w.dateRec("2026-10-23")?.state, s1: w.reg("S1", "2026-10-23")?.status }));
+}
+{
+  // The attendance rebuild down for 18 school days: every day decided meanwhile is held for the second check.
+  const w = await makeWorld();
+  for (const d of weekdaysBetween("2026-10-12", "2026-11-27")) w.school(d);
+  await configure(w, "2026-10-19T13:00:00Z", { mode: "live" });
+  await morning(w, "2026-10-20");
+  for (const d of weekdaysBetween("2026-10-21", "2026-11-13")) await tick(w, `${d}T14:42:00Z`);
+  await morning(w, "2026-11-16");                                           // the rebuild is back; 10/20-10/23 have left the lookback
+  check("AN OUTAGE LONGER THAN THE LOOKBACK FORFEITS NOTHING: days held only for the second check stay held for an admin, never expired",
+    ["2026-10-20", "2026-10-21", "2026-10-22", "2026-10-23"].every((d) => TEST.every((s) => w.reg(s.key, d)?.status === "held" && w.reg(s.key, d)?.why === "second-check-unavailable")),
+    J(["2026-10-20", "2026-10-23"].map((d) => w.reg("S1", d))));
+  check("...the days still in the lookback are checked and paid", paidDates(w, "S1").includes("2026-10-26") && paidDates(w, "S1").includes("2026-11-13"), J(paidDates(w, "S1")));
+  clock.set("2026-11-16T20:00:00Z");
+  const release = (o) => w.rt.run("perfectDay.releaseUnchecked", { date: "2026-10-21", reason: "rebuild was down; PowerSchool's verdict stands", actorName: "Ada Admin", ...o })
+    .catch((e) => ({ ok: false, error: String(e?.message || e) }));
+  const dry = await release({});
+  check("RELEASE A DATE IN ONE CALL: releaseUnchecked counts first and changes nothing without apply",
+    dry.ok && dry.applied === false && dry.wouldRelease?.days === 12 && w.reg("S1", "2026-10-21")?.status === "held", J(dry));
+  const rel = await release({ apply: true });
+  for (const d of weekdaysBetween("2026-11-17", "2026-11-23")) await morning(w, d);
+  check("...with apply, the whole date is paid on the next payday, the other dates stay held, and the act is recorded",
+    rel.ok && rel.released?.days === 12 && TEST.every((s) => paidDates(w, s.key).includes("2026-10-21") && !paidDates(w, s.key).includes("2026-10-20"))
+    && w.reg("S1", "2026-10-20")?.status === "held" && w.rows("perfectDayAudit").some((r) => r.action === "releaseUnchecked" && r.detail.days === 12), J({ rel, s1: paidDates(w, "S1") }));
+}
+{
+  const w = await makeWorld();
+  for (const d of weekdaysBetween("2026-10-12", "2026-11-06")) w.school(d);
+  await configure(w, "2026-10-19T13:00:00Z", { mode: "live", lookbackSchoolDays: 3 });
+  await morning(w, "2026-10-20"); await morning(w, "2026-10-21");
+  w.down = (u) => /att_date%3D%3D2026-10-20/.test(u) && !/\/count\?/.test(u);   // reads of 10/20 fail; its count works
+  await morning(w, "2026-10-23");                                                // 10/20 is the oldest of three
+  const mid = w.dateRec("2026-10-20");
+  check("A DECIDED DATE WHOSE RE-READ FAILS STAYS DECIDED, and the run is tried again",
+    mid?.state === "school" && mid?.retryable === true && /re-read failed/.test(mid?.reason ?? "") && w.state().lastDoneDate !== "2026-10-23", J(mid));
+  w.down = null;
+  await morning(w, "2026-10-26");
+  check("...so once it leaves the lookback it is not called \"expired, not paid\" over the days it paid",
+    w.dateRec("2026-10-20")?.state === "school" && paidDates(w, "S1").includes("2026-10-20"), J(w.dateRec("2026-10-20")));
+}
+{
+  const w = await makeWorld();
+  for (const d of weekdaysBetween("2026-10-12", "2026-11-13")) w.school(d);
+  await configure(w, "2026-10-19T13:00:00Z", { mode: "live" });
+  for (const d of ["2026-10-20", "2026-10-21", "2026-10-22"]) await morning(w, d);
+  w.mark("S3", "2026-10-21", 3, "A");                                       // S3's pending 10/21 breaks on the next run
+  await morning(w, "2026-10-23");
+  clock.set("2026-10-23T18:00:00Z");
+  const r1 = await w.rt.run("perfectDay.markNoSchool", { date: "2026-10-21", reason: "staff day after all", actorName: "Ada Admin" });
+  // The admin takes out what the refusal names (pending, held or paid); S3's broken day is no money either way.
+  for (const s of TEST.filter((x) => x.key !== "S3")) await w.rt.run("perfectDay.removeDays", { studentNumber: s.sn, dates: ["2026-10-21"], reason: "no school that day", actorName: "Ada Admin" });
+  const r2 = await w.rt.run("perfectDay.markNoSchool", { date: "2026-10-21", reason: "staff day after all", actorName: "Ada Admin" });
+  await morning(w, "2026-10-26");
+  const next = w.dateRec("2026-10-21")?.state;
+  for (const d of weekdaysBetween("2026-10-27", "2026-11-13")) await morning(w, d);
+  check("AN ADMIN'S \"NO SCHOOL\" STICKS once the decided days are taken out: never turned back to held, never expired",
+    r1.ok === false && r1.decided === 11 && w.reg("S3", "2026-10-21")?.status === "broken" && r2.ok && next === "no-school" && w.dateRec("2026-10-21")?.state === "no-school",
+    J({ r1, next, now: w.dateRec("2026-10-21") }));
+}
+{
+  const w = await makeWorld();
+  for (const d of weekdaysBetween("2026-10-12", "2026-11-06")) w.school(d);
+  await configure(w, "2026-10-19T13:00:00Z", { mode: "live" });
+  for (const d of ["2026-10-20", "2026-10-21", "2026-10-22"]) await morning(w, d);
+  // S2 is withdrawn effective Thursday 10/22 (the first day not enrolled), as PowerSchool records it: classes dropped.
+  const ps = w.fake.tables.students.find((x) => x.student_number === SN("S2"));
+  ps.exitdate = "2026-10-22";
+  const old = w.fake.tables.cc.filter((c) => c.studentid === ps.id);
+  for (const c of old) Object.assign(c, { dateleft: "2026-10-22", termid: -3600, sectionid: -c.sectionid });
+  await morning(w, "2026-10-23");
+  const shown = await studentView(w, "S2", "2026-10-23T20:00:00Z");
+  // Re-entered Monday 10/26: the students row now holds the NEW span only (the old one is in REENROLLMENTS).
+  Object.assign(ps, { entrydate: "2026-10-26", exitdate: "2027-06-05" });
+  for (const c of old) w.fake.tables.cc.push({ ...c, id: c.id + 100000, termid: 3600, sectionid: Math.abs(c.sectionid), dateenrolled: "2026-10-26", dateleft: "2027-06-05" });
+  await morning(w, "2026-10-26");
+  check("A STUDENT WHO LEFT AND CAME BACK IS PAID THE DAYS EARNED BEFORE LEAVING, as they were shown",
+    J(shown.wildcatCash.perfectDays?.days) === J(["2026-10-19", "2026-10-20", "2026-10-21"]) && J(paidDates(w, "S2")) === J(["2026-10-19", "2026-10-20", "2026-10-21"]),
+    J(["2026-10-19", "2026-10-20", "2026-10-21"].map((d) => `${w.reg("S2", d)?.status}:${w.reg("S2", d)?.why ?? ""}`)));
+  check("...and no day is started for the time away", !w.rows("perfectDays").some((r) => r.studentNumber === SN("S2") && (r.date === "2026-10-22" || r.date === "2026-10-23")));
 }
 
 // ===========================================================================
