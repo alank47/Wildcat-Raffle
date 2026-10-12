@@ -317,6 +317,21 @@ a change shows when it happens.
   group: no line holds the corrected student differently from before. The
   alternative was to hold every week back until its month leaves the nightly
   rebuild (the 8th of the next month), up to five weeks behind Trends.
+- **A week can be withheld for good** (as built 2026-10-12, third review). A
+  week is served only from group rows read through its Friday, and those rows
+  are never rewritten, even when a day of the week turns up later (records
+  dated a holiday Friday, a register keyed in days late) or a day's records
+  are removed. Such a week is then withheld for every line from that night
+  on, never served a second time with new figures, and the month's status row
+  lists it (`stuckWeeks`, dates only). Nothing rebuilds it by itself. To have
+  it back, an administrator rebuilds the month on purpose:
+  `attendanceGroupRunChart:resetGroupMonth` (the month's group rows and its
+  status row), then the nightly mend for a month of this year, or
+  `attendanceRunChart:buildMonth` with `groupsOnly` by hand. That serves the
+  month's weeks once more with that night's figures: the leak above, opened
+  once and deliberately. Not yet seen in the data (the review's read-only
+  counts, 2026-10-12: no weekend school days and no late-appearing days in
+  either year).
 - **No individual figures.** The server sends a rate per week and a group size
   rounded to the nearest 5 — never a member count, student-days, absence count,
   date of membership or id. Gender is a Standard field, not a restricted one;

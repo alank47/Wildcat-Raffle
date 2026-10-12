@@ -1457,6 +1457,9 @@ suite.resetRemedy = async (Mx) => {
   check("...and the fix-up text says so where it is read: reset the month, not just delete its rows",
     [SRC.groups, SRC.action].every((s) => /resetGroupMonth/.test(s) && !/the next build writes them afresh/.test(s)
       && !/To rebuild served\s+\*?\s*weeks on purpose, delete the month's group rows first\./.test(s)));
+  const flat = approval.replace(/\n>\s?/g, " ").replace(/\s+/g, " ");
+  check("the approval record says a finished week can be withheld for good, and how it is rebuilt on purpose",
+    /\*\*A week can be withheld for good\*\*/.test(approval) && flat.includes("resetGroupMonth"));
 }
 
 // ===========================================================================
