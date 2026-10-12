@@ -872,8 +872,9 @@ async function decideCarries(ctx: MutationCtx, c: {
     // shadow as the control, the MS room's presses decided every HS carry --
     // an HS student absent at Power-Up and after it was "served", and Room
     // did not run carried HS students who were in class. On a check-off day
-    // it matters even more: Attendance done would carry every HS student,
-    // none of whom the room could check Here.
+    // Attendance done names only the room's own rows (roomTakes), and an HS
+    // row in shadow can never be checked Here: Room did not run is the press
+    // this still keeps off it.
     const roomRuns = u.mode === "live";
     const verdict: CarryVerdict = carryVerdict({
       unit: { carryCount: u.carryCount }, studentNumber: u.studentNumber, division: u.division, serveDay: c.d,

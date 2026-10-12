@@ -259,7 +259,7 @@ export async function rowsOfMadeList(ctx: Ctx, date: string, tz: string, gradeOf
       notHere: !!u.roomNotHere,
       ...lunchFields(u.division, lunch),
       here: !!u.roomHere,
-      resolved: !!u.resolvedAt,
+      ...(u.resolvedAt ? { resolved: true } : {}),
     });
   }
   return out;

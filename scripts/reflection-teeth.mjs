@@ -397,9 +397,12 @@ const CASES = [
     from: "          if (r.state === \"countable\") next.firstCountableAt = a.startedAt;",
     to: "          if (r.state === \"countable\" && !t.firstCountableAt) next.firstCountableAt = a.startedAt;",
     mustFail: "...and so is a tardy counted, re-judged an arrival before the close, and counted again after it" },
+  // Attendance done names only the room's own rows since the 2026-10-12
+  // review, so on a check-off day Room did not run is the press this guard
+  // still keeps off a shadow division.
   { guard: "the room's presses decide a shadow division's carries too", file: SERVER, test: READER_TEST,
     from: "      room: roomRuns ? {", to: "      room: true ? {",
-    mustFail: "check-off: Attendance done with nobody checked Here moves M1 (live) to Tuesday as a no-show, and never H-OK (HS, in shadow, in class all day)" },
+    mustFail: "Room did not run carries the live division's detentions only: M1 (room closed) and H-ABS (absent), never H-OK, who was in class all day" },
   { guard: "the day's 'room attendance not recorded' counts shadow detentions", file: SERVER, test: READER_TEST,
     from: "    if (roomRuns && (verdict.verdict === \"carry\" || verdict.verdict === \"served\")", to: "    if ((verdict.verdict === \"carry\" || verdict.verdict === \"served\")",
     mustFail: "...and the day's review counts only the LIVE detentions PowerSchool decided (1, not 3)" },
@@ -708,7 +711,7 @@ const CASES = [
     from: "    if (u.resolvedAt) {", to: "    if (false) {",
     mustFail: "decided: E, added to the next list in review, cannot be checked Here afterwards: refused in words, and nothing recorded" },
   { guard: "the list never says a detention was decided in review", file: LIST, test: READER_TEST,
-    from: "      resolved: !!u.resolvedAt,\n", to: "",
+    from: "      ...(u.resolvedAt ? { resolved: true } : {}),\n", to: "",
     mustFail: "...and the room does not count it: 0 of 1 here (A alone), and E's row is not the room's" },
   { guard: "the screen draws a Here box on a detention decided in review", file: SCREEN, test: READER_TEST,
     from: " && r.mode === 'live' && r.resolved !== true;", to: " && r.mode === 'live';",
