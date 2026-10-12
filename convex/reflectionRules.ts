@@ -2090,8 +2090,10 @@ function wholeDaySlots(summary: DaySummary, snap: RosterSnap): number[] {
  *     - CHECK-OFF (owner, 2026-10-12; every list made since it shipped): a
  *       row checked Here was in the room and is served, whatever its
  *       Power-Up mark says -- with Attendance done pressed or not. Once
- *       "Attendance done" is pressed, every row NOT checked Here did not
- *       come, and carries.
+ *       "Attendance done" is pressed, the rows NOT checked Here that its
+ *       confirmation NAMED did not come, and carry. A row it did not name
+ *       (put back on the list after it was pressed) was never the room's to
+ *       confirm: PowerSchool decides it, as rule 3.
  *     - NOT HERE (the first live day, Mon 10/12, whose list was made before
  *       check-off shipped): once "Attendance done" is pressed, exactly the
  *       rows ticked Not here carry; an unticked row was served.
@@ -2122,9 +2124,11 @@ export function carryVerdict(input: {
   /**
    * The room's presses for D, for a LIVE division's detention only (no room
    * runs for a division in shadow). `mode` is how D's list takes attendance
-   * (roomModeOf): "checkin" reads `here`, "notHere" (or none) reads `notHere`.
+   * (roomModeOf): "checkin" reads `here` and `named` (Attendance done named
+   * this row among the students who did not come), "notHere" (or none)
+   * reads `notHere`.
    */
-  room: { closed?: boolean; attendanceDone?: boolean; notHere?: boolean; mode?: RoomMode; here?: boolean };
+  room: { closed?: boolean; attendanceDone?: boolean; notHere?: boolean; mode?: RoomMode; here?: boolean; named?: boolean };
   /** The after-school read has happened: PowerSchool's marks are final for D. */
   final: boolean;
   summary: DaySummary | null;
@@ -2164,11 +2168,15 @@ export function carryVerdict(input: {
     // CHECK-OFF (owner, 2026-10-12). Checked Here: the room saw the student,
     // so the detention is served, whatever PowerSchool says -- and even if
     // nobody pressed Attendance done, because a check is the room's own
-    // record of that one student. Not checked once Attendance done is
-    // pressed: did not come. Not checked and not done: PowerSchool decides,
-    // below, as on a day the room recorded nothing.
+    // record of that one student. Not checked, and NAMED by Attendance done:
+    // did not come. Not checked and not done: PowerSchool decides, below,
+    // as on a day the room recorded nothing.
+    // ONLY THE ROWS IT NAMED (review, 2026-10-12). A detention released after
+    // the pull and put back once Attendance done was pressed had no box when
+    // it was pressed, and the number it confirmed left it out: the room never
+    // said it did not come, so PowerSchool decides it too.
     if (input.room.here) return { verdict: "served", basis: "room", why: "Checked Here in the room." };
-    if (input.room.attendanceDone) return noShow();
+    if (input.room.attendanceDone && input.room.named) return noShow();
   } else if (input.room.attendanceDone) {
     if (!input.room.notHere) return { verdict: "served", basis: "room", why: "In the room (not ticked Not here)." };
     return noShow();
@@ -2307,7 +2315,8 @@ export function roomWindow(input: {
  *   - "checkin" (owner, 2026-10-12): the supervisor checks Here next to each
  *     student who arrives. "Attendance done" then makes every LIVE detention
  *     on the list that is not checked Here a no-show, carried to the
- *     student's next school day.
+ *     student's next school day -- exactly the ones its confirmation named
+ *     (roomNoShowIds, kept on the day as roomNoShowIds).
  *   - "notHere": the way the first live day (Mon 10/12) was taken: the
  *     supervisor ticks Not here, and "Attendance done" carries exactly the
  *     ticked rows.
@@ -2346,15 +2355,36 @@ export function roomTakes(row: { unitId: string | null; state: string; mode: str
 
 /**
  * The room's count for one list: how many rows it takes attendance for,
- * how many are checked Here, and how many would carry if Attendance done
- * were pressed now (check-off: every one not checked; Not here: the ticked).
+ * how many are checked Here, and how many carry as no-shows: on a check-off
+ * day before Attendance done, every one not checked (what pressing it now
+ * would move); after it, and on a Not here day, the rows marked not here --
+ * on a check-off day, the ones Attendance done named.
  */
 export function roomTally(rows: Array<{ unitId: string | null; state: string; mode: string; here?: boolean; notHere?: boolean }>,
-  mode: RoomMode): { of: number; here: number; notHere: number; noShows: number } {
+  mode: RoomMode, done = false): { of: number; here: number; notHere: number; noShows: number } {
   const mine = rows.filter(roomTakes);
   const here = mine.filter((r) => r.here === true).length;
   const notHere = mine.filter((r) => r.notHere === true).length;
-  return { of: mine.length, here, notHere, noShows: mode === "checkin" ? mine.length - here : notHere };
+  return { of: mine.length, here, notHere, noShows: mode === "checkin" && !done ? mine.length - here : notHere };
+}
+
+/**
+ * WHO ATTENDANCE DONE MOVES on a check-off day: the ids of the rows the room
+ * takes that are not checked Here. The screen's confirmation names exactly
+ * these students and sends their ids; the server works them out again from
+ * the list as it stands and records the press only if the two are the SAME
+ * students (review, 2026-10-12: a count alone let two supervisors swap a
+ * check during the confirmation and move a student nobody confirmed). The
+ * ids recorded are what the carries read (`named`, carryVerdict).
+ */
+export function roomNoShowIds(rows: Array<{ unitId: string | null; state: string; mode: string; here?: boolean }>): string[] {
+  return rows.filter((r) => roomTakes(r) && r.here !== true).map((r) => String(r.unitId)).sort();
+}
+
+/** The same ids, whatever the order and however often each is given. */
+export function sameIdSet(a: readonly string[], b: readonly string[]): boolean {
+  const x = [...new Set(a)].sort(), y = [...new Set(b)].sort();
+  return x.length === y.length && x.every((id, i) => id === y[i]);
 }
 
 /**

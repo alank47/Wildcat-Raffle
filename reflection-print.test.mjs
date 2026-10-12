@@ -501,8 +501,10 @@ console.log("\n9b. CHECK-OFF ON SCREEN (owner, 2026-10-12): HERE AS EACH STUDENT
       && /After the last sitting, press Attendance done/.test(two.fixed.rrList.innerHTML), bothSaid[0]);
   await w.app.reflectionAttendanceDone(true);
   const doneSent = sent.filter((x) => x.path === "reflectionRoom:roomAttendanceDone").map((x) => x.args);
-  check("...'yes' sends Attendance done with that number (3), which the server checks against the list",
-    J(doneSent) === J([{ day: "2026-10-13", done: true, noShows: 3 }]) && w.confirms[0]?.options?.confirmLabel === "Attendance done: move 3", J(doneSent));
+  check("...'yes' sends Attendance done naming exactly those 3 students, which the server checks against the list",
+    J(doneSent.map((a) => ({ ...a, noShowIds: a.noShowIds?.slice().sort() })))
+      === J([{ day: "2026-10-13", done: true, noShowIds: ["reflectionUnits:00", "reflectionUnits:01", "reflectionUnits:02"] }])
+      && w.confirms[0]?.options?.confirmLabel === "Attendance done: move 3", J(doneSent));
 
   // After Attendance done: who did not come, and no box left.
   answer.room = { ...answer.room, tick: true, doneAt: "2026-10-13T19:50:00.000Z", doneBy: "pat@school.test", notHere: 3 };

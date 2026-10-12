@@ -1576,7 +1576,7 @@ try {
     const pressed = await liveWeek((w) => [la(MON, "13:30"), async () => {
       await w.as("pbis").run("reflectionRoom.markHere", { unitId: w.units("M1").find((u) => u.serveDay === MON)._id, here: true });
       hereHs = await w.as("pbis").run("reflectionRoom.markHere", { unitId: w.units("HOK").find((u) => u.serveDay === MON)._id, here: true });
-      done = await w.as("pbis").run("reflectionRoom.roomAttendanceDone", { day: MON, noShows: 0 });
+      done = await w.as("pbis").run("reflectionRoom.roomAttendanceDone", { day: MON, noShowIds: [] });
     }]);
     const habs = pressed.units("HABS").find((u) => u.serveDay === MON);
     check("Attendance done for the MS room, M1 checked Here: H-ABS (HS, in shadow) still carries, decided by PowerSchool",
@@ -1590,7 +1590,7 @@ try {
 
     let doneNobody = null;
     const nobody = await liveWeek((w) => [la(MON, "13:30"), async () => {
-      doneNobody = await w.as("pbis").run("reflectionRoom.roomAttendanceDone", { day: MON, noShows: 1 });
+      doneNobody = await w.as("pbis").run("reflectionRoom.roomAttendanceDone", { day: MON, noShowIds: [w.units("M1").find((u) => u.serveDay === MON)._id] });
     }]);
     check("check-off: Attendance done with nobody checked Here moves M1 (live) to Tuesday as a no-show, and never H-OK (HS, in shadow, in class all day)",
       doneNobody?.ok === true && J(nobody.listed(TUE)) === J(["HABS", "M1"])
@@ -2018,14 +2018,21 @@ try {
       newView.room.mode === "checkin" && newView.room.tick === true && newView.room.of === 5 && newView.room.here === 2
         && newView.room.noShows === 3 && J(rowsOf(newView).filter((r) => r.here).map((r) => r.studentNumber)) === J(["A", "B"]), J(newView.room));
 
-    const stale = await as("granted").run("reflectionRoom.roomAttendanceDone", { day: TUE, noShows: 2 });
+    const stale = await as("granted").run("reflectionRoom.roomAttendanceDone", { day: TUE, noShowIds: [id("C"), id("E")] });
     check("check-off: Attendance done naming a number the list no longer holds is refused, says the number now, and records nothing",
       stale.ok === false && stale.noShows === 3 && /3 would move to the next day, not 2/.test(stale.reason) && !w.day(TUE).roomAttendanceDoneAt,
       J(stale));
-    const done = await as("granted").run("reflectionRoom.roomAttendanceDone", { day: TUE, noShows: 3 });
-    check("check-off: Attendance done naming the right number is recorded, with the count it confirmed",
+    // REVIEW, 2026-10-12: the same number, different students -- a check
+    // swapped by a second supervisor while the first one confirmed.
+    const swapped = await as("granted").run("reflectionRoom.roomAttendanceDone", { day: TUE, noShowIds: [id("A"), id("C"), id("E")] });
+    check("check-off: Attendance done naming the same number of different students is refused, and records nothing",
+      swapped.ok === false && /the 3 who would move to the next day are not the 3 you confirmed/.test(swapped.reason)
+        && !w.day(TUE).roomAttendanceDoneAt && !w.day(TUE).roomNoShowIds, J(swapped));
+    const done = await as("granted").run("reflectionRoom.roomAttendanceDone", { day: TUE, noShowIds: [id("E"), id("C"), id("D")] });
+    check("check-off: Attendance done naming the right students is recorded, with the count it confirmed and who it named",
       done.ok === true && done.noShows === 3 && w.day(TUE).roomAttendanceDoneBy === "granted@school.test"
         && J(w.day(TUE).roomAttendanceDoneCount) === J({ of: 5, here: 2, noShows: 3 })
+        && J(w.day(TUE).roomNoShowIds) === J([id("C"), id("D"), id("E")].map(String).sort())
         && w.store.rows("reflectionAudit").some((r) => r.action === "room-attendance-done" && r.reason === "2 of 5 checked Here; 3 did not come"),
       J({ done, count: w.day(TUE).roomAttendanceDoneCount }));
     const afterDone = await here("granted", "D");
@@ -2039,11 +2046,13 @@ try {
         && J(gone(oldDoneView)) === J(["C", "D", "E"]) && oldDoneView.room.notHere === 3 && !!oldDoneView.room.doneAt,
       J({ now: gone(doneView), old: gone(oldDoneView) }));
     const undo = await as("granted").run("reflectionRoom.roomAttendanceDone", { day: TUE, done: false });
+    const undoneIds = w.day(TUE).roomNoShowIds;
     const reopened = await here("granted", "D");
-    const redone = await as("granted").run("reflectionRoom.roomAttendanceDone", { day: TUE, noShows: 2 });
+    const redone = await as("granted").run("reflectionRoom.roomAttendanceDone", { day: TUE, noShowIds: [id("C"), id("E")] });
     check("check-off: Undo Attendance done reopens the checks: D checked, then Attendance done again moves 2",
-      undo.ok === true && reopened.ok === true && unitOf("D").roomHere === true && redone.ok === true
-        && J(w.day(TUE).roomAttendanceDoneCount) === J({ of: 5, here: 3, noShows: 2 }), J({ undo, reopened, redone }));
+      undo.ok === true && reopened.ok === true && unitOf("D").roomHere === true && redone.ok === true && undoneIds === undefined
+        && J(w.day(TUE).roomAttendanceDoneCount) === J({ of: 5, here: 3, noShows: 2 })
+        && J(w.day(TUE).roomNoShowIds) === J([id("C"), id("E")].map(String).sort()), J({ undo, reopened, redone }));
 
     await drive(w, la(TUE, "12:40"), la(TUE, "15:45"));
     const carryC = w.units("C").find((u) => u.kind === "carry");
@@ -2107,10 +2116,11 @@ try {
     check("...Attendance done first names how many move to the next day, and who: 3, Cruz, Diaz and Ellis",
       /2 of 5 are checked Here\. 3 students not checked will move to their next school day's Reflection Room: Cruz, Cal; Diaz, Dee; Ellis, Eve\./.test(asked)
         && now.confirms[0]?.options?.confirmLabel === "Attendance done: move 3", asked);
-    const sentDone = now.calls.filter((c) => c.path === "reflectionRoom:roomAttendanceDone").map((c) => c.args);
-    check("...and sends that number, which the server records",
-      J(sentDone) === J([{ day: TUE, done: true, noShows: 3 }]) && J(s.day(TUE).roomAttendanceDoneCount) === J({ of: 5, here: 2, noShows: 3 }),
-      J(sentDone));
+    const sentDone = now.calls.filter((c) => c.path === "reflectionRoom:roomAttendanceDone").map((c) => ({ ...c.args, noShowIds: c.args.noShowIds?.slice().sort() }));
+    const cde = ["C", "D", "E"].map((sn) => String(s.unitOf(sn)._id)).sort();
+    check("...and sends exactly those students, whom the server records",
+      J(sentDone) === J([{ day: TUE, done: true, noShowIds: cde }]) && J(s.day(TUE).roomAttendanceDoneCount) === J({ of: 5, here: 2, noShows: 3 })
+        && J(s.day(TUE).roomNoShowIds) === J(cde), J(sentDone));
     check("...then the screen says who did not come and moves to the next day, with no box left to tap",
       /3 did not come and move to their next school day's Reflection Room: Cruz, Cal; Diaz, Dee; Ellis, Eve\./.test(html())
         && (html().match(/Did not come: moves to the next day/g) || []).length === 3 && !/data-rr-here=/.test(html())
@@ -2155,6 +2165,75 @@ try {
     } else {
       console.log("  SKIP  the 2f0fdd0 screen against this server (git or that commit not available here)");
     }
+  }
+
+  // ==========================================================================
+  console.log("\n28. ATTENDANCE DONE MOVES EXACTLY THE STUDENTS IT NAMED: A DETENTION PUT BACK AFTER IT IS POWERSCHOOL'S\n");
+  // ==========================================================================
+  // (review, 2026-10-12) MS live. Tuesday's list holds A, C and X; C is
+  // absent at Power-Up. X's tardy is deleted at 12:40, after the 12:29 MS
+  // pull, and Read now at 12:45 releases X: the room's screen shows 2 rows.
+  // A is checked Here and Attendance done names C. X's tardy is typed back
+  // at 13:30, and the 14:00 read puts X back on the list. Read as "every
+  // unchecked row did not come", X carried as a no-show nobody confirmed, and
+  // Wednesday's list held 2 where the room had confirmed 1.
+  {
+    const TUE = "2026-10-13", WED = "2026-10-14";
+    const ms = { grade: 7, sections: MS };
+    const staff = {
+      admin: { email: "admin@school.test", role: "admin" },
+      granted: { email: "granted@school.test", role: "campusaide", reflectionList: true, reflectionListUntil: "2026-12-18" },
+    };
+    const w = await world({
+      students: { A: ms, C: ms, X: ms },
+      days: [{ date: TUE, slots: TUE_SLOTS }, { date: WED, slots: WED_SLOTS }],
+      settings: { modeByDivision: { ms: "live", hs: "off" }, countFromDateByDivision: { ms: "2026-10-12", hs: null } },
+    });
+    for (const t of Object.values(staff)) await w.store.db.insert("teachers", { name: "Staff", ticketsAwarded: 0, ...t });
+    const as = (who) => { w.rt.signIn({ issuer: STAFF_ISSUER, email: staff[who].email }); return w.rt; };
+    const unitOf = (sn, day = TUE) => w.units(sn).find((u) => u.serveDay === day);
+    w.mark(TUE, "A", 3, "T"); w.mark(TUE, "C", 3, "T");
+    const xRow = w.mark(TUE, "X", 3, "T");
+    w.mark(TUE, "C", 9, "A");
+    await drive(w, la(TUE, "07:30"), la(TUE, "11:45"));
+    clock.set(la(TUE, "12:40")); w.unmark(xRow);
+    clock.set(la(TUE, "12:45"));
+    const readX = await as("admin").run("reflectionRoom.readNow", {});
+    await runJobs(w, Date.parse(la(TUE, "12:46")));
+    clock.set(la(TUE, "12:50"));
+    const before = await as("granted").run("reflectionList.listForDay", { day: "today", lunchOk: true, checkinOk: true });
+    check("put back: X's tardy deleted after the pull and read at 12:45: X is released, and the room takes 2 rows",
+      readX.ok === true && unitOf("X").state === "released" && before.room.of === 2 && before.room.noShows === 2, J({ readX, room: before.room }));
+    const here = await as("granted").run("reflectionRoom.markHere", { unitId: unitOf("A")._id, here: true });
+    const done = await as("granted").run("reflectionRoom.roomAttendanceDone", { day: TUE, noShowIds: [unitOf("C")._id] });
+    check("...A checked Here, and Attendance done names C alone",
+      here.ok === true && done.ok === true && J(w.day(TUE).roomAttendanceDoneCount) === J({ of: 2, here: 1, noShows: 1 })
+        && J(w.day(TUE).roomNoShowIds) === J([String(unitOf("C")._id)]), J(done));
+    await drive(w, la(TUE, "12:55"), la(TUE, "14:00"), [[la(TUE, "13:30"), () => w.mark(TUE, "X", 3, "T")]]);
+    clock.set(la(TUE, "14:05"));
+    const back = await as("granted").run("reflectionList.listForDay", { day: "today", lunchOk: true, checkinOk: true });
+    const rowX = back.sections.flatMap((x) => x.rows).find((r) => r.studentNumber === "X");
+    check("put back: X's tardy typed back at 13:30, the 14:00 read puts X on the list again -- but not among those Attendance done named",
+      unitOf("X").state === "listed" && rowX?.notHere === false && back.room.of === 3 && back.room.notHere === 1 && back.room.noShows === 1,
+      J({ x: unitOf("X").state, rowX: rowX && { notHere: rowX.notHere, here: rowX.here }, room: back.room }));
+    const STUDENTS = [["A", "Ann", "Avila"], ["C", "Cal", "Cruz"], ["X", "Xo", "Xu"]]
+      .map(([studentNumber, firstName, lastName]) => ({ studentNumber, firstName, lastName }));
+    const scr = screenWorld(read("./script.js"), {
+      query: (args, path) => as("granted").run(path.replace(":", "."), args),
+      mutation: (args, path) => as("granted").run(path.replace(":", "."), args),
+    }, STUDENTS);
+    await scr.app.loadReflectionList();
+    const html = scr.fixed.rrList.innerHTML;
+    check("...and this build's screen says only C did not come: X, put back after the press, is not shown as moving",
+      (html.match(/Did not come: moves to the next day/g) || []).length === 1
+        && /1 did not come and moves to their next school day's Reflection Room: Cruz, Cal\./.test(html), html.slice(0, 600));
+    await drive(w, la(TUE, "14:05"), la(TUE, "15:45"));
+    check("put back: the after-school read carries C (named, absent) and leaves X to PowerSchool: present at Power-Up, served",
+      unitOf("C").state === "carried" && unitOf("C").carryBasis === "room"
+        && unitOf("X").state === "listed" && unitOf("X").carryBasis === "powerschool" && !w.units("X").some((u) => u.kind === "carry"),
+      J({ C: [unitOf("C").state, unitOf("C").carryBasis], X: [unitOf("X").state, unitOf("X").carryBasis] }));
+    await drive(w, la(WED, "07:30"), la(WED, "11:20"));
+    check("...so Wednesday's list holds C, the 1 the room confirmed", J(w.listed(WED)) === J(["C"]), J(w.listed(WED)));
   }
 
   // ==========================================================================

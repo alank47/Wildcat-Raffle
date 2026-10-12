@@ -137,9 +137,9 @@ export type ListRowOut = {
   after: string | null;
   /**
    * The room ticked this student Not here (screen only, never printed). On a
-   * check-off day, once Attendance done is pressed: the room's row was not
-   * checked Here, so the student did not come -- which is what a screen from
-   * before check-off shows under "Not here".
+   * check-off day, once Attendance done is pressed: the press named this
+   * row, not checked Here, so the student did not come -- which is what a
+   * screen from before check-off shows under "Not here".
    */
   notHere: boolean;
   /** Check-off (owner, 2026-10-12): the room checked this student Here (screen only, never printed). */
@@ -705,12 +705,16 @@ export const listForDay = query({
     const frozen = view === "made";
     const modes: Record<Division, Mode> = frozen && row?.modeByDivision ? row.modeByDivision : settings.modeByDivision;
     if (lunchOk !== true && namesLunch(rows)) return { allowed: true as const, ok: false as const, reason: LUNCH_NEEDS_UPDATE };
-    // CHECK-OFF (owner, 2026-10-12): once Attendance done is pressed, a row
-    // the room takes that is not checked Here did not come. Said as "Not
-    // here" too, which a screen from before check-off already shows.
+    // CHECK-OFF (owner, 2026-10-12): once Attendance done is pressed, the
+    // rows it named did not come -- exactly those, still on the list (a row
+    // put back after the press is not one of them: PowerSchool decides it).
+    // Said as "Not here" too, which a screen from before check-off already
+    // shows.
     const roomMode = roomModeOf(row);
+    const roomDone = !!row?.roomAttendanceDoneAt;
     if (frozen && roomMode === "checkin") {
-      for (const r of rows) r.notHere = !!row?.roomAttendanceDoneAt && roomTakes(r) && !r.here;
+      const named = new Set<string>(row?.roomNoShowIds ?? []);
+      for (const r of rows) r.notHere = roomDone && roomTakes(r) && !r.here && named.has(String(r.unitId));
     }
     sortRows(rows);
     const listVersion = versionOf(rows);
@@ -736,14 +740,14 @@ export const listForDay = query({
       // A tab from before check-off is shown the list, but no box: what it
       // would draw says Not here, the opposite of a check-off day's boxes.
       const oldTab = roomMode === "checkin" && checkinOk !== true;
-      const tally = roomTally(rows, roomMode);
+      const tally = roomTally(rows, roomMode, roomDone);
       room = {
         mode: roomMode,
         tick: w.tick && !oldTab, closeRoom: w.closeRoom && roles, why: oldTab ? CHECKIN_NEEDS_UPDATE : w.why,
         doneAt: row?.roomAttendanceDoneAt ?? null, doneBy: row?.roomAttendanceDoneBy ?? null,
         closed: row?.roomClosed ?? null,
         notHere: rows.filter((r) => r.notHere && r.state !== "released" && r.mode === "live").length,
-        // "N of M here", and how many Attendance done would carry now (or did).
+        // "N of M here", and how many Attendance done would move now (or, once pressed, the ones it named).
         of: tally.of, here: tally.here, noShows: tally.noShows,
       };
     }

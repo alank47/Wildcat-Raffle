@@ -9,8 +9,8 @@ import {
 } from "./reflection";
 import { reviewItems, rowsOfMadeList, schoolNow } from "./reflectionList";
 import {
-  carriedUnit, CHECKIN_NEEDS_UPDATE, clockText, dayLabel, dayTimes, LEASE_MS, readNowIntent, roomModeOf, roomTally, roomWindow,
-  rosterAgeBanner, scheduleKindFor, schoolDayVerdict, termBanner, type ScheduleKind,
+  carriedUnit, CHECKIN_NEEDS_UPDATE, clockText, dayLabel, dayTimes, LEASE_MS, readNowIntent, roomModeOf, roomNoShowIds, roomTally, roomWindow,
+  rosterAgeBanner, sameIdSet, scheduleKindFor, schoolDayVerdict, termBanner, type ScheduleKind,
 } from "./reflectionRules";
 
 /**
@@ -172,21 +172,26 @@ export const markHere = mutation({
  * checks.
  *
  * ON A CHECK-OFF DAY every live detention on the list not checked Here then
- * carries, so the press must say HOW MANY it is moving (`noShows`): the
- * number the screen's confirmation named. If the list has changed since --
- * another supervisor checked someone in, a detention was released -- nothing
- * is recorded, and the answer gives the number now, to confirm again.
- * Without `noShows` (a tab from before check-off, whose button means "carry
+ * carries, so the press must say WHICH it is moving (`noShowIds`): the
+ * students the screen's confirmation named. If the list has changed since --
+ * another supervisor checked someone in or took a check back, a detention
+ * was released -- nothing is recorded, and the answer gives the number now,
+ * to confirm again. The same number of different students is a change too
+ * (review, 2026-10-12: two supervisors swapping checks during a confirmation
+ * moved a student nobody had confirmed). The ids are kept on the day
+ * (roomNoShowIds), and only those detentions carry as no-shows: one put back
+ * on the list after the press is PowerSchool's (reflectionRules.carryVerdict).
+ * Without `noShowIds` (a tab from before check-off, whose button means "carry
  * only the ticked rows") it is refused with CHECKIN_NEEDS_UPDATE: pressed
  * there, it would carry every student nobody could check. Taking it back
- * (done: false) needs no number and reopens the checks.
+ * (done: false) needs no ids and reopens the checks.
  *
  * On a list made before check-off, exactly the rows ticked Not here carry,
  * as before.
  */
 export const roomAttendanceDone = mutation({
-  args: { day: v.string(), done: v.optional(v.boolean()), noShows: v.optional(v.number()) },
-  handler: async (ctx, { day, done, noShows }) => {
+  args: { day: v.string(), done: v.optional(v.boolean()), noShowIds: v.optional(v.array(v.string())) },
+  handler: async (ctx, { day, done, noShowIds }) => {
     const staff = await requireStaff(ctx);
     const { tz, nowIso, today } = await schoolNow(ctx);
     if (!canReadReflection(staff, today)) return { ok: false as const, reason: READ_REFUSED };
@@ -196,11 +201,12 @@ export const roomAttendanceDone = mutation({
     if (!w.tick || !row) return { ok: false as const, reason: w.why ?? "Room attendance is closed for that day." };
     const want = done !== false;
     const checkin = roomModeOf(row) === "checkin";
-    if (checkin && want && typeof noShows !== "number") return { ok: false as const, reason: CHECKIN_NEEDS_UPDATE };
+    if (checkin && want && !Array.isArray(noShowIds)) return { ok: false as const, reason: CHECKIN_NEEDS_UPDATE };
     if (!!row.roomAttendanceDoneAt === want) return { ok: true as const, already: true, done: want };
     if (!want) {
       await ctx.db.patch(row._id, {
-        roomAttendanceDoneAt: undefined, roomAttendanceDoneBy: undefined, roomAttendanceDoneCount: undefined, updatedAt: nowIso,
+        roomAttendanceDoneAt: undefined, roomAttendanceDoneBy: undefined, roomAttendanceDoneCount: undefined, roomNoShowIds: undefined,
+        updatedAt: nowIso,
       });
       await audit(ctx, { byEmail: staff.email, action: "room-attendance-undone", day });
       return { ok: true as const, already: false, done: false };
@@ -212,16 +218,25 @@ export const roomAttendanceDone = mutation({
     }
     // The same rows, and the same test of which the room takes, as the
     // screen's count (reflectionList.listForDay).
-    const tally = roomTally(await rowsOfMadeList(ctx, day, tz, {}, row.frozenAt ?? null, false, null), "checkin");
-    if (tally.noShows !== noShows) {
+    const rows = await rowsOfMadeList(ctx, day, tz, {}, row.frozenAt ?? null, false, null);
+    const tally = roomTally(rows, "checkin");
+    const ids = roomNoShowIds(rows);
+    const sent = [...new Set(noShowIds ?? [])];
+    if (!sameIdSet(ids, sent)) {
       return {
         ok: false as const, noShows: tally.noShows,
         reason: `The list changed while you were confirming: ${tally.here} of ${tally.of} are checked Here now, so `
-          + `${tally.noShows} would move to the next day, not ${noShows}. Nothing was recorded. Press Attendance done again.`,
+          + (ids.length === sent.length
+            ? `the ${ids.length} who would move to the next day are not the ${sent.length} you confirmed.`
+            : `${ids.length} would move to the next day, not ${sent.length}.`)
+          + " Nothing was recorded. Press Attendance done again.",
       };
     }
-    const count = { of: tally.of, here: tally.here, noShows: tally.noShows };
-    await ctx.db.patch(row._id, { roomAttendanceDoneAt: nowIso, roomAttendanceDoneBy: staff.email, roomAttendanceDoneCount: count, updatedAt: nowIso });
+    const count = { of: tally.of, here: tally.here, noShows: ids.length };
+    await ctx.db.patch(row._id, {
+      roomAttendanceDoneAt: nowIso, roomAttendanceDoneBy: staff.email, roomAttendanceDoneCount: count,
+      roomNoShowIds: ids as Id<"reflectionUnits">[], updatedAt: nowIso,
+    });
     await audit(ctx, {
       byEmail: staff.email, action: "room-attendance-done", day,
       reason: `${count.here} of ${count.of} checked Here; ${count.noShows} did not come`,

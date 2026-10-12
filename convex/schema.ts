@@ -2021,6 +2021,10 @@ export default defineSchema({
     // did not come, when Attendance done was pressed (the number its
     // confirmation named).
     roomAttendanceDoneCount: v.optional(v.object({ of: v.number(), here: v.number(), noShows: v.number() })),
+    // Check-off: the detentions Attendance done named as not come -- exactly
+    // the students its confirmation listed. Only these carry as no-shows; a
+    // detention put back on the list after the press is PowerSchool's.
+    roomNoShowIds: v.optional(v.array(v.id("reflectionUnits"))),
     roomClosed: v.optional(v.object({ by: v.string(), at: v.string(), reason: v.string() })),
     fallbackReview: v.optional(v.object({
       reason: v.string(), at: v.string(),

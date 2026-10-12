@@ -42982,10 +42982,16 @@
             return { of: mine.length, here: mine.filter(rrHereOf).length };
         }
 
-        /** The room's rows NOT checked Here: who moves to the next day once Attendance done is pressed. */
+        /**
+         * Who moves to the next day: before Attendance done, the room's rows
+         * NOT checked Here (what pressing it would move); once it is pressed,
+         * the rows it named (the server's notHere) -- a row put back on the
+         * list after the press was never named, and PowerSchool decides it.
+         */
         function rrNoShowRows(res) {
+            const done = !!(res && res.room && res.room.doneAt);
             return (res && Array.isArray(res.sections) ? res.sections.flatMap(s => s.rows) : [])
-                .filter(r => rrRoomRow(r) && !rrHereOf(r));
+                .filter(r => rrRoomRow(r) && (done ? r.notHere === true : !rrHereOf(r)));
         }
 
         /**
@@ -43154,7 +43160,7 @@
                             + '<span>Here</span></label></td>';
                     }
                     if (here) return '<td class="rr-here-cell"><b>Here</b></td>';
-                    return '<td class="rr-here-cell">' + (room.doneAt && !room.closed ? '<span class="rr-noshow">Did not come: moves to the next day</span>' : '') + '</td>';
+                    return '<td class="rr-here-cell">' + (room.doneAt && !room.closed && r.notHere === true ? '<span class="rr-noshow">Did not come: moves to the next day</span>' : '') + '</td>';
                 };
                 const roomCell = checkin ? hereCell : notHereCell;
                 html += '<div class="wu-scroll-x"><table class="student-table wc-att-table rr-table"><thead><tr>'
@@ -43809,7 +43815,8 @@
          * ON A CHECK-OFF DAY it first lets every tap still on its way land,
          * reads the list again, and names how many students it will move to
          * the next day, and who, before anything is sent. The server is told
-         * that number and refuses if the list has changed since.
+         * exactly those students and refuses if the list has changed since
+         * -- the same number of different students included.
          */
         async function reflectionAttendanceDone(done) {
             if (!_rrData) return null;
@@ -43825,13 +43832,14 @@
                 if (!room.tick || room.closed) { showAlert('ℹ️ ' + (room.why || 'Room attendance is closed for that day.')); return null; }
                 if (room.doneAt) return null;
                 const gone = rrNoShowNames(fresh);
-                const n = typeof room.noShows === 'number' ? room.noShows : gone.count;
+                const ids = rrNoShowRows(fresh).map(r => String(r.unitId));
+                const n = ids.length;
                 const yes = await showConfirm('Attendance done for ' + fresh.dayLabel + '? ' + room.here + ' of ' + room.of + ' are checked Here. '
                     + (n ? n + ' student' + (n === 1 ? '' : 's') + ' not checked will move to their next school day\'s Reflection Room: '
                         + gone.text + '.' : 'Everyone is checked Here: nobody moves to the next day.'),
                     { confirmLabel: n ? 'Attendance done: move ' + n : 'Attendance done' });
                 if (!yes) return null;
-                return rrAct(auth.convexMutation('reflectionRoom:roomAttendanceDone', { day: day, done: true, noShows: n }, session.idToken),
+                return rrAct(auth.convexMutation('reflectionRoom:roomAttendanceDone', { day: day, done: true, noShowIds: ids }, session.idToken),
                     () => n ? 'Attendance done: ' + n + ' moved to the next day.' : 'Attendance done: everyone came.');
             }
             return rrAct(session ? auth.convexMutation('reflectionRoom:roomAttendanceDone',

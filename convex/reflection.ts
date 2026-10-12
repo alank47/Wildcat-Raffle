@@ -814,8 +814,10 @@ async function decideCarries(ctx: MutationCtx, c: {
   if (!dRow?.frozenAt) return out;
   const units = await ctx.db.query("reflectionUnits").withIndex("by_serveDay", (q) => q.eq("serveDay", c.d)).collect();
   // How D's room takes attendance: checked Here (every list made since
-  // check-off shipped), or ticked Not here (a list made before it).
+  // check-off shipped), or ticked Not here (a list made before it). On a
+  // check-off day, Attendance done moves exactly the detentions it named.
   const roomMode = roomModeOf(dRow);
+  const named = new Set<string>(dRow.roomNoShowIds ?? []);
   let decidedByPowerSchool = 0;
   let checkedHere = 0;
   let live = false;
@@ -839,6 +841,7 @@ async function decideCarries(ctx: MutationCtx, c: {
       unit: { carryCount: u.carryCount }, studentNumber: u.studentNumber, division: u.division, serveDay: c.d,
       room: roomRuns ? {
         closed: !!dRow.roomClosed, attendanceDone: !!dRow.roomAttendanceDoneAt, mode: roomMode, notHere: !!u.roomNotHere, here: !!u.roomHere,
+        named: named.has(u._id),
       } : {},
       final: true, summary: c.summary, snap, enrolled: c.enrolled(u.studentNumber), maxCarries: c.settings.maxCarries,
     });
