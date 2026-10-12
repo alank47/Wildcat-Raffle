@@ -1952,6 +1952,9 @@ export default defineSchema({
     absentMorning: v.optional(v.boolean()),
     puAbsent: v.optional(v.boolean()),
     roomNotHere: v.optional(v.boolean()),
+    // Check-off (owner, 2026-10-12): the room's supervisor checked this
+    // student Here. Read only on a day whose roomMode is "checkin".
+    roomHere: v.optional(v.boolean()),
     roomMarkedBy: v.optional(v.string()),
     roomMarkedAt: v.optional(v.string()),
     reviewReason: v.optional(v.string()),
@@ -2008,8 +2011,16 @@ export default defineSchema({
     noList: v.optional(v.object({ reason: v.string(), at: v.string(), lastGoodReadAt: v.optional(v.string()) })),
     listCount: v.optional(v.object({ ms: v.number(), hs: v.number() })),
     unplacedStudents: v.optional(v.number()),
+    // How the room takes attendance for this day's list (reflectionRules.
+    // roomModeOf): stamped "checkin" when the list is made (owner,
+    // 2026-10-12). A list made before check-off shipped has none: "notHere".
+    roomMode: v.optional(v.union(v.literal("notHere"), v.literal("checkin"))),
     roomAttendanceDoneAt: v.optional(v.string()),
     roomAttendanceDoneBy: v.optional(v.string()),
+    // Check-off: how many of the room's rows were checked Here, and how many
+    // did not come, when Attendance done was pressed (the number its
+    // confirmation named).
+    roomAttendanceDoneCount: v.optional(v.object({ of: v.number(), here: v.number(), noShows: v.number() })),
     roomClosed: v.optional(v.object({ by: v.string(), at: v.string(), reason: v.string() })),
     fallbackReview: v.optional(v.object({
       reason: v.string(), at: v.string(),

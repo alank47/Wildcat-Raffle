@@ -710,6 +710,64 @@ console.log("\n3.8 CARRY-OVER\n");
   check("...shadow mode, or a day with room attendance, raises none",
     R.fallbackDayReview({ mode: "shadow", serveDay: TUE, attendanceDone: false, roomClosed: false, decidedByPowerSchool: 7 }) === null
     && R.fallbackDayReview({ mode: "live", serveDay: TUE, attendanceDone: true, roomClosed: false, decidedByPowerSchool: 7 }) === null);
+
+  // CHECK-OFF (owner, 2026-10-12): the supervisor checks Here as each student
+  // arrives; Attendance done makes every live row NOT checked a no-show.
+  const ci = (d, room, o = {}) => v(d, { ...o, room: { mode: "checkin", ...room } });
+  const pulled = wed([[S, 9, "A"]]);   // the Power-Up teacher marked the pulled student absent; in class before and after
+  const noCheck = ci(wed([]), { attendanceDone: true });
+  check("check-off: Attendance done, not checked Here: carries like a no-show (at school: did not come)",
+    noCheck.verdict === "carry" && noCheck.basis === "room" && noCheck.countsTowardLimit === true
+      && noCheck.tag === "Carried over from Wed 10/14 (at school: did not come)", J(noCheck));
+  const noCheckAbsent = ci(wed([[S, 5, "A"], [S, 9, "A"]]), { attendanceDone: true });
+  check("...tagged (absent) when PowerSchool shows them absent at Power-Up", noCheckAbsent.tag === "Carried over from Wed 10/14 (absent)", J(noCheckAbsent));
+  const checked = ci(absentAll, { attendanceDone: true, here: true });
+  check("check-off: checked Here is served, even when PowerSchool has them absent all day",
+    checked.verdict === "served" && checked.basis === "room", J(checked));
+  const checkedNotDone = ci(absentAll, { here: true });
+  check("check-off: checked Here with Attendance done never pressed: still served, never PowerSchool's",
+    checkedNotDone.verdict === "served" && checkedNotDone.basis === "room", J(checkedNotDone));
+  const openAbsent = ci(absentAll, {});
+  const openPulled = ci(pulled, {});
+  check("check-off: not checked and Attendance done not pressed: PowerSchool decides (absent all day carries, a pulled student is served)",
+    openAbsent.verdict === "carry" && openAbsent.basis === "powerschool" && openPulled.verdict === "served" && openPulled.basis === "powerschool",
+    J([openAbsent, openPulled]));
+  check("...and before the after-school read nothing is decided for it",
+    ci(pulled, {}, { final: false }).verdict === "undecided");
+  check("check-off: a Not here tick means nothing on a check-off day (an unticked row not checked Here still carries)",
+    ci(wed([]), { attendanceDone: true, notHere: false }).verdict === "carry"
+      && ci(wed([]), { attendanceDone: true, notHere: true, here: true }).verdict === "served");
+  check("check-off: the carry limit holds: a no-show on its 6th carry goes to review",
+    ci(wed([]), { attendanceDone: true }, { carryCount: 5 }).reason === "Carried 5 times"
+      && ci(wed([]), { attendanceDone: true }, { carryCount: 4 }).verdict === "carry");
+  const closedCi = ci(wed([]), { closed: true, here: true, attendanceDone: true }, { carryCount: 5 });
+  check("check-off: Room did not run still carries everyone, checked or not, without counting toward the limit",
+    closedCi.verdict === "carry" && closedCi.basis === "room-closed" && closedCi.countsTowardLimit === false, J(closedCi));
+  check("a list made before check-off keeps Not here: Attendance done carries exactly the ticked rows, and a Here mark means nothing",
+    v(wed([]), { room: { mode: "notHere", attendanceDone: true, notHere: false } }).verdict === "served"
+      && v(wed([]), { room: { mode: "notHere", attendanceDone: true, notHere: true, here: true } }).verdict === "carry");
+  check("the day's room mode: stamped checkin, else Not here (a list made before check-off, or anything else stored)",
+    R.roomModeOf({ roomMode: "checkin" }) === "checkin" && R.roomModeOf({ roomMode: "notHere" }) === "notHere"
+      && R.roomModeOf({}) === "notHere" && R.roomModeOf(null) === "notHere" && R.roomModeOf({ roomMode: "CHECKIN" }) === "notHere"
+      && R.ROOM_MODE_FOR_NEW_LISTS === "checkin");
+  const rows = [
+    { unitId: "u1", state: "listed", mode: "live", here: true },
+    { unitId: "u2", state: "listed", mode: "live", here: false },
+    { unitId: "u3", state: "review", mode: "live" },
+    { unitId: "u4", state: "carried", mode: "live", here: true },
+    { unitId: "u5", state: "released", mode: "live" },
+    { unitId: "u6", state: "listed", mode: "shadow" },
+    { unitId: null, state: "so-far", mode: "live" },
+  ];
+  const tally = R.roomTally(rows, "checkin");
+  check("check-off: the room counts a live division's rows still on the list -- never a released row, a shadow row or one not yet made",
+    J(tally) === J({ of: 4, here: 2, notHere: 0, noShows: 2 }), J(tally));
+  check("...and on a Not here day the rows that would carry are the ticked ones",
+    R.roomTally([{ unitId: "a", state: "listed", mode: "live", notHere: true }, { unitId: "b", state: "listed", mode: "live" },
+      { unitId: "c", state: "listed", mode: "shadow", notHere: true }], "notHere").noShows === 1);
+  check("check-off: Attendance done never pressed, some checked Here: the day's review says so",
+    R.fallbackDayReview({ mode: "live", serveDay: TUE, attendanceDone: false, roomClosed: false, decidedByPowerSchool: 2, checkedHere: 5 })?.reason
+      === "Attendance done not pressed Tue 10/13 (5 checked Here; 2 detentions decided from PowerSchool)");
 }
 
 console.log("\nOWNER, 10/8: RSP, ELD AND 7002A ARE PULLED LIKE EVERYONE ELSE\n");

@@ -10,7 +10,8 @@ import {
 } from "./reflection";
 import {
   claimAtFreeze, clockText, dayLabel, dayTimes, freezeBanner, idSetHash, lastReadBanner, lunchClassOf, minuteText, nextSchoolDayGuess,
-  noListBanner, POWER_UP_MINUTE, provesNoSchool, pullTimes, pullWords, QUEUED_TAG, roomWindow, rosterAgeBanner, schoolDayVerdict,
+  CHECKIN_NEEDS_UPDATE, noListBanner, POWER_UP_MINUTE, provesNoSchool, pullTimes, pullWords, QUEUED_TAG, roomModeOf, roomTakes, roomTally,
+  roomWindow, rosterAgeBanner, schoolDayVerdict,
   studentMap, tardyKey, tardyLine, termBanner, uniformLine, unitReleased, wallClock,
   type ClaimResult, type Division, type LunchClass, type Mode, type ReflectionSettings, type RosterMeta, type RosterSnap,
   type ScheduleKind, type UnitItem,
@@ -134,8 +135,15 @@ export type ListRowOut = {
   voided: Array<{ line: string; at: string }>;
   /** What happened afterwards: "Carries to the next list (absent)". */
   after: string | null;
-  /** The room ticked this student Not here (screen only, never printed). */
+  /**
+   * The room ticked this student Not here (screen only, never printed). On a
+   * check-off day, once Attendance done is pressed: the room's row was not
+   * checked Here, so the student did not come -- which is what a screen from
+   * before check-off shows under "Not here".
+   */
   notHere: boolean;
+  /** Check-off (owner, 2026-10-12): the room checked this student Here (screen only, never printed). */
+  here: boolean;
   /**
    * Who an MS pull slip goes to: the class before lunch (owner, 10/9), in the
    * words a screen from before 10/9 already prints on a slip (teacher, and
@@ -190,7 +198,7 @@ const DISMISSED_RELEASE = "Dismissed in admin review";
  * review is off the list, like a released one: not counted, not printed, no
  * Not here box, no slip, and "release this student" on every earlier print.
  */
-async function rowsOfMadeList(ctx: Ctx, date: string, tz: string, gradeOf: Record<string, string>, frozenAt: string | null,
+export async function rowsOfMadeList(ctx: Ctx, date: string, tz: string, gradeOf: Record<string, string>, frozenAt: string | null,
   roles: boolean, lunchSlot: { slot: number; period: string } | null): Promise<ListRowOut[]> {
   const units = await ctx.db.query("reflectionUnits").withIndex("by_serveDay", (q) => q.eq("serveDay", date)).collect();
   const roster = await rosterFor(ctx, units.map((u) => u.studentNumber));
@@ -248,6 +256,7 @@ async function rowsOfMadeList(ctx: Ctx, date: string, tz: string, gradeOf: Recor
       released, cleared, voided, after,
       notHere: !!u.roomNotHere,
       ...lunchFields(u.division, lunch),
+      here: !!u.roomHere,
     });
   }
   return out;
@@ -268,6 +277,7 @@ function rowsOfClaim(claim: ClaimResult, roster: Record<string, RosterSnap>, gra
       lines: r.lines, tags: r.tags, owes: r.owes, absentMorning: false,
       released: null, cleared: [], voided: [], after: null, notHere: false,
       ...lunchFields(r.division, lunchClassOf(snap, lunchSlot)),
+      here: false,
     };
   });
 }
@@ -540,7 +550,7 @@ function demoAnswer(f: {
   // A TEST list built from 10/9 on carries each MS row's class before lunch;
   // one built before carries only the Power-Up class, and is shown as built.
   const rows: ListRowOut[] = f.demo.rows.map((r) => ({
-    ...r, pu: r.pu ? { ...r.pu } : null,
+    ...r, pu: r.pu ? { ...r.pu } : null, here: false,
     ...(r.lunch === undefined ? { slipTo: null } : lunchFields(r.division, r.lunch ? { ...r.lunch } : null)),
   }));
   sortRows(rows);
@@ -603,6 +613,13 @@ function demoAnswer(f: {
  * A LIST THAT NAMES AN MS CLASS BEFORE LUNCH (owner, 10/9) is sent only to a
  * screen that says it shows one (`lunchOk`); any other is told so in words,
  * with no row (LUNCH_NEEDS_UPDATE).
+ *
+ * A CHECK-OFF DAY'S ROOM (owner, 10/12) is offered only to a screen that says
+ * it checks Here (`checkinOk`). Any other -- every tab still on the screen
+ * from before, whose boxes say Not here -- still gets the list, which it
+ * needs to pull students, but no box to tick: the room bar says
+ * CHECKIN_NEEDS_UPDATE instead. A Not here tick there would mean the
+ * opposite of what the supervisor meant (and reflectionRoom refuses one).
  */
 export const listForDay = query({
   args: {
@@ -613,8 +630,11 @@ export const listForDay = query({
     // Sent by the screen from 2026-10-09 on, which heads the MS column "Class
     // before lunch" and pulls MS from it. A screen from before never sends it.
     lunchOk: v.optional(v.boolean()),
+    // Sent by the screen from 2026-10-12 on, which checks Here next to each
+    // student who arrives. A screen from before never sends it.
+    checkinOk: v.optional(v.boolean()),
   },
-  handler: async (ctx, { day, demoOk, lunchOk }) => {
+  handler: async (ctx, { day, demoOk, lunchOk, checkinOk }) => {
     const staff = await requireStaff(ctx);
     const { tz, nowIso, today } = await schoolNow(ctx);
     // THE CHECK COMES FIRST: nothing below is read for someone refused.
@@ -685,18 +705,26 @@ export const listForDay = query({
     const frozen = view === "made";
     const modes: Record<Division, Mode> = frozen && row?.modeByDivision ? row.modeByDivision : settings.modeByDivision;
     if (lunchOk !== true && namesLunch(rows)) return { allowed: true as const, ok: false as const, reason: LUNCH_NEEDS_UPDATE };
+    // CHECK-OFF (owner, 2026-10-12): once Attendance done is pressed, a row
+    // the room takes that is not checked Here did not come. Said as "Not
+    // here" too, which a screen from before check-off already shows.
+    const roomMode = roomModeOf(row);
+    if (frozen && roomMode === "checkin") {
+      for (const r of rows) r.notHere = !!row?.roomAttendanceDoneAt && roomTakes(r) && !r.here;
+    }
     sortRows(rows);
     const listVersion = versionOf(rows);
 
     // ---- The sections: MS first (it eats first, so it is pulled first), then HS.
     const sections = sectionsOf(rows, modes, settings, kind);
 
-    // ---- The room's own attendance for this day (build step 8b): Not here
-    // and Attendance done from Lunch & Power-Up start until the next list is
+    // ---- The room's own attendance for this day (build step 8b): Here
+    // checks (or, on a list made before check-off, Not here ticks) and
+    // Attendance done from Lunch & Power-Up start until the next list is
     // made; Room did not run (roles) from this list's freeze until then.
     // Only a LIVE division's detentions are the room's: a division in shadow
     // is decided by PowerSchool (reflection.decideCarries), so its rows get
-    // no Not here box, and a list with no live division has no room bar.
+    // no box, and a list with no live division has no room bar.
     let room: Record<string, any> | null = null;
     if (frozen && (modes.ms === "live" || modes.hs === "live")) {
       const later = await ctx.db.query("reflectionDays").withIndex("by_date", (q) => q.gt("date", date)).collect();
@@ -705,11 +733,18 @@ export const listForDay = query({
         nowIso, listMadeAt: row?.frozenAt ?? null, powerUpMs: times.ok ? times.powerUpMs : null,
         nextListMadeAt: nextMade?.frozenAt ?? null, tz,
       });
+      // A tab from before check-off is shown the list, but no box: what it
+      // would draw says Not here, the opposite of a check-off day's boxes.
+      const oldTab = roomMode === "checkin" && checkinOk !== true;
+      const tally = roomTally(rows, roomMode);
       room = {
-        tick: w.tick, closeRoom: w.closeRoom && roles, why: w.why,
+        mode: roomMode,
+        tick: w.tick && !oldTab, closeRoom: w.closeRoom && roles, why: oldTab ? CHECKIN_NEEDS_UPDATE : w.why,
         doneAt: row?.roomAttendanceDoneAt ?? null, doneBy: row?.roomAttendanceDoneBy ?? null,
         closed: row?.roomClosed ?? null,
         notHere: rows.filter((r) => r.notHere && r.state !== "released" && r.mode === "live").length,
+        // "N of M here", and how many Attendance done would carry now (or did).
+        of: tally.of, here: tally.here, noShows: tally.noShows,
       };
     }
 

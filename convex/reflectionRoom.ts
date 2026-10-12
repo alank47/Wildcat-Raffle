@@ -7,10 +7,10 @@ import { canAdminReflection, canReadReflection } from "./accessRules";
 import {
   audit, dayStateOf, ensureDay, getDay, getLease, loadSettings, markedOf, readState, ROSTER_KEY, startRead, unitItemOf, writeState,
 } from "./reflection";
-import { reviewItems, schoolNow } from "./reflectionList";
+import { reviewItems, rowsOfMadeList, schoolNow } from "./reflectionList";
 import {
-  carriedUnit, clockText, dayLabel, dayTimes, LEASE_MS, readNowIntent, roomWindow, rosterAgeBanner, scheduleKindFor,
-  schoolDayVerdict, termBanner, type ScheduleKind,
+  carriedUnit, CHECKIN_NEEDS_UPDATE, clockText, dayLabel, dayTimes, LEASE_MS, readNowIntent, roomModeOf, roomTally, roomWindow,
+  rosterAgeBanner, scheduleKindFor, schoolDayVerdict, termBanner, type ScheduleKind,
 } from "./reflectionRules";
 
 /**
@@ -21,9 +21,9 @@ import {
  * reflection.ts makes the list and is internal; reflectionList.ts reads it
  * and records prints. Every public function here CHECKS WHO IS ASKING FIRST,
  * before it reads a row:
- *   - the room's attendance (Not here, Attendance done): canReadReflection --
- *     the three roles, and a per-person grant, because the room's supervisor
- *     may hold one;
+ *   - the room's attendance (Here, or Not here on a list made before
+ *     check-off, and Attendance done): canReadReflection -- the three roles,
+ *     and a per-person grant, because the room's supervisor may hold one;
  *   - everything else (the review queue and its decisions, Room did not run,
  *     This is a school day, Read PowerSchool now, the health card):
  *     canAdminReflection, the three roles only -- never a grant.
@@ -67,15 +67,25 @@ const ON_LIST = new Set(["listed", "carried", "review"]);
 // THE ROOM'S OWN ATTENDANCE (spec 3.8)
 // ===========================================================================
 
+/** What a press is told for a detention that is not on a list the room takes attendance for. */
+const NOT_ON_LIST = "That detention is not on a list the room is taking attendance for.";
+
 /**
- * Tick (or untick) one detention "Not here".
+ * Tick (or untick) one detention "Not here" -- ON A LIST MADE BEFORE
+ * CHECK-OFF ONLY (the first live day, Mon 10/12).
  *
- * WHY IT MATTERS. Once "Attendance done" is pressed for the day, exactly the
- * rows ticked Not here carry to the next list -- an unticked row was served,
- * whatever PowerSchool says -- and a student at school who did not come
- * carries like an absent one (owner, 10/8). The reader decides the carries
- * from these marks at its after-school read (or the next morning's read of
- * this date), and keeps deciding until the next list claims them.
+ * WHY IT MATTERS. On such a day, once "Attendance done" is pressed, exactly
+ * the rows ticked Not here carry to the next list -- an unticked row was
+ * served, whatever PowerSchool says -- and a student at school who did not
+ * come carries like an absent one (owner, 10/8). The reader decides the
+ * carries from these marks at its after-school read (or the next morning's
+ * read of this date), and keeps deciding until the next list claims them.
+ *
+ * ON A CHECK-OFF DAY IT IS REFUSED, with words the screen that sends it
+ * shows (CHECKIN_NEEDS_UPDATE). Only a tab still on the screen from before
+ * check-off sends it, and there a tick means "did not come" while the day's
+ * boxes mean "came": accepted, it would be read the other way round, or
+ * silently ignored while the supervisor believed it recorded.
  *
  * OPEN from Lunch & Power-Up start on the list's day until the next list is
  * made. After that the carries are on paper, and a tick is refused.
@@ -90,9 +100,10 @@ export const markRoom = mutation({
     const u = await ctx.db.get(unitId);
     // A detention dismissed in admin review is off the list, like a released one.
     if (!u || !u.serveDay || !ON_LIST.has(u.state) || (u.state === "review" && u.resolution === "dismissed")) {
-      return { ok: false as const, reason: "That detention is not on a list the room is taking attendance for." };
+      return { ok: false as const, reason: NOT_ON_LIST };
     }
-    const { w } = await roomStateOf(ctx, u.serveDay, nowIso, tz);
+    const { row, w } = await roomStateOf(ctx, u.serveDay, nowIso, tz);
+    if (roomModeOf(row) === "checkin") return { ok: false as const, reason: CHECKIN_NEEDS_UPDATE };
     if (!w.tick) return { ok: false as const, reason: w.why ?? "Room attendance is closed for that day." };
     if (!!u.roomNotHere === notHere) return { ok: true as const, already: true, notHere };
     await ctx.db.patch(u._id, { roomNotHere: notHere ? true : undefined, roomMarkedBy: staff.email, roomMarkedAt: nowIso });
@@ -102,13 +113,80 @@ export const markRoom = mutation({
 });
 
 /**
+ * CHECK-OFF (owner, 2026-10-12): check (or uncheck) one detention "Here" --
+ * the student arrived in the room.
+ *
+ * WHY IT MATTERS. Once "Attendance done" is pressed, every LIVE detention on
+ * the list NOT checked Here did not come, and carries to the student's next
+ * school day (the same tags and the same limit of 5 carries as before). A
+ * row checked Here is served, whatever PowerSchool says.
+ *
+ * Who may: the same as Not here -- the roles and a per-person grant (the
+ * room's supervisor may hold one). Only a live division's detention: no room
+ * runs for a division in shadow, and PowerSchool decides its carries.
+ *
+ * OPEN from Lunch & Power-Up start on the list's day until the next list is
+ * made, and only while Attendance done is NOT pressed: a check can be taken
+ * back until then. "Undo Attendance done" opens the checks again. Refused on
+ * a list made before check-off (its room ticks Not here) and on a day the
+ * room did not run.
+ */
+export const markHere = mutation({
+  args: { unitId: v.id("reflectionUnits"), here: v.boolean() },
+  handler: async (ctx, { unitId, here }) => {
+    const staff = await requireStaff(ctx);
+    const { tz, nowIso, today } = await schoolNow(ctx);
+    if (!canReadReflection(staff, today)) return { ok: false as const, reason: READ_REFUSED };
+    if (!tz) return { ok: false as const, reason: "No school time zone is set in Settings > Bell Schedule." };
+    const u = await ctx.db.get(unitId);
+    if (!u || !u.serveDay || !ON_LIST.has(u.state) || (u.state === "review" && u.resolution === "dismissed")) {
+      return { ok: false as const, reason: NOT_ON_LIST };
+    }
+    if (u.mode !== "live") {
+      return { ok: false as const, reason: "That detention is on a pilot list: nobody is pulled from it, so the room does not take its attendance." };
+    }
+    const { row, w } = await roomStateOf(ctx, u.serveDay, nowIso, tz);
+    if (!row || roomModeOf(row) !== "checkin") {
+      return { ok: false as const, reason: `${dayLabel(u.serveDay)}'s list takes attendance with Not here ticks, not Here checks.` };
+    }
+    if (!w.tick) return { ok: false as const, reason: w.why ?? "Room attendance is closed for that day." };
+    if (row.roomClosed) {
+      return { ok: false as const, reason: `The room is recorded as not running on ${dayLabel(u.serveDay)}: everyone on its list carries over.` };
+    }
+    if (!!u.roomHere === here) return { ok: true as const, already: true, here };
+    if (row.roomAttendanceDoneAt) {
+      return {
+        ok: false as const,
+        reason: `Attendance is done for ${dayLabel(u.serveDay)}. To change who was here, press Undo Attendance done first.`,
+      };
+    }
+    await ctx.db.patch(u._id, { roomHere: here ? true : undefined, roomMarkedBy: staff.email, roomMarkedAt: nowIso });
+    await audit(ctx, { byEmail: staff.email, action: here ? "room-checked-here" : "room-unchecked-here", day: u.serveDay, unitId: u._id });
+    return { ok: true as const, already: false, here };
+  },
+});
+
+/**
  * "Attendance done": the room took attendance for day D (or, with
- * done: false, a press made by mistake is taken back). From then on only the
- * rows ticked Not here carry. Same window as the ticks.
+ * done: false, a press made by mistake is taken back). Same window as the
+ * checks.
+ *
+ * ON A CHECK-OFF DAY every live detention on the list not checked Here then
+ * carries, so the press must say HOW MANY it is moving (`noShows`): the
+ * number the screen's confirmation named. If the list has changed since --
+ * another supervisor checked someone in, a detention was released -- nothing
+ * is recorded, and the answer gives the number now, to confirm again.
+ * Without `noShows` (a tab from before check-off, whose button means "carry
+ * only the ticked rows") it is refused with CHECKIN_NEEDS_UPDATE: pressed
+ * there, it would carry every student nobody could check. Taking it back
+ * (done: false) needs no number and reopens the checks.
+ *
+ * On a list made before check-off, exactly the rows ticked Not here carry,
+ * as before.
  */
 export const roomAttendanceDone = mutation({
-  args: { day: v.string(), done: v.optional(v.boolean()) },
-  handler: async (ctx, { day, done }) => {
+  args: { day: v.string(), done: v.optional(v.boolean()), noShows: v.optional(v.number()) },
+  handler: async (ctx, { day, done, noShows }) => {
     const staff = await requireStaff(ctx);
     const { tz, nowIso, today } = await schoolNow(ctx);
     if (!canReadReflection(staff, today)) return { ok: false as const, reason: READ_REFUSED };
@@ -117,12 +195,38 @@ export const roomAttendanceDone = mutation({
     const { row, w } = await roomStateOf(ctx, day, nowIso, tz);
     if (!w.tick || !row) return { ok: false as const, reason: w.why ?? "Room attendance is closed for that day." };
     const want = done !== false;
+    const checkin = roomModeOf(row) === "checkin";
+    if (checkin && want && typeof noShows !== "number") return { ok: false as const, reason: CHECKIN_NEEDS_UPDATE };
     if (!!row.roomAttendanceDoneAt === want) return { ok: true as const, already: true, done: want };
-    await ctx.db.patch(row._id, want
-      ? { roomAttendanceDoneAt: nowIso, roomAttendanceDoneBy: staff.email, updatedAt: nowIso }
-      : { roomAttendanceDoneAt: undefined, roomAttendanceDoneBy: undefined, updatedAt: nowIso });
-    await audit(ctx, { byEmail: staff.email, action: want ? "room-attendance-done" : "room-attendance-undone", day });
-    return { ok: true as const, already: false, done: want };
+    if (!want) {
+      await ctx.db.patch(row._id, {
+        roomAttendanceDoneAt: undefined, roomAttendanceDoneBy: undefined, roomAttendanceDoneCount: undefined, updatedAt: nowIso,
+      });
+      await audit(ctx, { byEmail: staff.email, action: "room-attendance-undone", day });
+      return { ok: true as const, already: false, done: false };
+    }
+    if (!checkin) {
+      await ctx.db.patch(row._id, { roomAttendanceDoneAt: nowIso, roomAttendanceDoneBy: staff.email, updatedAt: nowIso });
+      await audit(ctx, { byEmail: staff.email, action: "room-attendance-done", day });
+      return { ok: true as const, already: false, done: true };
+    }
+    // The same rows, and the same test of which the room takes, as the
+    // screen's count (reflectionList.listForDay).
+    const tally = roomTally(await rowsOfMadeList(ctx, day, tz, {}, row.frozenAt ?? null, false, null), "checkin");
+    if (tally.noShows !== noShows) {
+      return {
+        ok: false as const, noShows: tally.noShows,
+        reason: `The list changed while you were confirming: ${tally.here} of ${tally.of} are checked Here now, so `
+          + `${tally.noShows} would move to the next day, not ${noShows}. Nothing was recorded. Press Attendance done again.`,
+      };
+    }
+    const count = { of: tally.of, here: tally.here, noShows: tally.noShows };
+    await ctx.db.patch(row._id, { roomAttendanceDoneAt: nowIso, roomAttendanceDoneBy: staff.email, roomAttendanceDoneCount: count, updatedAt: nowIso });
+    await audit(ctx, {
+      byEmail: staff.email, action: "room-attendance-done", day,
+      reason: `${count.here} of ${count.of} checked Here; ${count.noShows} did not come`,
+    });
+    return { ok: true as const, already: false, done: true, ...count };
   },
 });
 

@@ -42633,6 +42633,14 @@
         /** A tick, a button or a review decision on its way to the server. */
         let _rrActing = false;
         /**
+         * HERE CHECKS ON THEIR WAY (owner, 2026-10-12): unitId -> { here, call,
+         * settledAt }. The box and the "N of M here" count change the moment
+         * the supervisor taps, on a slow Chromebook too, and stay so until a
+         * list read that STARTED after the server answered has been drawn --
+         * so an older read arriving late never flips a box back.
+         */
+        const _rrHereLocal = new Map();
+        /**
          * A list printed from the browser's own menu draws from the answer on
          * screen; older than this, every page says STALE.
          */
@@ -42760,8 +42768,13 @@
                 // before lunch" and pulls MS from it (owner, 10/9). The server
                 // sends such rows only to a screen that says so; one from
                 // before is told in words.
-                const res = await auth.convexQuery('reflectionList:listForDay', { day: day, demoOk: true, lunchOk: true }, session.idToken);
+                // checkinOk: it checks Here next to each student who arrives
+                // (owner, 10/12). A screen from before ticks Not here, and is
+                // given no box on a check-off day.
+                const res = await auth.convexQuery('reflectionList:listForDay', { day: day, demoOk: true, lunchOk: true, checkinOk: true }, session.idToken);
                 if (seq !== _rrSeq) return res;
+                // A check the server answered before this read began is in it now.
+                _rrHereLocal.forEach((l, id) => { if (l.settledAt !== null && l.settledAt < seq) _rrHereLocal.delete(id); });
                 if (res && res.allowed === false) { _rrData = null; _rrWhy = res.reason || 'Not available to your access level.'; }
                 else if (res && res.ok === false) { _rrData = null; _rrWhy = res.reason || 'The list could not be read.'; }
                 else { _rrData = res; _rrWhy = ''; _rrLoadedAt = Date.now(); }
@@ -42944,19 +42957,87 @@
         }
 
         /**
-         * The room's own attendance for this list (Not here, Attendance done,
-         * Room did not run), and the roles' buttons for today. Drawn from the
-         * server's answer, which says what is open now; the server checks
-         * again on every press.
+         * CHECK-OFF (owner, 2026-10-12): the day's room takes attendance by
+         * checking Here next to each student who arrives. A list made before
+         * it (and a server from before) ticks Not here instead.
+         */
+        function rrCheckin(res) {
+            return !!(res && res.room && res.room.mode === 'checkin');
+        }
+
+        /** A row the room takes attendance for: a live division's detention still on the list (the server's roomTakes). */
+        function rrRoomRow(r) {
+            return !!r && !!r.unitId && !r.released && r.state !== 'released' && r.mode === 'live';
+        }
+
+        /** Checked Here: the server's word, or a tap still on its way. */
+        function rrHereOf(r) {
+            const l = r && r.unitId ? _rrHereLocal.get(String(r.unitId)) : null;
+            return l ? l.here === true : !!(r && r.here === true);
+        }
+
+        /** "N of M here" for some rows, counting taps still on their way. */
+        function rrHereCount(rows) {
+            const mine = (rows || []).filter(rrRoomRow);
+            return { of: mine.length, here: mine.filter(rrHereOf).length };
+        }
+
+        /** The room's rows NOT checked Here: who moves to the next day once Attendance done is pressed. */
+        function rrNoShowRows(res) {
+            return (res && Array.isArray(res.sections) ? res.sections.flatMap(s => s.rows) : [])
+                .filter(r => rrRoomRow(r) && !rrHereOf(r));
+        }
+
+        /**
+         * Their names, by last name: what Attendance done names before it
+         * moves them, and what it says after. Grouped by sitting when both
+         * divisions have someone missing, so a press after the MS sitting that
+         * would move the HS students still to come shows them as such.
+         */
+        function rrNoShowNames(res) {
+            const byNumber = rrStudentIndex();
+            const rows = rrNoShowRows(res);
+            const names = list => list.map(r => rrName(byNumber[r.studentNumber], r.studentNumber))
+                .sort((a, b) => rrCompareWords(a, b)).join('; ');
+            const ms = rows.filter(r => r.division !== 'hs'), hs = rows.filter(r => r.division === 'hs');
+            return { count: rows.length, text: ms.length && hs.length ? 'Middle school: ' + names(ms) + '. High school: ' + names(hs) : names(rows) };
+        }
+
+        /**
+         * The room's own attendance for this list (Here checks -- or Not here
+         * ticks on a list made before check-off -- Attendance done, Room did
+         * not run), and the roles' buttons for today. Drawn from the server's
+         * answer, which says what is open now; the server checks again on
+         * every press.
          */
         function rrRoomBarHtml(res) {
             const room = res.room;
             const parts = [];
+            const checkin = rrCheckin(res);
             if (room) {
                 const bits = [];
                 if (room.closed) {
                     bits.push('<b>Room did not run</b>: ' + escapeHtml(room.closed.reason || '') + ' (' + escapeHtml(room.closed.by || '')
                         + ', ' + escapeHtml(rrClock(room.closed.at)) + '). Everyone the room was to take carries over, without counting toward the limit.');
+                } else if (checkin) {
+                    const all = rrHereCount((res.sections || []).flatMap(s => s.rows));
+                    const count = '<b data-rr-here-count>' + all.here + ' of ' + all.of + ' here</b>';
+                    if (room.doneAt) {
+                        // WHO CARRIED: everyone the room takes who was not checked Here.
+                        const gone = rrNoShowNames(res);
+                        bits.push('<b>Attendance done</b> at ' + escapeHtml(rrClock(room.doneAt)) + (room.doneBy ? ' by ' + escapeHtml(room.doneBy) : '')
+                            + ': ' + count + '.');
+                        bits.push(gone.count
+                            ? '<span class="rr-noshow-list" data-rr-noshows>' + gone.count + ' did not come and '
+                                + (gone.count === 1 ? 'moves' : 'move') + ' to their next school day\'s Reflection Room: '
+                                + escapeHtml(gone.text) + '.</span>'
+                            : 'Everyone came: nobody moves to the next day.');
+                    } else if (room.tick) {
+                        bits.push(count + '. Check <b>Here</b> next to each student who arrives. After the last sitting, press Attendance done: '
+                            + 'everyone not checked moves to their next school day\'s Reflection Room.');
+                    } else if (all.here) {
+                        bits.push(count + '.');
+                    }
                 } else if (room.doneAt) {
                     bits.push('<b>Attendance done</b> at ' + escapeHtml(rrClock(room.doneAt)) + (room.doneBy ? ' by ' + escapeHtml(room.doneBy) : '')
                         + ': ' + room.notHere + ' not here, and they carry over.');
@@ -42966,6 +43047,7 @@
                 if (room.why) bits.push(escapeHtml(room.why));
                 let buttons = '';
                 if (room.tick && !room.closed) {
+                    // Attendance done names how many it moves first (reflectionAttendanceDone).
                     buttons += room.doneAt
                         ? '<button type="button" class="btn-secondary" onclick="reflectionAttendanceDone(false)">Undo Attendance done</button>'
                         : '<button type="button" class="btn-primary" onclick="reflectionAttendanceDone(true)">Attendance done</button>';
@@ -43016,12 +43098,14 @@
             }
             if (bannersEl) bannersEl.innerHTML = rrBannersHtml(res) + (_rrWhy ? '<div class="rr-banner rr-banner-warn">' + escapeHtml(_rrWhy) + '</div>' : '');
             const room = res.room || null;
+            const checkin = rrCheckin(res);
             let html = rrRoomBarHtml(res);
             (res.sections || []).forEach(section => {
                 const tableId = rrTableId(section.division);
                 _wcSortRedraw.set(tableId, () => renderReflectionRoom());
                 const rows = rrRowsInOrder(section, byNumber);
                 const cap = section.capacity ? ' of ' + section.capacity : '';
+                const sitting = checkin && room ? rrHereCount(section.rows) : null;
                 html += '<div class="rr-section" data-rr-section="' + escapeHtml(section.division) + '">'
                     + '<h4 class="rr-section-head">' + escapeHtml(section.label)
                     + ' <span class="wc-chip">' + section.count + cap + ' student' + (section.count === 1 && !cap ? '' : 's') + '</span>'
@@ -43031,14 +43115,18 @@
                         : section.mode === 'shadow' ? ' <span class="rr-pilot">PILOT: do not assign</span>' : '')
                     // The count against the room's capacity for this sitting.
                     + (section.overCapacity ? ' <span class="rr-over">over capacity</span>' : '')
+                    // Check-off: this sitting's own "N of M here" (MS and HS come at different times).
+                    + (sitting && sitting.of
+                        ? ' <span class="wc-chip rr-here-chip" data-rr-here-count="' + escapeHtml(section.division) + '">'
+                            + sitting.here + ' of ' + sitting.of + ' here</span>' : '')
                     + '</h4>';
                 if (!rows.length) {
                     html += '<p class="wu-absent">Nobody on this list.</p></div>';
                     return;
                 }
-                // NOT HERE: on screen only, never on paper (the paper has an
-                // empty Served box instead). A box while the room's attendance
-                // is open; afterwards, the word, or nothing. Never on a row of
+                // NOT HERE (a list made before check-off): on screen only, never
+                // on paper (the paper has an empty Here box instead). A box while
+                // the room's attendance is open; afterwards, the word, or nothing. Never on a row of
                 // a division in shadow: no room runs for it, and PowerSchool
                 // decides its carries (second review, 2026-10-08).
                 const notHereCell = r => {
@@ -43051,12 +43139,30 @@
                     }
                     return '<td>' + (r.notHere ? '<b>Not here</b>' : '') + '</td>';
                 };
+                // HERE (owner, 2026-10-12): a big box to tap as each student
+                // arrives, on a live division's rows only, while attendance is
+                // open and not yet done. Then the word: Here, or "Did not
+                // come" once Attendance done has moved them to the next day.
+                // On screen only; the paper has its own empty Here box.
+                const hereCell = r => {
+                    if (!room) return '';
+                    if (!rrRoomRow(r)) return '<td></td>';
+                    const here = rrHereOf(r);
+                    if (room.tick && !room.doneAt && !room.closed) {
+                        return '<td class="rr-here-cell"><label class="rr-here"><input type="checkbox" data-rr-here="' + escapeHtml(r.unitId) + '"'
+                            + (here ? ' checked' : '') + ' onchange="markReflectionHere(this.getAttribute(\'data-rr-here\'), this.checked)">'
+                            + '<span>Here</span></label></td>';
+                    }
+                    if (here) return '<td class="rr-here-cell"><b>Here</b></td>';
+                    return '<td class="rr-here-cell">' + (room.doneAt && !room.closed ? '<span class="rr-noshow">Did not come: moves to the next day</span>' : '') + '</td>';
+                };
+                const roomCell = checkin ? hereCell : notHereCell;
                 html += '<div class="wu-scroll-x"><table class="student-table wc-att-table rr-table"><thead><tr>'
-                    + (room ? '<th>Not here</th>' : '')
+                    + (room ? (checkin ? '<th>Here</th>' : '<th>Not here</th>') : '')
                     + rrCols(section).map((col, i) => wcSortTh(tableId, i, escapeHtml(col.label), { type: col.type })).join('')
                     + '</tr></thead><tbody>'
-                    + rows.map(r => '<tr' + (r.released ? ' class="rr-released"' : '') + '>'
-                        + notHereCell(r)
+                    + rows.map(r => '<tr' + (r.released ? ' class="rr-released"' : checkin && room && rrRoomRow(r) && rrHereOf(r) ? ' class="rr-row-here"' : '') + '>'
+                        + roomCell(r)
                         + '<td><b>' + escapeHtml(rrName(byNumber[r.studentNumber], r.studentNumber)) + '</b></td>'
                         + '<td>' + escapeHtml(r.studentNumber) + '</td>'
                         + '<td>' + escapeHtml(r.grade || '') + '</td>'
@@ -43135,7 +43241,9 @@
                 + ' (' + counts.map(c => c.s.division.toUpperCase() + ' ' + c.rows.length + (c.s.capacity ? ' of ' + c.s.capacity : '')).join(', ') + ')';
             const foot = 'Printed by ' + (o.printedBy || 'staff') + ' at ' + rrClock(o.printedAt || res.asOf) + ' on ' + res.dayLabel;
             const pages = counts.map(c => {
-                const cols = ['Served'].concat(rrCols(c.s).map(x => x.label));
+                // The empty box the supervisor ticks on paper as each student
+                // arrives: "Here", the same word as the screen's check-off.
+                const cols = ['Here'].concat(rrCols(c.s).map(x => x.label));
                 const marks = [];
                 if (test) marks.push(RR_TEST_MARK);
                 if (!test && c.s.mode === 'shadow') marks.push('PILOT: do not assign');
@@ -43317,6 +43425,7 @@
             _rrSeq++;
             _rrData = null;
             _rrReview = null;
+            _rrHereLocal.clear();
             _rrLoadedAt = 0;
             _rrWhy = '';
             _rrView = 'today';
@@ -43439,7 +43548,7 @@
             // One table for both divisions, so the column says where each is
             // pulled from: MS from the class before lunch, HS from Power-Up.
             const lunchCol = (res.sections || []).some(sec => sec.pullFrom === 'before-lunch');
-            const cols = ['Served'].concat(RR_COLS.map((c, i) => (i === 3 && lunchCol ? 'Pull from (MS: class before lunch; HS: Power-Up)' : c.label)));
+            const cols = ['Here'].concat(RR_COLS.map((c, i) => (i === 3 && lunchCol ? 'Pull from (MS: class before lunch; HS: Power-Up)' : c.label)));
             const marks = [];
             // One page for both divisions, so the pilot mark NAMES the
             // division in shadow: "PILOT (HS): do not assign".
@@ -43663,14 +43772,73 @@
                 { unitId: String(unitId), notHere: notHere === true }, session.idToken) : null);
         }
 
+        /**
+         * HERE (owner, 2026-10-12): check (or uncheck) one student as they
+         * arrive. The box and the count change at once; the server checks who
+         * is asking and whether attendance is still open, and a refusal is
+         * said in words and the box goes back.
+         */
+        async function markReflectionHere(unitId, here) {
+            const auth = window.WildcatAuth;
+            const session = auth && auth.getSession && auth.getSession();
+            if (!session) { showAlert('ℹ️ You are signed out. Sign in again and retry.'); renderReflectionRoom(); return null; }
+            const id = String(unitId);
+            const call = auth.convexMutation('reflectionRoom:markHere', { unitId: id, here: here === true }, session.idToken);
+            const local = { here: here === true, call: call, settledAt: null };
+            _rrHereLocal.set(id, local);
+            renderReflectionRoom();
+            let res = null;
+            try {
+                res = await call;
+            } catch (e) {
+                res = { ok: false, reason: (e && e.message) || 'The server did not answer.' };
+            }
+            if (_rrHereLocal.get(id) === local) {
+                // Refused: the box goes back at once. Accepted: it stays as
+                // tapped until a read that began after this answer is drawn.
+                if (!res || res.ok !== true) _rrHereLocal.delete(id); else local.settledAt = _rrSeq;
+            }
+            if (!res || res.ok !== true) showAlert('ℹ️ ' + ((res && res.reason) || 'That did not go through.'));
+            await loadReflectionList();
+            return res;
+        }
+
+        /**
+         * Attendance done, or (done false) taken back.
+         *
+         * ON A CHECK-OFF DAY it first lets every tap still on its way land,
+         * reads the list again, and names how many students it will move to
+         * the next day, and who, before anything is sent. The server is told
+         * that number and refuses if the list has changed since.
+         */
         async function reflectionAttendanceDone(done) {
             if (!_rrData) return null;
             const day = _rrData.date;
             const auth = window.WildcatAuth;
             const session = auth && auth.getSession && auth.getSession();
+            if (done !== false && rrCheckin(_rrData)) {
+                if (!session) { showAlert('ℹ️ You are signed out. Sign in again and retry.'); return null; }
+                await Promise.all([..._rrHereLocal.values()].map(l => Promise.resolve(l.call).catch(() => null)));
+                const fresh = await loadReflectionList();
+                if (!fresh || fresh.ok === false || fresh.allowed === false || fresh.date !== day || !rrCheckin(fresh)) return null;
+                const room = fresh.room;
+                if (!room.tick || room.closed) { showAlert('ℹ️ ' + (room.why || 'Room attendance is closed for that day.')); return null; }
+                if (room.doneAt) return null;
+                const gone = rrNoShowNames(fresh);
+                const n = typeof room.noShows === 'number' ? room.noShows : gone.count;
+                const yes = await showConfirm('Attendance done for ' + fresh.dayLabel + '? ' + room.here + ' of ' + room.of + ' are checked Here. '
+                    + (n ? n + ' student' + (n === 1 ? '' : 's') + ' not checked will move to their next school day\'s Reflection Room: '
+                        + gone.text + '.' : 'Everyone is checked Here: nobody moves to the next day.'),
+                    { confirmLabel: n ? 'Attendance done: move ' + n : 'Attendance done' });
+                if (!yes) return null;
+                return rrAct(auth.convexMutation('reflectionRoom:roomAttendanceDone', { day: day, done: true, noShows: n }, session.idToken),
+                    () => n ? 'Attendance done: ' + n + ' moved to the next day.' : 'Attendance done: everyone came.');
+            }
             return rrAct(session ? auth.convexMutation('reflectionRoom:roomAttendanceDone',
                 { day: day, done: done !== false }, session.idToken) : null,
-                done !== false ? 'Attendance done: only the students ticked Not here carry over.' : 'Attendance done was taken back.');
+                done !== false ? 'Attendance done: only the students ticked Not here carry over.'
+                    : rrCheckin(_rrData) ? 'Attendance done was taken back: change the checks, then press Attendance done again.'
+                    : 'Attendance done was taken back.');
         }
 
         async function reflectionRoomDidNotRun(undo) {

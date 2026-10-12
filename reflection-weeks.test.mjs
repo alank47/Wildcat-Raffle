@@ -11,7 +11,9 @@
 // owner's rules in the build spec alone. The oracle imports nothing from
 // convex/reflection*.ts: it has its own Los Angeles clock, its own arrival
 // rule (spec 3.3), its own freeze windows (3.5, 3.6), its own claim and tag
-// rules (3.6), its own carry rule (3.8) and room rules, replaying a ledger of
+// rules (3.6), its own carry rule (3.8) and room rules -- which presses the
+// room's attendance accepts, and the owner's 10/12 check-off: Attendance
+// done moves every live detention NOT checked Here -- replaying a ledger of
 // every PowerSchool change, uniform entry, switch and room press with the
 // time it happened.
 //
@@ -23,7 +25,8 @@
 //   B. Fri 11/20 -> Mon 11/30 over Thanksgiving, once with the break MARKED
 //      no school (and 11/30 a marked Stack Day) and once UNMARKED.
 //   E. MS from shadow to live midweek (Tue 12/8 evening) with HS in shadow;
-//      the room's Not here, Attendance done and Room did not run for the live
+//      the room's Here checks (owner, 10/12: check-off), Attendance done --
+//      taken back and pressed again -- and Room did not run for the live
 //      division only; a tardy cleared, typed back as an arrival and counted
 //      again (released after the pull, released before it, and before the list).
 //   E2. MS to live on a Wednesday morning counting from that day; HS to live
@@ -32,6 +35,12 @@
 //   A2. An unmarked six-period Thursday, treated as a Minimum Day (spec 3.5).
 //   F2. Friday's room attendance recorded on Monday morning; a T changed to D
 //      and back behind a Promise Time absence.
+//   N. A list made before check-off shipped (Mon 10/12, its room ticked Not
+//      here), then check-off from Tuesday: a tab still on the old screen
+//      pressing Not here and Attendance done, checks taken back, Attendance
+//      done taken back and pressed again, a check refused once it is done,
+//      and on Wednesday checks with no Attendance done (PowerSchool decides
+//      the rest).
 //   C5. One detention carried five times across a marked holiday, then review.
 //   U. Queued uniform entries: saved late, sent over a weekend, past 72 hours,
 //      observed before the close and saved after the list.
@@ -182,7 +191,8 @@ async function makeWorld(cfg) {
   const fake = fakePowerSchool(ps, {});
   const downs = (cfg.down ?? []).map(([d, a, b]) => [LA(d, a), LA(d, b)]);
   const isDown = (ms) => downs.some(([a, b]) => ms >= a && ms < b);
-  const L = { ps: [], uniform: [], mode: [], room: [], readNow: [] };
+  // legacy: the days whose list stands for one made before check-off shipped (no room mode stamped).
+  const L = { ps: [], uniform: [], mode: [], room: [], readNow: [], legacy: new Set() };
   let rid = 100000;
   const w = {
     store, rt, fake, roster, psId, L, cfg, downs, isDown, tickLog: [], jobLog: [],
@@ -232,6 +242,7 @@ async function makeWorld(cfg) {
     unitOn(day, sn) {
       return store.rows("reflectionUnits").find((u) => u.serveDay === day && u.studentNumber === sn && ["listed", "carried", "review"].includes(u.state));
     },
+    /** Not here: a list made before check-off -- or a tab still on the screen from before it. */
     async notHere(day, sn) {
       const u = w.unitOn(day, sn);
       if (!u) throw new Error(`no unit for ${sn} on ${day}`);
@@ -239,10 +250,40 @@ async function makeWorld(cfg) {
       L.room.push({ at: Date.now(), day, type: "notHere", sn, value: true, ok: r.ok });
       return r;
     },
-    async attendanceDone(day) {
-      const r = await w.as("pbis@school.test").run("reflectionRoom.roomAttendanceDone", { day });
-      L.room.push({ at: Date.now(), day, type: "done", ok: r.ok });
+    /** Check-off (owner, 10/12): checked Here (or, value false, the check taken back). */
+    async here(day, sn, value = true) {
+      const u = w.unitOn(day, sn);
+      if (!u) throw new Error(`no unit for ${sn} on ${day}`);
+      const r = await w.as("pbis@school.test").run("reflectionRoom.markHere", { unitId: u._id, here: value });
+      L.room.push({ at: Date.now(), day, type: "here", sn, value, ok: r.ok });
       return r;
+    },
+    /**
+     * Attendance done, as this build's screen presses it: on a check-off day
+     * with the number of students it moves, read off the list first. `old`:
+     * as a tab still on the screen from before check-off presses it, with no number.
+     */
+    async attendanceDone(day, { old = false } = {}) {
+      let noShows;
+      if (!old) {
+        const res = await w.as("pbis@school.test").run("reflectionList.listForDay", { day, lunchOk: true, checkinOk: true });
+        if (res.room?.mode === "checkin") noShows = res.room.noShows;
+      }
+      const r = await w.as("pbis@school.test").run("reflectionRoom.roomAttendanceDone", { day, ...(noShows === undefined ? {} : { noShows }) });
+      L.room.push({ at: Date.now(), day, type: "done", value: true, noShows, ok: r.ok });
+      return r;
+    },
+    async undoAttendanceDone(day) {
+      const r = await w.as("pbis@school.test").run("reflectionRoom.roomAttendanceDone", { day, done: false });
+      L.room.push({ at: Date.now(), day, type: "done", value: false, ok: r.ok });
+      return r;
+    },
+    /** A list standing for one made before check-off shipped: its room mode taken off, as the old code left it. */
+    async legacyDay(day) {
+      const row = store.rows("reflectionDays").find((d) => d.date === day);
+      if (!row?.frozenAt || row.roomMode !== "checkin") throw new Error(`${day}: no list stamped check-off to take back`);
+      await store.db.patch(row._id, { roomMode: undefined });
+      L.legacy.add(day);
     },
     async roomDidNotRun(day, reason) {
       const r = await w.as("admin@school.test").run("reflectionRoom.roomDidNotRun", { day, reason });
@@ -532,6 +573,60 @@ function oracle(w, endMs) {
   const tardyLine = (K) => `${lbl(K.date)}: Tardy ${slotName(K.slot)} (Ms ${TEACHER[K.slot]})`;
   const uniformLine = (u) => `${lbl(u.day)}: Uniform ${hm(u.observedAt, true)}`;
 
+  // ---- Spec 3.8 and the owner's 10/12 check-off: which of the room's presses
+  // for day P count. Judged here from the rules, never from what the server
+  // answered (compare() checks the two agree):
+  //   - the room's attendance is open from Lunch & Power-Up on P until the
+  //     next list is made; Room did not run from P's list until then;
+  //   - a list made before check-off (L.legacy) takes Not here ticks, and
+  //     Attendance done with no number;
+  //   - every other list takes Here checks: only on a LIVE detention still on
+  //     the list, not once the room is recorded as not running, and not while
+  //     Attendance done stands (a check already so is answered "already");
+  //     Attendance done must name how many it moves -- the live detentions on
+  //     the list not checked Here -- and a tab that names none is refused.
+  const listF = (P) => freeze[P]?.F ?? null;
+  const nextListF = (P) => schoolDays.filter((d) => d > P && listF(d) !== null).map(listF)[0] ?? Infinity;
+  const judged = new Map();
+  function judgeRoom(P) {
+    if (judged.has(P)) return judged.get(P);
+    const evs = L.room.filter((e) => e.day === P).sort((a, b) => a.at - b.at);
+    const onList = (sn, at) => units.find((u) => u.day === P && u.sn === sn && !stillReleased(u, at));
+    const here = new Map();
+    let done = false, closed = false;
+    const out = [];
+    for (const e of evs) {
+      const made = listF(P) !== null && e.at >= listF(P) && e.at < nextListF(P);
+      const open = made && e.at >= LA(P, TIMES[kindOf(P)].pu);
+      let ok = false, expectNoShows = null;
+      if (e.type === "closed") {
+        ok = made;
+        if (ok) closed = true;
+      } else if (!open) {
+        ok = false;
+      } else if (e.type === "notHere") {
+        ok = L.legacy.has(P) && !!onList(e.sn, e.at);
+      } else if (e.type === "here") {
+        const U = onList(e.sn, e.at);
+        ok = !L.legacy.has(P) && !!U && U.mode === "live" && !closed && (!done || !!here.get(e.sn) === e.value);
+        if (ok) here.set(e.sn, e.value);
+      } else if (e.type === "done" && e.value === false) {
+        ok = true;
+        done = false;
+      } else if (e.type === "done") {
+        if (L.legacy.has(P)) ok = true;
+        else {
+          expectNoShows = units.filter((u) => u.day === P && u.mode === "live" && !stillReleased(u, e.at) && !here.get(u.sn)).length;
+          ok = e.noShows !== undefined && (done || e.noShows === expectNoShows);
+        }
+        if (ok) done = true;
+      }
+      out.push({ e, ok, expectNoShows });
+    }
+    judged.set(P, out);
+    return out;
+  }
+
   // ---- Spec 3.8: the carry verdict.
   function carryVerdict(U, P, atMs) {
     const r = lastReadOf(P, atMs);
@@ -539,13 +634,25 @@ function oracle(w, endMs) {
     const sn = U.sn, div = U.div;
     const pu = div === "ms" ? 9 : 8;
     const absentIn = (s) => { const c = v.marks[sn]?.[s] ?? []; return c.length > 0 && c.every((x) => ABSENT.has(x)); };
-    const room = L.room.filter((e) => e.ok && e.day === P && e.at < atMs);
+    const room = judgeRoom(P).filter((j) => j.ok && j.e.at < atMs).map((j) => j.e);
     if (U.mode === "live") {
       if (room.some((e) => e.type === "closed")) return { carry: true, why: "room closed", counts: false };
-      if (room.some((e) => e.type === "done")) {
-        const ticks = room.filter((e) => e.type === "notHere" && e.sn === sn);
-        if (!ticks.length || !ticks[ticks.length - 1].value) return { carry: false, why: "room: in the room" };
-        return { carry: true, why: absentIn(pu) ? "absent" : "at school: did not come", counts: true };
+      const presses = room.filter((e) => e.type === "done");
+      const done = presses.length > 0 && presses[presses.length - 1].value !== false;
+      const noShow = { carry: true, why: absentIn(pu) ? "absent" : "at school: did not come", counts: true };
+      if (L.legacy.has(P)) {
+        // A list made before check-off: Attendance done carries exactly the rows ticked Not here.
+        if (done) {
+          const ticks = room.filter((e) => e.type === "notHere" && e.sn === sn);
+          if (!ticks.length || !ticks[ticks.length - 1].value) return { carry: false, why: "room: in the room" };
+          return noShow;
+        }
+      } else {
+        // Owner, 10/12: checked Here was in the room (Attendance done or not);
+        // once Attendance done is pressed, everyone not checked did not come.
+        const checks = room.filter((e) => e.type === "here" && e.sn === sn);
+        if (checks.length && checks[checks.length - 1].value) return { carry: false, why: "room: checked Here" };
+        if (done) return noShow;
       }
     }
     if (!v || !met(v, pu)) return { review: "Power-Up did not meet" };
@@ -721,7 +828,8 @@ function oracle(w, endMs) {
       };
     }
   }
-  return { lists: out, freeze, listDays };
+  const room = [...new Set(L.room.map((e) => e.day))].sort().flatMap(judgeRoom);
+  return { lists: out, freeze, listDays, room };
 }
 
 // ===========================================================================
@@ -784,6 +892,26 @@ function compare(name, w, endMs) {
   check(`${name}: no item listed before its own date`, later.length === 0, J(later.map((u) => u.studentNumber)));
   const madeLate = Object.values(got.days).filter((d) => d.frozenAt && d.lastFreezeInstant && d.frozenAt >= d.lastFreezeInstant);
   check(`${name}: no list made at or after its latest time`, madeLate.length === 0, J(madeLate.map((d) => d.date)));
+  if (exp.room.length) {
+    // The room's presses: accepted or refused as the oracle's rules say, and
+    // every Attendance done this build's screen pressed named the number of
+    // students the oracle has not checked Here.
+    const said = (j) => `${lbl(j.e.day)} ${hm(j.e.at)} ${j.e.type}${j.e.sn ? " " + j.e.sn : ""}${j.e.value === false ? " (taken back)" : ""}`;
+    const wrongOk = exp.room.filter((j) => j.ok !== j.e.ok);
+    check(`${name}: every room press is accepted or refused exactly as the owner's rules say`, wrongOk.length === 0,
+      wrongOk.map((j) => `${said(j)}: oracle ${j.ok ? "accepts" : "refuses"}, code ${j.e.ok ? "accepted" : "refused"}`).join("; "));
+    const counted = exp.room.filter((j) => j.expectNoShows !== null && j.e.noShows !== undefined);
+    const wrongN = counted.filter((j) => j.e.ok && j.e.noShows !== j.expectNoShows);
+    if (counted.length) {
+      check(`${name}: every Attendance done names the oracle's number of live detentions not checked Here`, wrongN.length === 0,
+        wrongN.map((j) => `${said(j)}: oracle ${j.expectNoShows}, screen ${j.e.noShows}`).join("; "));
+    }
+    // Owner, 10/12: every list made since check-off shipped is stamped check-off; one made before it keeps Not here.
+    const stamps = Object.values(got.days).filter((d) => d.frozenAt)
+      .filter((d) => (d.roomMode === "checkin") === w.L.legacy.has(d.date));
+    check(`${name}: every list is stamped check-off, except the one made before it shipped`, stamps.length === 0,
+      J(stamps.map((d) => [d.date, d.roomMode ?? null])));
+  }
   return { exp, got };
 }
 
@@ -952,8 +1080,18 @@ try {
         w.unmark(ids.g1);                                                          // G1's deleted after MS was pulled
         w.mark(WED, "W2", 9, "A"); w.mark(WED, "W3", 9, "A"); w.mark(WED, "W4", 8, "A"); w.mark(WED, "W6", 8, "A");
       }),
-      at(WED, "12:44", async () => { for (const sn of ["W1", "W3", "W5"]) await w.notHere(WED, sn); }),
+      // Check-off (owner, 10/12): W2 (absent at Power-Up and P5 in PowerSchool:
+      // pulled, then gone) and G1 checked Here; W1 checked and the check taken
+      // back; W5 is HS, in shadow, and cannot be checked. Attendance done
+      // moves W1 and W3; a check after it is refused until it is taken back.
+      at(WED, "12:44", async () => {
+        for (const sn of ["W2", "G1", "W1", "W5"]) await w.here(WED, sn);
+        await w.here(WED, "W1", false);
+      }),
       at(WED, "12:45", () => w.attendanceDone(WED)),
+      at(WED, "12:46", () => w.here(WED, "W3")),
+      at(WED, "12:47", () => w.undoAttendanceDone(WED)),
+      at(WED, "12:48", () => w.attendanceDone(WED)),
       at(WED, "13:10", () => {                                                     // typed back, now as arrivals
         w.mark(WED, "G1", 2, "T"); ids.g1pt = w.mark(WED, "G1", 1, "A");
         w.mark(WED, "G4", 2, "T"); ids.g4pt = w.mark(WED, "G4", 1, "A");
@@ -976,8 +1114,9 @@ try {
     ];
     await drive(w, MON, "2026-12-15", hooks);
     compare("E", w, Date.parse("2026-12-15T23:55:00Z"));
-    const room = w.L.room.filter((e) => !e.ok);
-    check("E: every room press the test made was accepted", room.length === 0, J(room));
+    const refused = w.L.room.filter((e) => !e.ok).map((e) => `${hm(e.at)} ${e.type} ${e.sn ?? ""}`.trim());
+    check("E: the room's presses refused are exactly the HS (shadow) check and the check after Attendance done",
+      J(refused) === J(["12:44 here W5", "12:46 here W3"]), J(refused));
   }
 
   // ==========================================================================
@@ -1137,13 +1276,87 @@ try {
       at(FRI, "08:10", () => { w.mark(FRI, "R8", 3, "T"); w.mark(FRI, "R9", 3, "T"); w.mark(FRI, "R10", 3, "T"); }),
       at(FRI, "12:40", () => w.mark(FRI, "R9", 9, "A")),
       at(FRI, "13:50", () => w.mark(FRI, "R9", 7, "A")),
-      // Monday 08:00: the supervisor records Friday's room: R8 and R10 Not here, R9 there.
+      // Monday 08:00: the supervisor records Friday's room: R9 checked Here,
+      // R8 not (R10 is HS, in shadow: not the room's to check).
       at(MON, "08:00", async () => {
-        for (const sn of ["R8", "R10"]) { const r = await w.notHere(FRI, sn); if (!r.ok) throw new Error(J(r)); }
+        const r = await w.here(FRI, "R9"); if (!r.ok) throw new Error(J(r));
         const d = await w.attendanceDone(FRI); if (!d.ok) throw new Error(J(d));
       }),
     ]);
     compare("F2", w, Date.parse("2026-12-15T23:55:00Z"));
+  }
+
+  // ==========================================================================
+  realLog("\nN. MON 10/12'S LIST WAS MADE BEFORE CHECK-OFF (ITS ROOM TICKED NOT HERE); CHECK-OFF FROM TUESDAY, AN OLD TAB, UNDO, AND HERE WITHOUT ATTENDANCE DONE\n");
+  // ==========================================================================
+  // Owner, 2026-10-12: the room checks Here as each student arrives, and
+  // Attendance done moves everyone on the list not checked to their next
+  // school day. Monday 10/12's list was made before that shipped, and its
+  // room ticked Not here: nobody on it may be carried because no box said
+  // Here. Both divisions live.
+  {
+    const MON = "2026-10-12", TUE = "2026-10-13", WED = "2026-10-14", THU = "2026-10-15", FRI = "2026-10-16";
+    const w = await makeWorld({
+      calendar: {
+        [MON]: school("regular", SLOTS.mon), [TUE]: school("regular", SLOTS.tue), [WED]: school("wed", SLOTS.all),
+        [THU]: school("regular", SLOTS.mon), [FRI]: school("regular", SLOTS.tue),
+      },
+      students: { N1: "ms", N2: "ms", N3: "ms", N4: "hs", N5: "ms", N6: "ms", N7: "hs", N8: "ms" },
+      settings: { modeByDivision: { ms: "live", hs: "live" }, countFromDateByDivision: { ms: MON, hs: MON } },
+    });
+    const at = (d, t, fn) => [LA(d, t), fn];
+    await drive(w, MON, FRI, [
+      ...calendarHooks(w),
+      at(MON, "08:10", () => { for (const sn of ["N1", "N2", "N3", "N4"]) w.mark(MON, sn, 2, "T"); }),
+      // Monday: the list made at 11:45 by the code from before check-off.
+      at(MON, "12:00", () => w.legacyDay(MON)),
+      // N2 pulled and gone after lunch in PowerSchool, but not ticked: served.
+      at(MON, "12:36", () => { w.mark(MON, "N2", 4, "A"); w.mark(MON, "N2", 9, "A"); }),
+      at(MON, "12:40", async () => {
+        await w.notHere(MON, "N1");
+        await w.here(MON, "N2");                         // a Here check on a Not here day: refused
+        await w.attendanceDone(MON);
+      }),
+      at(MON, "13:40", () => w.mark(MON, "N2", 6, "A")),
+      // Tuesday: check-off. A tab still on the old screen ticks N5 Not here
+      // and presses Attendance done: both refused. N1 (carried), N5 and N6
+      // are checked; N6's check is taken back; Attendance done moves N6 and
+      // N7; N7 cannot be checked until it is taken back; then it moves N6.
+      at(TUE, "08:30", () => { for (const sn of ["N5", "N6", "N7"]) w.mark(TUE, sn, 3, "T"); }),
+      at(TUE, "12:38", () => w.mark(TUE, "N6", 9, "A")),
+      at(TUE, "12:40", async () => {
+        await w.notHere(TUE, "N5");
+        await w.attendanceDone(TUE, { old: true });
+        for (const sn of ["N1", "N5", "N6"]) await w.here(TUE, sn);
+        await w.here(TUE, "N6", false);
+        await w.attendanceDone(TUE);
+      }),
+      at(TUE, "12:41", () => w.here(TUE, "N7")),
+      at(TUE, "12:42", () => w.undoAttendanceDone(TUE)),
+      at(TUE, "12:43", async () => { await w.here(TUE, "N7"); await w.attendanceDone(TUE); }),
+      // Wednesday: N6 (carried) is checked Here, and nobody presses
+      // Attendance done. N8 is not checked: PowerSchool decides N8. Both are
+      // gone from P4 on in PowerSchool.
+      at(WED, "08:10", () => w.mark(WED, "N8", 2, "T")),
+      at(WED, "11:50", () => w.here(WED, "N6")),
+      at(WED, "12:40", () => { for (const sn of ["N6", "N8"]) for (const slot of [5, 9, 6, 7]) w.mark(WED, sn, slot, "A"); }),
+    ]);
+    const { got } = compare("N", w, Date.parse(`${FRI}T23:55:00Z`));
+    const tue = got.lists[TUE] ?? {}, thu = got.lists[THU] ?? {};
+    check("N: Monday (Not here): exactly N1, the ticked row, carries; N2, unticked, is served though PowerSchool has them gone after lunch",
+      tue.N1?.kind === "carry" && J(tue.N1.tags) === J(["Carried over from Mon 10/12 (at school: did not come)"])
+        && ["N2", "N3", "N4"].every((sn) => got.lists[MON]?.[sn]?.state === "listed" && !tue[sn]),
+      J({ mon: got.lists[MON], tue: Object.keys(tue) }));
+    check("N: Tuesday (check-off): the old tab's Not here and Attendance done were refused, and only N6 -- not checked -- moves to Wednesday",
+      J(Object.keys(got.lists[WED] ?? {}).sort()) === J(["N6", "N8"]) && got.lists[WED].N6.kind === "carry"
+        && J(got.lists[WED].N6.tags) === J(["Carried over from Tue 10/13 (absent)"])
+        && ["N1", "N5", "N7"].every((sn) => got.lists[TUE][sn]?.state === "listed"), J(got.lists[WED]));
+    check("N: Wednesday, checked Here with no Attendance done: N6 is served; N8 (not checked) is PowerSchool's and moves to Thursday",
+      got.lists[WED]?.N6?.state === "listed" && thu.N8?.kind === "carry" && J(thu.N8.tags) === J(["Carried over from Wed 10/14 (absent)"]),
+      J({ N6: got.lists[WED]?.N6, N8: thu.N8 }));
+    check("N: ...and Wednesday's review says Attendance done was not pressed, and how many PowerSchool decided",
+      got.days[WED]?.fallbackReview?.reason === "Attendance done not pressed Wed 10/14 (1 checked Here; 1 detention decided from PowerSchool)",
+      J(got.days[WED]?.fallbackReview));
   }
 
   // ==========================================================================

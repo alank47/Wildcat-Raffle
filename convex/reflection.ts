@@ -7,8 +7,8 @@ import {
   absentThisMorning, admitState, beforeLunchSlot, blankSections, buildCodeBook, carriedUnit, carryVerdict, claimAtFreeze,
   dayTimes, decideTick, decodeRows, divisionOfGrade, fallbackDayReview, freezeBanner, freezeVerdict, idSetHash,
   initialTardyState, LEASE_MS, listsBeforeSeen, lunchClassOf, nextSchoolDayGuess, noListBanner, provesNoSchool, pullInstant, QUEUED_TAG,
-  reclassify, reconcileDate, reflectionSettingsOrDefault, rejoinsReleasedDetention, removalVerdict, rosterAgeBanner,
-  rosterSnapshotVerdict, SCHEDULE_KINDS, scheduleKindFor, schoolDayVerdict, studentMap, summarizeDay, tardyCandidates,
+  reclassify, reconcileDate, reflectionSettingsOrDefault, rejoinsReleasedDetention, removalVerdict, ROOM_MODE_FOR_NEW_LISTS,
+  roomModeOf, rosterAgeBanner, rosterSnapshotVerdict, SCHEDULE_KINDS, scheduleKindFor, schoolDayVerdict, studentMap, summarizeDay, tardyCandidates,
   tardyKey, termBanner, unitReleased, wallClock,
   type CarryVerdict, type DayState, type DaySummary, type Division, type LunchClass, type Marked, type ReflectionSettings,
   type RosterMeta, type RosterSnap, type ScheduleKind, type TardyItem, type UniformItem, type UnitItem,
@@ -485,6 +485,10 @@ async function freezeDay(ctx: MutationCtx, f: {
     freezeKind: f.kind,
     closingReadStartedAt: f.closingReadStartedAt ?? undefined,
     modeByDivision: { ...f.settings.modeByDivision },
+    // CHECK-OFF (owner, 2026-10-12): every list this code makes takes its
+    // room attendance by checking Here. A list made before has no stamp and
+    // keeps its Not here ticks (reflectionRules.roomModeOf).
+    roomMode: ROOM_MODE_FOR_NEW_LISTS,
     listCount: { ms, hs },
     unplacedStudents: claim.unplaced.length,
     updatedAt: nowIso,
@@ -809,7 +813,11 @@ async function decideCarries(ctx: MutationCtx, c: {
   const dRow = await getDay(ctx, c.d);
   if (!dRow?.frozenAt) return out;
   const units = await ctx.db.query("reflectionUnits").withIndex("by_serveDay", (q) => q.eq("serveDay", c.d)).collect();
+  // How D's room takes attendance: checked Here (every list made since
+  // check-off shipped), or ticked Not here (a list made before it).
+  const roomMode = roomModeOf(dRow);
   let decidedByPowerSchool = 0;
+  let checkedHere = 0;
   let live = false;
   for (const u of units) {
     if (u.state !== "listed" && u.state !== "carried" && u.state !== "review") continue;
@@ -818,16 +826,20 @@ async function decideCarries(ctx: MutationCtx, c: {
     const carry = u.carriedToUnitId ? await ctx.db.get(u.carriedToUnitId) : null;
     const snap = c.roster[u.studentNumber] ?? null;
     // THE ROOM DECIDES ONLY THE DETENTIONS IT RUNS FOR (second review,
-    // 2026-10-08). "Attendance done", "Room did not run" and the Not here
-    // ticks are pressed once for the day, but no room runs for a division in
-    // shadow: its carries are PowerSchool's (spec 3.8 rule 3). In the MS live
-    // week, with HS in shadow as the control, the MS room's presses decided
-    // every HS carry -- an HS student absent at Power-Up and after it was
-    // "served", and Room did not run carried HS students who were in class.
+    // 2026-10-08). "Attendance done" and "Room did not run" are pressed once
+    // for the day, but no room runs for a division in shadow: its carries
+    // are PowerSchool's (spec 3.8 rule 3). In the MS live week, with HS in
+    // shadow as the control, the MS room's presses decided every HS carry --
+    // an HS student absent at Power-Up and after it was "served", and Room
+    // did not run carried HS students who were in class. On a check-off day
+    // it matters even more: Attendance done would carry every HS student,
+    // none of whom the room could check Here.
     const roomRuns = u.mode === "live";
     const verdict: CarryVerdict = carryVerdict({
       unit: { carryCount: u.carryCount }, studentNumber: u.studentNumber, division: u.division, serveDay: c.d,
-      room: roomRuns ? { closed: !!dRow.roomClosed, attendanceDone: !!dRow.roomAttendanceDoneAt, notHere: !!u.roomNotHere } : {},
+      room: roomRuns ? {
+        closed: !!dRow.roomClosed, attendanceDone: !!dRow.roomAttendanceDoneAt, mode: roomMode, notHere: !!u.roomNotHere, here: !!u.roomHere,
+      } : {},
       final: true, summary: c.summary, snap, enrolled: c.enrolled(u.studentNumber), maxCarries: c.settings.maxCarries,
     });
     if (verdict.verdict === "undecided") continue;
@@ -835,6 +847,7 @@ async function decideCarries(ctx: MutationCtx, c: {
     if (roomRuns && (verdict.verdict === "carry" || verdict.verdict === "served") && (verdict.basis === "powerschool" || verdict.basis === "whole-day")) {
       decidedByPowerSchool++;
     }
+    if (roomRuns && roomMode === "checkin" && u.roomHere) checkedHere++;
     const puMarks = snap?.puSlot ? c.summary.marks[u.studentNumber]?.[String(snap.puSlot)] ?? [] : [];
     const puAbsent = puMarks.length > 0 && puMarks.every((m) => m.absent);
     // Claimed by a later list: it stands.
@@ -917,7 +930,7 @@ async function decideCarries(ctx: MutationCtx, c: {
   }
   const fr = fallbackDayReview({
     mode: live ? "live" : "shadow", serveDay: c.d, attendanceDone: !!dRow.roomAttendanceDoneAt,
-    roomClosed: !!dRow.roomClosed, decidedByPowerSchool,
+    roomClosed: !!dRow.roomClosed, decidedByPowerSchool, checkedHere,
   });
   await ctx.db.patch(dRow._id, {
     carriesDecidedAt: c.now,
@@ -1556,6 +1569,8 @@ export const status = internalQuery({
       kind: row?.kind ?? null, close: row?.closeInstant ?? null, ready: row?.readyInstant ?? null, lastFreeze: row?.lastFreezeInstant ?? null,
       readsDone: row?.readsDone ?? [], lastGoodReadAt: row?.lastGoodReadAt ?? null, lastReadError: row?.lastReadError ?? null,
       frozenAt: row?.frozenAt ?? null, freezeKind: row?.freezeKind ?? null, listCount: row?.listCount ?? null,
+      // Check-off (owner, 10/12): how the room takes this list's attendance, and the count Attendance done confirmed.
+      roomMode: row?.frozenAt ? roomModeOf(row) : null, roomAttendanceDone: row?.roomAttendanceDoneCount ?? (row?.roomAttendanceDoneAt ? true : null),
       heldCount: row?.heldCount ?? 0, ptBlankSections: row?.ptBlankSections ?? 0,
       banner: row?.noList && tz
         ? noListBanner(st, nextSchoolDayGuess(d, offDays.filter((m) => m.noSchool).map((m) => m.date)), tz)

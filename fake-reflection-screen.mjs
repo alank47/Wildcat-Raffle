@@ -44,7 +44,7 @@ export const SORT_FNS = ["escapeHtml", "wcSortCellText", "wcSortValue", "wcSortC
  * `students` are the app's own records the screen joins names from.
  */
 export function makeWorld(src, answer, students = []) {
-  const listeners = {}, docListeners = {}, alerts = [], prints = [], children = [], timers = [], intervals = [], calls = [];
+  const listeners = {}, docListeners = {}, alerts = [], prints = [], children = [], timers = [], intervals = [], calls = [], confirms = [];
   let seq = 0;
   class El {
     constructor(tag) {
@@ -98,6 +98,8 @@ export function makeWorld(src, answer, students = []) {
       printReflectionList, reflectionSheetHtml, reflectionSheetTitle, closeReflectionSheet, forgetReflectionRoom, rrClock,
       rrRowsInOrder, rrStudentIndex, printReflectionSlips, printReflectionChanges, reflectionSlipsHtml, reflectionChangesHtml,
       reflectionBeforePrint, reflectionPrintKeys, markReflectionNotHere, reflectionAttendanceDone, setReflectionView,
+      // Check-off (2026-10-12): not in a screen from before it.
+      markReflectionHere: typeof markReflectionHere === 'function' ? markReflectionHere : undefined,
       setLoadedAt(ms) { _rrLoadedAt = ms; },
       sortBy(table, col, type) { wcSortSet(table, col, type || '', ''); },
       get data() { return _rrData; },
@@ -114,9 +116,10 @@ export function makeWorld(src, answer, students = []) {
     students, { name: "Pat Supervisor", email: "pat@school.test" },
     (m, kind) => { alerts.push("toast:" + String(m)); },
     async () => (answer.prompt ? answer.prompt() : null),
-    async () => true);
+    // A confirmation is recorded with its words; answer.confirm may say no.
+    async (m, o) => { confirms.push({ message: String(m), options: o || null }); return answer.confirm ? answer.confirm(String(m)) : true; });
   return {
-    app: api, document, window, fixed, alerts, prints, children, timers, intervals, calls, listeners, docListeners,
+    app: api, document, window, fixed, alerts, prints, children, timers, intervals, calls, listeners, docListeners, confirms,
     sheet: () => children.find((c) => c.id === "wcPrintSheet") || null,
     setOnScreen(v) { onScreen = v; },
     fire: (t) => (listeners[t] || []).slice().forEach((f) => f()),

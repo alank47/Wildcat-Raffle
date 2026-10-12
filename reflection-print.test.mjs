@@ -167,8 +167,8 @@ console.log("\n2. EVERY PAGE SAYS WHAT IT IS\n");
     /Middle school/.test(pages[0]) && /High school/.test(pages[1])
       && /As of 11:31 AM · NOT FINAL · 4 students \(MS 3, HS 1 of 12\) · pull at about 12:31/.test(pages[0])
       && /pull at about 12:57/.test(pages[1]), pages.map((p) => (/<p class="print-sub">([^<]*)</.exec(p) || [])[1]).join(" | "));
-  check("the columns: an empty Served box, then student, number, grade, Power-Up, violations with dates, tag, absent this morning",
-    /<th>Served<\/th><th>Student<\/th><th>Student #<\/th><th>Grade<\/th><th>Power-Up<\/th><th>Violations<\/th><th>Tag<\/th><th>Absent this morning: check if arrived<\/th>/.test(pages[0])
+  check("the columns: an empty Here box (owner, 10/12: check-off), then student, number, grade, Power-Up, violations with dates, tag, absent this morning",
+    /<th>Here<\/th><th>Student<\/th><th>Student #<\/th><th>Grade<\/th><th>Power-Up<\/th><th>Violations<\/th><th>Tag<\/th><th>Absent this morning: check if arrived<\/th>/.test(pages[0])
       && /Tue 10\/13: Tardy P2 \(Ms Ng\)<\/div><div>Tue 10\/13: Uniform 7:52 AM/.test(pages[0]));
   check("an RSP student is pulled like anyone, and the row tells the runner which room",
     /Mr Abel <div class="print-note">RSP A<\/div> <span class="rr-flag">RSP: pull from this class<\/span>/.test(pages[0]));
@@ -321,7 +321,7 @@ console.log("\n7. PRINT CHANGES ONLY\n");
   const sheet = w.prints[0]?.sheet || "";
   check("it prints only the rows added since their print, with the list's columns, and a release list",
     /Changes since your 11:31 AM print/.test(sheet) && /<td>Comer, New<\/td>/.test(sheet) && !/<td>Diaz, Ana<\/td>/.test(sheet)
-      && /<th>Served<\/th><th>Student<\/th>/.test(sheet) && /Release this student:<\/b> Zane, Dee \(1004\) — now Excused Tardy/.test(sheet), sheet.slice(0, 300));
+      && /<th>Here<\/th><th>Student<\/th>/.test(sheet) && /Release this student:<\/b> Zane, Dee \(1004\) — now Excused Tardy/.test(sheet), sheet.slice(0, 300));
   check("...recorded as a 'changes' print of the whole list now, which is what that person holds once it is added",
     recorded.length === 1 && recorded[0].kind === "changes" && recorded[0].studentNumbers.length === 5 && !recorded[0].studentNumbers.includes("1004"));
   const none = makeWorld(scriptSrc, { query: () => FRESH(), mutation: () => ({ ok: true }) });
@@ -417,10 +417,106 @@ console.log("\n9. THE ROOM'S ATTENDANCE ON SCREEN\n");
   check("...and no box on a row of a division in shadow (the pilot), whose carries PowerSchool decides",
     !boxes.some((id) => answer.sections[0].rows.some((r) => r.unitId === id)), J(boxes));
   w.app.printReflectionList && (await w.app.printReflectionList());
-  check("...never on paper: the printed list has the empty Served box instead", !/Not here/.test(w.prints[0]?.sheet || "x"));
+  check("...never on paper: the printed list has the empty Here box instead", !/Not here/.test(w.prints[0]?.sheet || "x"));
   await w.app.markReflectionNotHere("reflectionUnits:9", true);
   await w.app.reflectionAttendanceDone(true);
   check("a tick and Attendance done go to the server as they are", J(sent.slice(-2)) === J([{ unitId: "reflectionUnits:9", notHere: true }, { day: "2026-10-13", done: true }]), J(sent));
+}
+
+// ======================================================================
+console.log("\n9b. CHECK-OFF ON SCREEN (owner, 2026-10-12): HERE AS EACH STUDENT ARRIVES\n");
+// ======================================================================
+{
+  // MS live (its four rows on the list are the room's; 1004 is released),
+  // HS in shadow (no room runs for it).
+  const answer = FRESH();
+  answer.mode = { ms: "live", hs: "shadow" };
+  answer.sections[0].mode = "live";
+  answer.sections[0].rows.forEach((r) => { r.mode = "live"; r.here = false; r.notHere = false; });
+  answer.sections[1].mode = "shadow";
+  answer.sections[1].rows.forEach((r) => { r.mode = "shadow"; r.here = false; r.notHere = false; });
+  answer.room = { mode: "checkin", tick: true, closeRoom: false, why: null, doneAt: null, doneBy: null, closed: null, notHere: 0, of: 4, here: 0, noShows: 4 };
+  const sent = [];
+  let reply = () => ({ ok: true });
+  const w = makeWorld(scriptSrc, {
+    query: () => answer,
+    mutation: (a, path) => { sent.push({ path, args: a }); return reply(a, path); },
+    confirm: () => true,
+  });
+  await w.app.loadReflectionList();
+  const html = () => w.fixed.rrList.innerHTML;
+  const boxes = () => [...html().matchAll(/data-rr-here="([^"]*)"( checked)?/g)].map((m) => m[1] + (m[2] ? "+" : ""));
+  check("check-off: a Here column, a big box on each of the room's rows (none on a released row or one in shadow), and '0 of 4 here'",
+    /<th>Here<\/th>/.test(html()) && !/<th>Not here<\/th>/.test(html()) && /<label class="rr-here">/.test(html())
+      && J(boxes().slice().sort()) === J(["reflectionUnits:00", "reflectionUnits:01", "reflectionUnits:02", "reflectionUnits:9"])
+      && /0 of 4 here/.test(html()) && /data-rr-here-count="ms">0 of 4 here/.test(html()) && !/data-rr-here-count="hs"/.test(html()),
+    J(boxes()));
+
+  // A tap shows at once, before the server answers (a slow Chromebook).
+  let release = null;
+  reply = () => new Promise((resolve) => { release = () => resolve({ ok: true, here: true }); });
+  const pending = w.app.markReflectionHere("reflectionUnits:9", true);
+  check("check-off: a tap checks the box and moves the count at once, before the server answers",
+    boxes().includes("reflectionUnits:9+") && /1 of 4 here/.test(html()) && /<tr class="rr-row-here">/.test(html()), J(boxes()));
+  // A read that began before the server answered (the 30-second refresh) does not flip it back.
+  await w.app.loadReflectionList();
+  check("...and a list read that began before the server answered never flips it back", boxes().includes("reflectionUnits:9+"), J(boxes()));
+  answer.sections[0].rows.find((r) => r.unitId === "reflectionUnits:9").here = true;
+  answer.room.here = 1; answer.room.noShows = 3;
+  release();
+  await pending;
+  check("...the server's answer and the read after it agree: checked, 1 of 4 here",
+    boxes().includes("reflectionUnits:9+") && /1 of 4 here/.test(html()) && J(sent.at(-1)) === J({ path: "reflectionRoom:markHere", args: { unitId: "reflectionUnits:9", here: true } }),
+    J(sent.at(-1)));
+
+  reply = () => ({ ok: false, reason: "Attendance is done for Tue 10/13. To change who was here, press Undo Attendance done first." });
+  w.alerts.length = 0;
+  await w.app.markReflectionHere("reflectionUnits:00", true);
+  check("check-off: a refused tap is said in words, and its box goes back",
+    /press Undo Attendance done first/.test(w.alerts[0] || "") && !boxes().includes("reflectionUnits:00+") && /1 of 4 here/.test(html()), J({ alerts: w.alerts, boxes: boxes() }));
+
+  // Attendance done names the number and the names first; "no" sends nothing.
+  reply = () => ({ ok: true, done: true, noShows: 3 });
+  const confirmSays = [];
+  const no = makeWorld(scriptSrc, { query: () => answer, mutation: (a, path) => { sent.push({ path, args: a }); return { ok: true }; },
+    confirm: (m) => { confirmSays.push(m); return false; } });
+  await no.app.loadReflectionList();
+  const before = sent.length;
+  await no.app.reflectionAttendanceDone(true);
+  check("check-off: Attendance done first says how many move to the next day, and who, by last name -- and 'no' sends nothing",
+    /^Attendance done for Tue 10\/13\? 1 of 4 are checked Here\. 3 students not checked will move to their next school day's Reflection Room: Alvarez, Ben; Diaz, Ana; Moss, Cy\.$/.test(confirmSays[0] || "")
+      && sent.length === before, J({ said: confirmSays[0], sent: sent.slice(before) }));
+  // Both sittings live: pressed after the MS sitting, the HS students still to come are named as such.
+  const both = structuredClone(answer);
+  both.mode = { ms: "live", hs: "live" };
+  both.sections[1].mode = "live";
+  both.sections[1].rows.forEach((r) => { r.mode = "live"; });
+  both.room = { ...both.room, of: 5, noShows: 4 };
+  const bothSaid = [];
+  const two = makeWorld(scriptSrc, { query: () => both, mutation: () => ({ ok: true }), confirm: (m) => { bothSaid.push(m); return false; } });
+  await two.app.loadReflectionList();
+  await two.app.reflectionAttendanceDone(true);
+  check("check-off: with both sittings live, the confirmation names who is missing from each, so a press after the MS sitting shows the HS students still to come",
+    /4 students not checked will move to their next school day's Reflection Room: Middle school: Alvarez, Ben; Diaz, Ana; Moss, Cy\. High school: Lopez, Xia\.$/.test(bothSaid[0] || "")
+      && /After the last sitting, press Attendance done/.test(two.fixed.rrList.innerHTML), bothSaid[0]);
+  await w.app.reflectionAttendanceDone(true);
+  const doneSent = sent.filter((x) => x.path === "reflectionRoom:roomAttendanceDone").map((x) => x.args);
+  check("...'yes' sends Attendance done with that number (3), which the server checks against the list",
+    J(doneSent) === J([{ day: "2026-10-13", done: true, noShows: 3 }]) && w.confirms[0]?.options?.confirmLabel === "Attendance done: move 3", J(doneSent));
+
+  // After Attendance done: who did not come, and no box left.
+  answer.room = { ...answer.room, tick: true, doneAt: "2026-10-13T19:50:00.000Z", doneBy: "pat@school.test", notHere: 3 };
+  answer.sections[0].rows.forEach((r) => { r.notHere = r.mode === "live" && !r.released && !r.here; });
+  await w.app.loadReflectionList();
+  check("check-off: after Attendance done the screen says who did not come and moves to the next day, by name, and offers Undo",
+    /Attendance done<\/b> at 12:50 PM by pat@school\.test: <b data-rr-here-count>1 of 4 here<\/b>\./.test(html())
+      && /3 did not come and move to their next school day's Reflection Room: Alvarez, Ben; Diaz, Ana; Moss, Cy\./.test(html())
+      && (html().match(/Did not come: moves to the next day/g) || []).length === 3 && !/data-rr-here=/.test(html())
+      && /onclick="reflectionAttendanceDone\(false\)">Undo Attendance done/.test(html()), html().slice(0, 500));
+  w.app.printReflectionList && (await w.app.printReflectionList());
+  const paper = w.prints.at(-1)?.sheet || "";
+  check("check-off: the paper is the same list with its empty Here box: no check, no 'did not come'",
+    /<th>Here<\/th><th>Student<\/th>/.test(paper) && !/type="checkbox"|Did not come|did not come/.test(paper), paper.slice(0, 300));
 }
 
 // ======================================================================

@@ -56,6 +56,12 @@
 //  25. A carry released after its list was made, before its pull, whose
 //      mark counts again: still owed, on the next list.
 //  26. A queued carry withdrawn by a re-read and carried again keeps its tag.
+//  27. Check-off (owner, 2026-10-12): Here checked as each student arrives;
+//      Attendance done moves every live detention not checked to the next
+//      day (and names that number first); undo paths; a shadow row is never
+//      the room's; Here without Attendance done; and a tab still on the
+//      screen from before (Not here boxes), run for real against this
+//      server, is shown the list but refused every tick.
 //
 // TEETH: scripts/reflection-teeth.mjs breaks the direct id confirmation, the
 // natural key, the lease expiry, the "unconfirmed changes nothing" rule,
@@ -65,8 +71,11 @@
 // guard the 2026-10-08 review added (worlds 15-18) -- one at a time, and
 // requires the check named for each to FAIL.
 import { readdirSync, readFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 import { clock, loadConvex, makeDb, runtime } from "./fake-convex.mjs";
 import { fakePowerSchool, REFLECTION_CODES } from "./fake-powerschool.mjs";
+import { makeWorld as screenWorld } from "./fake-reflection-screen.mjs";
 
 const read = (p) => readFileSync(new URL(p, import.meta.url), "utf8");
 const schemaSrc = read("./convex/schema.ts");
@@ -1042,7 +1051,7 @@ try {
   }
 
   // ==========================================================================
-  console.log("\n11. THE ROOM'S OWN ATTENDANCE: Not here, Attendance done (reflectionRoom.ts)\n");
+  console.log("\n11. THE ROOM'S OWN ATTENDANCE ON A LIST MADE BEFORE CHECK-OFF (Mon 10/12's): Not here, Attendance done (reflectionRoom.ts)\n");
   // ==========================================================================
   {
     const TUE = "2026-10-13", WED = "2026-10-14";
@@ -1064,6 +1073,12 @@ try {
     w.mark(TUE, "C", 9, "A");          // pulled: the Power-Up teacher marked C absent, but C was in the room
     await drive(w, la(TUE, "07:30"), la(TUE, "11:45"));
     check("the list is made at 11:45 with A, C and E", J(w.listed(TUE)) === J(["A", "C", "E"]) && w.day(TUE).freezeKind === "closing", J(w.listed(TUE)));
+    // THE FIRST LIVE DAY'S LIST (Mon 10/12) WAS MADE BEFORE CHECK-OFF SHIPPED,
+    // by code that stamped no room mode, and its room ticked Not here. This
+    // list stands for it: made by this code (stamped check-off), then the
+    // stamp taken off, as the old code left it. Nothing about it may change.
+    check("a list this code makes is stamped check-off", w.day(TUE).roomMode === "checkin", J(w.day(TUE).roomMode));
+    await w.store.db.patch(w.day(TUE)._id, { roomMode: undefined });
 
     clock.set(la(TUE, "12:00"));
     const early = await as("granted").run("reflectionRoom.markRoom", { unitId: unitOf("A")._id, notHere: true });
@@ -1088,6 +1103,12 @@ try {
     check("the screen shows the tick, the count and who pressed Attendance done",
       rowA.notHere === true && screen.room.tick === true && screen.room.notHere === 1 && screen.room.doneBy === "granted@school.test"
         && screen.room.closeRoom === true, J(screen.room));
+    const newScreen = await as("pbis").run("reflectionList.listForDay", { day: "today", lunchOk: true, checkinOk: true });
+    const hereOnOld = await as("granted").run("reflectionRoom.markHere", { unitId: unitOf("C")._id, here: true });
+    check("...the same to this build's screen, which is told the day ticks Not here; and a Here check is refused on it",
+      newScreen.room.mode === "notHere" && newScreen.room.tick === true && newScreen.room.notHere === 1
+        && hereOnOld.ok === false && /takes attendance with Not here ticks/.test(hereOnOld.reason) && !unitOf("C").roomHere,
+      J({ room: newScreen.room, hereOnOld }));
     check("...and no reflection code wrote appAuditLog", w.store.rows("appAuditLog").length === 0);
 
     await drive(w, la(TUE, "12:40"), la(TUE, "15:45"));
@@ -1516,7 +1537,7 @@ try {
   // rule 3), whatever the room presses for MS (second review, 2026-10-08).
   {
     const MON = "2026-11-09", TUE = "2026-11-10";
-    async function liveWeek(press) {
+    async function liveWeek(press, { legacy = false } = {}) {
       const w = await world({
         // Ten HS fillers, absent everywhere, so HS's own Power-Up (slot 8) meets.
         students: { M1: { grade: 7, sections: MS }, HABS: { grade: 10, sections: HS }, HOK: { grade: 10, sections: HS },
@@ -1534,6 +1555,8 @@ try {
         [la(MON, "12:36"), () => w.mark(MON, "HABS", 8, "A")],   // ... absent at Power-Up ...
         [la(MON, "13:42"), () => w.mark(MON, "HABS", 6, "A")],   // ... and at P5: gone after lunch
       ];
+      // A list made before check-off (Mon 10/12's): no room mode stamped.
+      if (legacy) hooks.push([la(MON, "12:00"), async () => { await w.store.db.patch(w.day(MON)._id, { roomMode: undefined }); }]);
       if (press) hooks.push(press(w));
       await drive(w, la(MON, "07:30"), la(MON, "15:45"), hooks);
       await drive(w, la(TUE, "07:30"), la(TUE, "11:45"));
@@ -1549,15 +1572,31 @@ try {
       /^Room attendance not recorded Mon 11\/9 \(1 detention decided from PowerSchool\)$/.test(none.day(MON).fallbackReview?.reason || ""),
       J(none.day(MON).fallbackReview));
 
-    let done = null;
-    const pressed = await liveWeek((w) => [la(MON, "13:30"), async () => { done = await w.as("pbis").run("reflectionRoom.roomAttendanceDone", { day: MON }); }]);
+    let done = null, hereHs = null;
+    const pressed = await liveWeek((w) => [la(MON, "13:30"), async () => {
+      await w.as("pbis").run("reflectionRoom.markHere", { unitId: w.units("M1").find((u) => u.serveDay === MON)._id, here: true });
+      hereHs = await w.as("pbis").run("reflectionRoom.markHere", { unitId: w.units("HOK").find((u) => u.serveDay === MON)._id, here: true });
+      done = await w.as("pbis").run("reflectionRoom.roomAttendanceDone", { day: MON, noShows: 0 });
+    }]);
     const habs = pressed.units("HABS").find((u) => u.serveDay === MON);
-    check("Attendance done for the MS room, nobody ticked: H-ABS (HS, in shadow) still carries, decided by PowerSchool",
+    check("Attendance done for the MS room, M1 checked Here: H-ABS (HS, in shadow) still carries, decided by PowerSchool",
       done?.ok === true && J(pressed.listed(TUE)) === J(["HABS"]) && habs.carryBasis === "powerschool"
         && pressed.units("M1")[0].carryBasis === "room" && pressed.units("M1")[0].state === "listed",
       J({ done, tue: pressed.listed(TUE), habs: habs?.carryBasis, m1: pressed.units("M1")[0].carryBasis }));
+    check("...an HS row (in shadow) cannot be checked Here: no room runs for it, and the count names MS only (0 to move)",
+      hereHs?.ok === false && /pilot list/.test(hereHs.reason) && !pressed.units("HOK")[0].roomHere, J(hereHs));
     check("...and with Attendance done pressed, no day review is raised",
       !pressed.day(MON).fallbackReview, J(pressed.day(MON).fallbackReview));
+
+    let doneNobody = null;
+    const nobody = await liveWeek((w) => [la(MON, "13:30"), async () => {
+      doneNobody = await w.as("pbis").run("reflectionRoom.roomAttendanceDone", { day: MON, noShows: 1 });
+    }]);
+    check("check-off: Attendance done with nobody checked Here moves M1 (live) to Tuesday as a no-show, and never H-OK (HS, in shadow, in class all day)",
+      doneNobody?.ok === true && J(nobody.listed(TUE)) === J(["HABS", "M1"])
+        && carryOf(nobody, "M1")?.tags[0] === "Carried over from Mon 11/9 (at school: did not come)" && carryOf(nobody, "M1").carryCount === 1
+        && carryOf(nobody, "HABS")?.tags[0] === "Carried over from Mon 11/9 (absent)" && nobody.units("HOK")[0].state === "listed",
+      J({ doneNobody, tue: nobody.listed(TUE), hok: nobody.units("HOK").map((u) => [u.serveDay, u.state, u.carryBasis]) }));
     clock.set(la(TUE, "11:00"));
 
     let closed = null;
@@ -1568,14 +1607,15 @@ try {
         && carryOf(shut, "HABS")?.tags[0] === "Carried over from Mon 11/9 (absent)" && shut.units("HOK")[0].state === "listed",
       J({ closed, tue: shut.listed(TUE), hok: shut.units("HOK").map((u) => [u.serveDay, u.state, u.carryBasis]) }));
 
-    // On screen: the room counts and ticks only the live division's rows.
+    // On screen: the room counts and ticks only the live division's rows
+    // (on a list made before check-off, which ticks Not here).
     let monScreen = null;
     await liveWeek((w) => [la(MON, "12:45"), async () => {
       for (const sn of ["M1", "HABS"]) {
         await w.as("pbis").run("reflectionRoom.markRoom", { unitId: w.units(sn).find((u) => u.serveDay === MON)._id, notHere: true });
       }
       monScreen = await w.as("pbis").run("reflectionList.listForDay", { day: MON, lunchOk: true });
-    }]);
+    }], { legacy: true });
     const modesOf = (div) => monScreen.sections.find((s) => s.division === div).rows.map((r) => r.mode);
     check("the room's Not here count takes only the live division's rows; HS rows come marked shadow, so the screen draws no box on them",
       monScreen.room?.tick === true && monScreen.room.notHere === 1 && modesOf("ms").every((m) => m === "live")
@@ -1898,6 +1938,226 @@ try {
   }
 
   // ==========================================================================
+  console.log("\n27. CHECK-OFF (owner, 2026-10-12): HERE AS EACH STUDENT ARRIVES; ATTENDANCE DONE MOVES EVERYONE NOT CHECKED TO THE NEXT DAY\n");
+  // ==========================================================================
+  // MS live, HS in shadow. On Tuesday's list: A and B are checked Here (B is
+  // absent all day in PowerSchool: the Power-Up teacher marked the pulled
+  // student absent, and so did P4 and P6); D is checked, unchecked, then
+  // checked again after Attendance done is taken back; C (absent at
+  // Power-Up) and E (already carried 5 times) are not checked. H1 is HS, in
+  // shadow: no room runs for it. A tab still on the screen from before
+  // check-off (stamp 20261012b) presses Not here and Attendance done.
+  {
+    const TUE = "2026-10-13", WED = "2026-10-14";
+    const ms = { grade: 7, sections: MS }, hs = { grade: 10, sections: HS };
+    const staff = {
+      pbis: { email: "pbis@school.test", role: "pbis" },
+      granted: { email: "granted@school.test", role: "campusaide", reflectionList: true, reflectionListUntil: "2026-12-18" },
+      teacher: { email: "teacher@school.test", role: "teacher" },
+    };
+    async function checkinWorld() {
+      const w = await world({
+        // Ten HS fillers, absent everywhere, so HS's own Power-Up (slot 8) meets.
+        students: { A: ms, B: ms, C: ms, D: ms, E: ms, F: ms, H1: hs,
+          ...Object.fromEntries(Array.from({ length: 10 }, (_, i) => [`HF${i}`, { grade: 10, sections: HS, filler: true }])) },
+        days: [{ date: TUE, slots: TUE_SLOTS }, { date: WED, slots: WED_SLOTS }],
+        settings: { modeByDivision: { ms: "live", hs: "shadow" }, countFromDateByDivision: { ms: "2026-10-12", hs: "2026-10-12" } },
+      });
+      for (const t of Object.values(staff)) await w.store.db.insert("teachers", { name: "Staff", ticketsAwarded: 0, ...t });
+      w.as = (who) => { w.rt.signIn({ issuer: STAFF_ISSUER, email: staff[who].email }); return w.rt; };
+      w.unitOf = (sn, day = TUE) => w.units(sn).find((u) => u.serveDay === day);
+      for (const sn of ["A", "B", "C", "D", "E", "H1"]) w.mark(TUE, sn, 3, "T");     // late to P2
+      for (const slot of [5, 9, 7]) w.mark(TUE, "B", slot, "A");                     // B: absent in P4, at Power-Up and in P6
+      w.mark(TUE, "C", 9, "A");                                                       // C: absent at Power-Up
+      await drive(w, la(TUE, "07:30"), la(TUE, "11:45"));
+      // E's detention has already carried five times.
+      await w.store.db.patch(w.unitOf("E")._id, { carryCount: 5 });
+      return w;
+    }
+    const w = await checkinWorld();
+    const { as, unitOf } = w;
+    const id = (sn) => unitOf(sn)._id;
+    const here = (who, sn, v = true) => as(who).run("reflectionRoom.markHere", { unitId: id(sn), here: v });
+    check("check-off: the list is made at 11:45, stamped to take its room attendance by checking Here",
+      J(w.listed(TUE)) === J(["A", "B", "C", "D", "E", "H1"]) && w.day(TUE).roomMode === "checkin", J([w.listed(TUE), w.day(TUE).roomMode]));
+
+    clock.set(la(TUE, "12:00"));
+    const early = await here("granted", "A");
+    check("check-off: Here opens at Lunch & Power-Up, never before the room has run",
+      early.ok === false && /opens at Lunch & Power-Up \(12:31 PM\)/.test(early.reason) && !unitOf("A").roomHere, J(early));
+
+    clock.set(la(TUE, "12:35"));
+    const byTeacher = await here("teacher", "A");
+    const checks = [await here("granted", "A"), await here("granted", "B"), await here("granted", "D"), await here("granted", "D", false)];
+    const shadowHere = await here("granted", "H1");
+    check("check-off: a grant holder checks Here, and a check is taken back before Attendance done; a teacher cannot; an HS row in shadow cannot be checked",
+      byTeacher.ok === false && checks.every((r) => r.ok === true) && unitOf("A").roomHere === true && unitOf("B").roomHere === true
+        && !unitOf("D").roomHere && unitOf("A").roomMarkedBy === "granted@school.test"
+        && shadowHere.ok === false && /pilot list/.test(shadowHere.reason) && !unitOf("H1").roomHere,
+      J({ byTeacher, checks, shadowHere }));
+    const audit = w.store.rows("reflectionAudit").filter((r) => r.day === TUE).map((r) => r.action);
+    check("...each check and each undo is kept in reflectionAudit, and nothing in appAuditLog",
+      J(audit) === J(["room-checked-here", "room-checked-here", "room-checked-here", "room-unchecked-here"])
+        && w.store.rows("appAuditLog").length === 0, J(audit));
+
+    // AN OPEN TAB FROM BEFORE CHECK-OFF: its box says Not here, the opposite.
+    const oldTick = await as("granted").run("reflectionRoom.markRoom", { unitId: id("C"), notHere: true });
+    const oldDone = await as("granted").run("reflectionRoom.roomAttendanceDone", { day: TUE });
+    check("check-off: an old tab's Not here tick is refused with words its screen shows, and changes nothing",
+      oldTick.ok === false && oldTick.reason === R.CHECKIN_NEEDS_UPDATE && !unitOf("C").roomNotHere && !/refresh|reload/i.test(oldTick.reason),
+      J(oldTick));
+    check("check-off: an old tab's Attendance done (no count named) is refused the same way: it would move every student nobody could check",
+      oldDone.ok === false && oldDone.reason === R.CHECKIN_NEEDS_UPDATE && !w.day(TUE).roomAttendanceDoneAt, J(oldDone));
+    const oldView = await as("granted").run("reflectionList.listForDay", { day: "today", lunchOk: true, demoOk: true });
+    const newView = await as("granted").run("reflectionList.listForDay", { day: "today", lunchOk: true, demoOk: true, checkinOk: true });
+    const rowsOf = (res) => res.sections.flatMap((x) => x.rows);
+    check("check-off: an old tab still gets the list (it pulls from it) but no box: the room bar says the Hub is updating itself",
+      rowsOf(oldView).length === 6 && oldView.room.tick === false && oldView.room.why === R.CHECKIN_NEEDS_UPDATE
+        && rowsOf(oldView).every((r) => r.notHere === false), J(oldView.room));
+    check("check-off: this build's screen gets the boxes and the count: 2 of 5 here (the HS row in shadow is not the room's), 3 would move",
+      newView.room.mode === "checkin" && newView.room.tick === true && newView.room.of === 5 && newView.room.here === 2
+        && newView.room.noShows === 3 && J(rowsOf(newView).filter((r) => r.here).map((r) => r.studentNumber)) === J(["A", "B"]), J(newView.room));
+
+    const stale = await as("granted").run("reflectionRoom.roomAttendanceDone", { day: TUE, noShows: 2 });
+    check("check-off: Attendance done naming a number the list no longer holds is refused, says the number now, and records nothing",
+      stale.ok === false && stale.noShows === 3 && /3 would move to the next day, not 2/.test(stale.reason) && !w.day(TUE).roomAttendanceDoneAt,
+      J(stale));
+    const done = await as("granted").run("reflectionRoom.roomAttendanceDone", { day: TUE, noShows: 3 });
+    check("check-off: Attendance done naming the right number is recorded, with the count it confirmed",
+      done.ok === true && done.noShows === 3 && w.day(TUE).roomAttendanceDoneBy === "granted@school.test"
+        && J(w.day(TUE).roomAttendanceDoneCount) === J({ of: 5, here: 2, noShows: 3 })
+        && w.store.rows("reflectionAudit").some((r) => r.action === "room-attendance-done" && r.reason === "2 of 5 checked Here; 3 did not come"),
+      J({ done, count: w.day(TUE).roomAttendanceDoneCount }));
+    const afterDone = await here("granted", "D");
+    check("check-off: once Attendance done is pressed a check is refused until it is taken back",
+      afterDone.ok === false && /press Undo Attendance done first/.test(afterDone.reason) && !unitOf("D").roomHere, J(afterDone));
+    const doneView = await as("granted").run("reflectionList.listForDay", { day: "today", lunchOk: true, checkinOk: true });
+    const oldDoneView = await as("granted").run("reflectionList.listForDay", { day: "today", lunchOk: true });
+    const gone = (res) => rowsOf(res).filter((r) => r.notHere).map((r) => r.studentNumber);
+    check("check-off: after Attendance done the list says who did not come (C, D, E): to this screen, and as Not here to an old tab",
+      J(gone(doneView)) === J(["C", "D", "E"]) && doneView.room.notHere === 3 && doneView.room.noShows === 3
+        && J(gone(oldDoneView)) === J(["C", "D", "E"]) && oldDoneView.room.notHere === 3 && !!oldDoneView.room.doneAt,
+      J({ now: gone(doneView), old: gone(oldDoneView) }));
+    const undo = await as("granted").run("reflectionRoom.roomAttendanceDone", { day: TUE, done: false });
+    const reopened = await here("granted", "D");
+    const redone = await as("granted").run("reflectionRoom.roomAttendanceDone", { day: TUE, noShows: 2 });
+    check("check-off: Undo Attendance done reopens the checks: D checked, then Attendance done again moves 2",
+      undo.ok === true && reopened.ok === true && unitOf("D").roomHere === true && redone.ok === true
+        && J(w.day(TUE).roomAttendanceDoneCount) === J({ of: 5, here: 3, noShows: 2 }), J({ undo, reopened, redone }));
+
+    await drive(w, la(TUE, "12:40"), la(TUE, "15:45"));
+    const carryC = w.units("C").find((u) => u.kind === "carry");
+    check("check-off: Attendance done carries exactly the live rows not checked Here: C carries (absent), tagged and counted",
+      unitOf("C").state === "carried" && unitOf("C").carryBasis === "room" && carryC?.state === "pending"
+        && carryC.tags[0] === "Carried over from Tue 10/13 (absent)" && carryC.carryCount === 1, J({ C: unitOf("C"), carryC }));
+    check("check-off: the rows checked Here are served -- B too, whom PowerSchool has absent all day",
+      ["A", "B", "D"].every((sn) => unitOf(sn).state === "listed" && unitOf(sn).carryBasis === "room"),
+      J(["A", "B", "D"].map((sn) => [sn, unitOf(sn).state, unitOf(sn).carryBasis])));
+    check("check-off: the carry limit holds: E, not checked on its 6th list, goes to admin review",
+      unitOf("E").state === "review" && unitOf("E").reviewReason === "Carried 5 times" && !w.units("E").some((u) => u.kind === "carry"),
+      J(unitOf("E")));
+    check("check-off: the HS row in shadow is PowerSchool's, never the room's: H1 (in class all day) is served, not moved",
+      unitOf("H1").state === "listed" && unitOf("H1").carryBasis === "powerschool" && !w.day(TUE).fallbackReview,
+      J([unitOf("H1").state, unitOf("H1").carryBasis, w.day(TUE).fallbackReview]));
+
+    // WEDNESDAY: the room checks C Here but nobody presses Attendance done.
+    // F is new and not checked: PowerSchool decides F, and the day's review says so.
+    w.mark(WED, "F", 2, "T");
+    await drive(w, la(WED, "07:30"), la(WED, "11:20"));
+    check("check-off: the carry lands on Wednesday's list, which is stamped check-off too",
+      unitOf("C", WED)?.kind === "carry" && unitOf("C", WED).state === "listed" && !unitOf("E", WED) && w.day(WED).roomMode === "checkin",
+      J([w.listed(WED), w.day(WED).roomMode]));
+    clock.set(la(WED, "11:50"));
+    const cWed = await as("granted").run("reflectionRoom.markHere", { unitId: unitOf("C", WED)._id, here: true });
+    for (const slot of [5, 9, 6, 7]) { w.mark(WED, "C", slot, "A"); w.mark(WED, "F", slot, "A"); }   // both absent from P4 on, in PowerSchool
+    await drive(w, la(WED, "11:55"), la(WED, "15:45"));
+    check("check-off: checked Here with Attendance done never pressed: C is served by the room; F (not checked) is PowerSchool's, and carries",
+      cWed.ok === true && unitOf("C", WED).state === "listed" && unitOf("C", WED).carryBasis === "room"
+        && unitOf("F", WED).state === "carried" && unitOf("F", WED).carryBasis === "powerschool",
+      J([unitOf("C", WED)?.carryBasis, unitOf("F", WED)?.state, unitOf("F", WED)?.carryBasis]));
+    check("...and the day's review says Attendance done was not pressed, and how many PowerSchool decided",
+      w.day(WED).fallbackReview?.reason === "Attendance done not pressed Wed 10/14 (1 checked Here; 1 detention decided from PowerSchool)",
+      J(w.day(WED).fallbackReview));
+
+    // ---- THE SCREENS, against this server: this build's, and the one open
+    // tabs ran before check-off (2f0fdd0, stamp 20261012b).
+    const STUDENTS = [["A", "Ann", "Avila"], ["B", "Bo", "Baker"], ["C", "Cal", "Cruz"], ["D", "Dee", "Diaz"], ["E", "Eve", "Ellis"],
+      ["H1", "Hal", "Hope"]].map(([studentNumber, firstName, lastName]) => ({ studentNumber, firstName, lastName }));
+    const s = await checkinWorld();
+    clock.set(la(TUE, "12:35"));
+    const server = (o = {}) => ({
+      query: (args, path) => s.as("granted").run(path.replace(":", "."), { ...args, ...(o.query || {}) }),
+      mutation: (args, path) => s.as("granted").run(path.replace(":", "."), args),
+    });
+    const now = screenWorld(read("./script.js"), server(), STUDENTS);
+    await now.app.loadReflectionList();
+    const html = () => now.fixed.rrList.innerHTML;
+    const boxes = [...html().matchAll(/data-rr-here="([^"]*)"/g)].map((m) => m[1]);
+    const msIds = ["A", "B", "C", "D", "E"].map((sn) => s.unitOf(sn)._id);
+    check("this build's screen: a Here box on each live row (MS), none on the HS row in shadow, and '0 of 5 here'",
+      now.calls[0]?.args?.checkinOk === true && /<th>Here<\/th>/.test(html()) && !/<th>Not here<\/th>/.test(html())
+        && J(boxes.slice().sort()) === J(msIds.slice().sort()) && /0 of 5 here/.test(html()), J({ boxes, args: now.calls[0]?.args }));
+    await now.app.markReflectionHere(s.unitOf("A")._id, true);
+    await now.app.markReflectionHere(s.unitOf("B")._id, true);
+    check("...a tap checks the student on the server, and the count follows: 2 of 5 here",
+      s.unitOf("A").roomHere === true && s.unitOf("B").roomHere === true && /2 of 5 here/.test(html())
+        && /<tr class="rr-row-here">/.test(html()), html().slice(0, 400));
+    await now.app.reflectionAttendanceDone(true);
+    const asked = now.confirms[0]?.message || "";
+    check("...Attendance done first names how many move to the next day, and who: 3, Cruz, Diaz and Ellis",
+      /2 of 5 are checked Here\. 3 students not checked will move to their next school day's Reflection Room: Cruz, Cal; Diaz, Dee; Ellis, Eve\./.test(asked)
+        && now.confirms[0]?.options?.confirmLabel === "Attendance done: move 3", asked);
+    const sentDone = now.calls.filter((c) => c.path === "reflectionRoom:roomAttendanceDone").map((c) => c.args);
+    check("...and sends that number, which the server records",
+      J(sentDone) === J([{ day: TUE, done: true, noShows: 3 }]) && J(s.day(TUE).roomAttendanceDoneCount) === J({ of: 5, here: 2, noShows: 3 }),
+      J(sentDone));
+    check("...then the screen says who did not come and moves to the next day, with no box left to tap",
+      /3 did not come and move to their next school day's Reflection Room: Cruz, Cal; Diaz, Dee; Ellis, Eve\./.test(html())
+        && (html().match(/Did not come: moves to the next day/g) || []).length === 3 && !/data-rr-here=/.test(html())
+        && /Undo Attendance done/.test(html()), html().slice(0, 600));
+
+    let oldSrc = null;
+    try {
+      oldSrc = execFileSync("git", ["show", "2f0fdd0:script.js"],
+        { cwd: fileURLToPath(new URL("./", import.meta.url)), stdio: ["ignore", "pipe", "ignore"], maxBuffer: 256 << 20 }).toString();
+    } catch { /* no git here */ }
+    if (oldSrc) {
+      const o = await checkinWorld();
+      clock.set(la(TUE, "12:35"));
+      const oldServer = {
+        query: (args, path) => o.as("granted").run(path.replace(":", "."), args),
+        mutation: (args, path) => o.as("granted").run(path.replace(":", "."), args),
+      };
+      const old = screenWorld(oldSrc, oldServer, STUDENTS);
+      await old.app.loadReflectionList();
+      const oldHtml = old.fixed.rrList.innerHTML;
+      check("an open tab on the 2f0fdd0 screen (stamp 20261012b) on a check-off day: the list and its names, but no Not here box -- the server's words, asking nobody to refresh",
+        !("checkinOk" in (old.calls[0]?.args ?? {})) && /Avila, Ann/.test(oldHtml) && !/data-rr-unit=/.test(oldHtml)
+          && oldHtml.includes(R.CHECKIN_NEEDS_UPDATE) && !/Tick <b>Not here<\/b>/.test(oldHtml), oldHtml.slice(0, 500));
+      // A box it drew before this server was deployed, pressed now.
+      await old.app.markReflectionNotHere(o.unitOf("C")._id, true);
+      await old.app.reflectionAttendanceDone(true);
+      check("...a Not here tick and Attendance done it still sends are refused, its screen shows why, and nothing is recorded",
+        old.alerts.filter((a) => a.includes(R.CHECKIN_NEEDS_UPDATE)).length === 2 && !o.unitOf("C").roomNotHere
+          && !o.day(TUE).roomAttendanceDoneAt && !o.store.rows("reflectionAudit").some((r) => /^room-/.test(r.action)),
+        J(old.alerts));
+      // THE CONTROL: the same old screen offered the room as this build's
+      // screen is. It draws Not here boxes and says to tick the students who
+      // did not come, on a day whose boxes mean the students who came.
+      const leak = screenWorld(oldSrc, {
+        query: (args, path) => o.as("granted").run(path.replace(":", "."), { ...args, checkinOk: true }),
+        mutation: (args, path) => o.as("granted").run(path.replace(":", "."), args),
+      }, STUDENTS);
+      await leak.app.loadReflectionList();
+      const leakHtml = leak.fixed.rrList.innerHTML;
+      check("...the control: offered the room as this build's screen is, the old screen draws Not here boxes and 'Tick Not here for anyone who did not come'",
+        /data-rr-unit=/.test(leakHtml) && /Tick <b>Not here<\/b> for anyone who did not come/.test(leakHtml), leakHtml.slice(0, 400));
+    } else {
+      console.log("  SKIP  the 2f0fdd0 screen against this server (git or that commit not available here)");
+    }
+  }
+
+  // ==========================================================================
   console.log("\nWIRING\n");
   // ==========================================================================
   {
@@ -1938,7 +2198,7 @@ try {
     // a row: the list and the room's attendance with canReadReflection (the
     // roles and a grant), everything else with canAdminReflection (the roles
     // alone, never a grant).
-    const READERS = { "reflectionList.ts": ["listForDay", "recordPrint"], "reflectionRoom.ts": ["markRoom", "roomAttendanceDone"] };
+    const READERS = { "reflectionList.ts": ["listForDay", "recordPrint"], "reflectionRoom.ts": ["markRoom", "markHere", "roomAttendanceDone"] };
     const ADMINS = { "reflectionRoom.ts": ["roomDidNotRun", "reviewQueue", "resolveReview", "markSchoolDay", "readNow", "health"] };
     const gated = [];
     for (const f of ["reflectionList.ts", "reflectionRoom.ts"]) {

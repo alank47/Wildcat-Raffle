@@ -2085,10 +2085,18 @@ function wholeDaySlots(summary: DaySummary, snap: RosterSnap): number[] {
  *  1. ROOM CLOSED: "Room did not run today" was pressed. Everything on D's
  *     list carries, tagged "room closed", and the carry does not count
  *     toward the limit -- the student did nothing wrong.
- *  2. ROOM ATTENDANCE RECORDED: "Attendance done" was pressed. Exactly the
- *     rows ticked Not here carry; an unticked row was served, whatever its
- *     Power-Up mark says. A student at school who did not come carries like
- *     an absent one (owner, 10/8).
+ *  2. ROOM ATTENDANCE RECORDED, in the way the day's list takes it
+ *     (`room.mode`, roomModeOf):
+ *     - CHECK-OFF (owner, 2026-10-12; every list made since it shipped): a
+ *       row checked Here was in the room and is served, whatever its
+ *       Power-Up mark says -- with Attendance done pressed or not. Once
+ *       "Attendance done" is pressed, every row NOT checked Here did not
+ *       come, and carries.
+ *     - NOT HERE (the first live day, Mon 10/12, whose list was made before
+ *       check-off shipped): once "Attendance done" is pressed, exactly the
+ *       rows ticked Not here carry; an unticked row was served.
+ *     Either way a student at school who did not come carries like an
+ *     absent one (owner, 10/8).
  *  3. NOTHING RECORDED BY THE AFTER-SCHOOL READ: PowerSchool decides (and
  *     always in shadow mode, where no room runs). A pulled student is
  *     usually marked ABSENT by the Power-Up teacher, so "absent at Power-Up"
@@ -2111,7 +2119,12 @@ export function carryVerdict(input: {
   studentNumber: string;
   division: Division;
   serveDay: string;
-  room: { closed?: boolean; attendanceDone?: boolean; notHere?: boolean };
+  /**
+   * The room's presses for D, for a LIVE division's detention only (no room
+   * runs for a division in shadow). `mode` is how D's list takes attendance
+   * (roomModeOf): "checkin" reads `here`, "notHere" (or none) reads `notHere`.
+   */
+  room: { closed?: boolean; attendanceDone?: boolean; notHere?: boolean; mode?: RoomMode; here?: boolean };
   /** The after-school read has happened: PowerSchool's marks are final for D. */
   final: boolean;
   summary: DaySummary | null;
@@ -2134,11 +2147,11 @@ export function carryVerdict(input: {
   const summary = input.summary;
   const snap = input.snap;
   const puSlot = snap?.puSlot ?? POWER_UP_SLOT[input.division];
-  if (input.room.attendanceDone) {
-    if (!input.room.notHere) return { verdict: "served", basis: "room", why: "In the room (not ticked Not here)." };
-    // The tag says why, as far as PowerSchool can tell: absent at Power-Up,
-    // or at school and did not come (a Power-Up mark that is not Absent, or
-    // no row in a section that took attendance). Otherwise just "not in the room".
+  // A NO-SHOW: the room took attendance and this student was not in it. The
+  // tag says why, as far as PowerSchool can tell: absent at Power-Up, or at
+  // school and did not come (a Power-Up mark that is not Absent, or no row
+  // in a section that took attendance). Otherwise just "not in the room".
+  const noShow = (): CarryVerdict => {
     let why = "not in the room";
     if (summary && snap?.puSlot) {
       const marks = summary.marks[input.studentNumber]?.[String(snap.puSlot)] ?? [];
@@ -2146,6 +2159,19 @@ export function carryVerdict(input: {
       else if (sectionHasMarks(summary, snap.puSlot, snap.puSectionId)) why = "at school: did not come";
     }
     return limit({ verdict: "carry", basis: "room", tag: `Carried over from ${from} (${why})`, countsTowardLimit: true });
+  };
+  if (input.room.mode === "checkin") {
+    // CHECK-OFF (owner, 2026-10-12). Checked Here: the room saw the student,
+    // so the detention is served, whatever PowerSchool says -- and even if
+    // nobody pressed Attendance done, because a check is the room's own
+    // record of that one student. Not checked once Attendance done is
+    // pressed: did not come. Not checked and not done: PowerSchool decides,
+    // below, as on a day the room recorded nothing.
+    if (input.room.here) return { verdict: "served", basis: "room", why: "Checked Here in the room." };
+    if (input.room.attendanceDone) return noShow();
+  } else if (input.room.attendanceDone) {
+    if (!input.room.notHere) return { verdict: "served", basis: "room", why: "In the room (not ticked Not here)." };
+    return noShow();
   }
   if (!input.final || !summary) return { verdict: "undecided", why: "Waiting for room attendance or the after-school read." };
 
@@ -2249,10 +2275,11 @@ export function lunchClassOf(snap: RosterSnap | null | undefined, at: { slot: nu
 
 /**
  * WHEN THE ROOM'S OWN ATTENDANCE MAY BE TAKEN for the list of day D (build
- * spec 3.8, step 8b): a Not here tick and "Attendance done" from Lunch &
- * Power-Up start on D -- nobody can be not-here before the room has run --
- * until the next list is made, because that freeze CLAIMS the carries, and
- * after that a tick would change a list already on paper. "Room did not run
+ * spec 3.8, step 8b): a Here check (or, on a Not here day, a tick) and
+ * "Attendance done" from Lunch & Power-Up start on D -- nobody arrives
+ * before the room has run -- until the next list is made, because that
+ * freeze CLAIMS the carries, and after that a check would change a list
+ * already on paper. "Room did not run
  * today" may be pressed as soon as D's list is made (the room may be known to
  * be closed before lunch), until the same next freeze. A day with no list
  * has nothing to take attendance for.
@@ -2272,6 +2299,62 @@ export function roomWindow(input: {
     return { tick: false, closeRoom: true, why: `Room attendance opens at Lunch & Power-Up (${clockText(new Date(input.powerUpMs).toISOString(), input.tz, true)}).` };
   }
   return { tick: true, closeRoom: true, why: null };
+}
+
+/**
+ * HOW THE ROOM TAKES ATTENDANCE for one day's list.
+ *
+ *   - "checkin" (owner, 2026-10-12): the supervisor checks Here next to each
+ *     student who arrives. "Attendance done" then makes every LIVE detention
+ *     on the list that is not checked Here a no-show, carried to the
+ *     student's next school day.
+ *   - "notHere": the way the first live day (Mon 10/12) was taken: the
+ *     supervisor ticks Not here, and "Attendance done" carries exactly the
+ *     ticked rows.
+ *
+ * STAMPED ON THE DAY WHEN ITS LIST IS MADE (reflection.freezeDay): every list
+ * this code makes is "checkin". A list made before check-off shipped has no
+ * stamp, so it keeps the meaning its room used when it took attendance --
+ * nobody on 10/12 is carried because no box said Here. The stamp is never
+ * inferred from the marks, so no mark can change what the others mean.
+ */
+export type RoomMode = "notHere" | "checkin";
+export const ROOM_MODE_FOR_NEW_LISTS: RoomMode = "checkin";
+export function roomModeOf(day: { roomMode?: string | null } | null | undefined): RoomMode {
+  return day?.roomMode === "checkin" ? "checkin" : "notHere";
+}
+
+/**
+ * What a tab still running the screen from before check-off (stamp
+ * 20261012b: Not here boxes) is told on a check-off day -- on screen instead
+ * of its boxes, and as the refusal of a Not here tick or an Attendance done
+ * it sends. A Not here tick there would mean the opposite of what the
+ * supervisor meant. Nobody is asked to do anything: the tab updates itself.
+ */
+export const CHECKIN_NEEDS_UPDATE = "This list now uses check-off: the Hub is updating itself.";
+
+/**
+ * Is this row of a list one the room takes attendance for? A LIVE division's
+ * detention that is still on the list: not released, not dismissed in
+ * review (both are shown as released), and not a row of a list not yet made.
+ * The screen's boxes, the "N of M here" count, the number "Attendance done"
+ * names and the server's check of that number all use this one test.
+ */
+export function roomTakes(row: { unitId: string | null; state: string; mode: string }): boolean {
+  return !!row.unitId && row.state !== "released" && row.state !== "so-far" && row.mode === "live";
+}
+
+/**
+ * The room's count for one list: how many rows it takes attendance for,
+ * how many are checked Here, and how many would carry if Attendance done
+ * were pressed now (check-off: every one not checked; Not here: the ticked).
+ */
+export function roomTally(rows: Array<{ unitId: string | null; state: string; mode: string; here?: boolean; notHere?: boolean }>,
+  mode: RoomMode): { of: number; here: number; notHere: number; noShows: number } {
+  const mine = rows.filter(roomTakes);
+  const here = mine.filter((r) => r.here === true).length;
+  const notHere = mine.filter((r) => r.notHere === true).length;
+  return { of: mine.length, here, notHere, noShows: mode === "checkin" ? mine.length - here : notHere };
 }
 
 /**
@@ -2348,16 +2431,19 @@ export function lastReadBanner(input: {
 /**
  * In live mode, a day whose carries PowerSchool had to decide (the room
  * recorded nothing) also raises one day-level review item, so somebody
- * notices the room is not taking attendance.
+ * notices the room is not taking attendance. On a check-off day where the
+ * room checked some students Here but never pressed Attendance done, it says
+ * so: those it checked are served, and only the rest were PowerSchool's.
  */
 export function fallbackDayReview(input: {
-  mode: Mode; serveDay: string; attendanceDone: boolean; roomClosed: boolean; decidedByPowerSchool: number;
+  mode: Mode; serveDay: string; attendanceDone: boolean; roomClosed: boolean; decidedByPowerSchool: number; checkedHere?: number;
 }): { reason: string } | null {
   if (input.mode !== "live" || input.attendanceDone || input.roomClosed || input.decidedByPowerSchool < 1) return null;
-  return {
-    reason: `Room attendance not recorded ${dayLabel(input.serveDay)} (${input.decidedByPowerSchool} `
-      + `detention${input.decidedByPowerSchool === 1 ? "" : "s"} decided from PowerSchool)`,
-  };
+  const n = `${input.decidedByPowerSchool} detention${input.decidedByPowerSchool === 1 ? "" : "s"} decided from PowerSchool`;
+  if ((input.checkedHere ?? 0) > 0) {
+    return { reason: `Attendance done not pressed ${dayLabel(input.serveDay)} (${input.checkedHere} checked Here; ${n})` };
+  }
+  return { reason: `Room attendance not recorded ${dayLabel(input.serveDay)} (${n})` };
 }
 
 /** The carried detention, pending for the next list. It keeps its violations and gains a carry. */

@@ -10190,6 +10190,18 @@ body:has(.wc-preview-bar) .app-content { padding-bottom: 64px; }
     border: 1px solid #DCE3EC; border-radius: 8px; background: #F6F8FB; font-size: 14px; color: #334155; }
 .rr-room-buttons { display: inline-flex; gap: 8px; margin-left: auto; }
 .rr-nothere { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; white-space: nowrap; }
+/* Check-off (owner, 2026-10-12): a box big enough to tap on a Chromebook as each student walks in. */
+.rr-here-cell { white-space: nowrap; }
+.rr-here { display: inline-flex; align-items: center; gap: 10px; min-height: 44px; min-width: 96px; padding: 6px 12px; box-sizing: border-box;
+    border: 2px solid #CBD5E1; border-radius: 10px; background: #FFFFFF; font-size: 16px; font-weight: 700; color: #334155;
+    cursor: pointer; user-select: none; -webkit-user-select: none; }
+.rr-here input { width: 24px; height: 24px; margin: 0; cursor: pointer; accent-color: #1B7F3B; }
+.rr-here:has(input:checked) { border-color: #1B7F3B; background: #E7F6EC; color: #145C2B; }
+.rr-here:focus-within { outline: 3px solid #93C5FD; outline-offset: 1px; }
+.rr-table tr.rr-row-here td { background: #F1FAF4; }
+.rr-here-chip { background: #E7F6EC; color: #145C2B; }
+.rr-noshow { font-weight: 700; color: #8A1C1C; }
+.rr-noshow-list { font-weight: 600; color: #8A1C1C; }
 .rr-grants { margin-top: 10px; font-size: 13px; color: #475569; }
 .rr-grants h4 { margin: 0 0 4px; font-size: 14px; }
 .rr-grants ul { margin: 0; padding-left: 18px; }

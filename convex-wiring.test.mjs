@@ -148,6 +148,8 @@ const mustBeCalled = [
   "reflectionRoom:reviewQueue",
   "reflectionRoom:resolveReview",
   "reflectionRoom:markRoom",
+  // Check-off (owner, 2026-10-12): the room checks Here as each student arrives.
+  "reflectionRoom:markHere",
   "reflectionRoom:roomAttendanceDone",
   "reflectionRoom:roomDidNotRun",
   "reflectionRoom:markSchoolDay",
