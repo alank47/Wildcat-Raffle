@@ -252,6 +252,18 @@ always: an older server refuses the new screen's `lunchOk`.
   of this applies to the **live** division only: a division in shadow (HS
   during the MS live week) has no box, and PowerSchool decides its carries
   whatever the room presses.
+  - **Attendance done moves exactly the students its confirmation named**
+    (review, 2026-10-12). If the list changes while it is open (another
+    supervisor checks someone in or takes a check back, even swapping one
+    student for another), nothing is recorded and it says to press again. A
+    student put back on the list after it was pressed (a tardy deleted and
+    typed back in PowerSchool) was never named: PowerSchool decides them.
+  - A detention an administrator has already decided in review ("Add to next
+    list") has no Here box and is not counted.
+  - A fix entered the morning after (a check from paper, Undo and Attendance
+    done again) counts until the next list is made, even when PowerSchool is
+    down and that list is made without it.
+  - Taps on one student's box reach the server in the order they were made.
   - **Mon 10/12's list keeps Not here.** It was made before check-off shipped,
     and its room ticked Not here: on it, only ticked students carry. Every
     list made since is stamped check-off when it is made (`roomMode` on
