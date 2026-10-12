@@ -28,6 +28,11 @@
 //      whole school minus Hispanic minus Black was the 5 students the floor
 //      hid. For PBIS no sum or difference of the answer may describe 1 to 9
 //      students; a brute-force reader below tries every one.
+//   5. ...OR THE READER WORKS ROUND IT (review of that fix, 2026-10-11): by
+//      sending a different number of school days to move who is chronic, by
+//      keeping two answers either side of a row's flip, through the students
+//      with no attendance yet, or from a tab that predates the fix. Each has
+//      its own section and its own teeth.
 //
 // A GROUP THAT CANNOT BE ANSWERED MUST SAY SO. Socioeconomic status is absent
 // -- the meal field answers HTTP 403 -- and a group missing from an equity
@@ -35,6 +40,8 @@
 // way for data to be absent.
 import { readFileSync } from "node:fs";
 import { createHash } from "node:crypto";
+import { execFileSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 import ts from "typescript";
 
 const subSrc = readFileSync(new URL("./convex/attendanceSubgroups.ts", import.meta.url), "utf8");
@@ -58,27 +65,54 @@ function loadQuery(transform) {
     .replace(/^export (const|function|type|interface) /gm, "$1 ");
   let body = strip(rollupSrc) + "\n" + strip(subSrc);
   if (transform) body = transform(body);
+  // THE SERVER'S CLOCK, held still: Date.now() is the instant the query
+  // counts school days at. Everything else about Date is the real one.
   const stubs = `
     const query = (d) => d;
     const v = new Proxy({}, { get: () => (...a) => ({ _v: true, a }) });
     let __me = { role: "admin", email: "a@b.org" };
     const requireStaff = async () => __me;
     const setMe = (m) => { __me = m; };
+    let __now = ${NOW};
+    const Date = class extends globalThis.Date { static now() { return __now; } };
+    const setNow = (ms) => { __now = ms; };
   `;
   const js = ts.transpileModule(stubs + body, {
     compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext },
   }).outputText;
   return new Function(
-    `${js}\nreturn { chronicBySubgroup, setMe, SMALL_GROUP, CHRONIC, SEVERE, FRAGILE_GROUP, reportedCategories,
-      ELA_LABELS, rankOf, exposesSmallPool, withholdResiduals };`)();
+    `${js}\nreturn { chronicBySubgroup, setMe, setNow, SMALL_GROUP, STEADY_FLOOR, CHRONIC, SEVERE, FRAGILE_GROUP,
+      reportedCategories, ELA_LABELS, rankOf, exposesSmallPool, withholdResiduals, schoolDaysSoFar,
+      WITHHELD_NEEDS_UPDATE, CALENDAR_SEEN_HOUR, DAY_TABLE_CAP };`)();
 }
 
-function makeCtx(restricted, attendance) {
+/**
+ * THE SCHOOL-DAY TABLE every answer below is counted against, unless a test
+ * brings its own: 28 weekdays from Wed 12 Aug to Fri 18 Sep 2026, copied at
+ * 12:30 that Friday, read at noon on Saturday 19 Sep. The server counts 28,
+ * which is the 28 every caller below sends, so a PBIS answer is divided by the
+ * same number an admin's is.
+ */
+const NOW = Date.UTC(2026, 8, 19, 19, 0, 0);
+function weekdaysFrom(first, n) {
+  const out = [];
+  for (let d = new Date(first + "T00:00:00Z"); out.length < n; d.setUTCDate(d.getUTCDate() + 1)) {
+    if (d.getUTCDay() !== 0 && d.getUTCDay() !== 6) out.push(d.toISOString().slice(0, 10));
+  }
+  return out;
+}
+const dayRow = (date, syncedAt) =>
+  ({ date, studentsAbsent: 40, fullDaysStrict: 20, misrecordDaysByGap: [0, 0, 0], partialDays: 20, syncedAt });
+const DAYS28 = weekdaysFrom("2026-08-12", 28).map((d) => dayRow(d, "2026-09-18T19:30:00Z"));
+
+function makeCtx(restricted, attendance, days) {
+  const tables = { psRestricted: restricted, psAttendance: attendance, psAbsenceDayTotals: days || DAYS28 };
   return {
     db: {
-      query: (name) => ({
-        take: async () => (name === "psRestricted" ? restricted.slice() : attendance.slice()),
-      }),
+      query: (name) => {
+        if (!(name in tables)) throw new Error("unexpected table " + name);
+        return { take: async () => tables[name].slice() };
+      },
     },
   };
 }
@@ -206,8 +240,9 @@ console.log("\nTHE THRESHOLD, AND THE DENOMINATOR\n");
     chronicMin === Q.CHRONIC && severeMin === Q.SEVERE,
     `roster chronic ${chronicMin} severe ${severeMin} vs server ${Q.CHRONIC}/${Q.SEVERE}`);
 
-  // The divisor is an ARGUMENT, so the two screens cannot disagree about it.
-  check("the denominator comes from the caller, not a server constant",
+  // An admin's divisor is an ARGUMENT, the tab's own count. (PBIS is divided
+  // by the server's: THE DIVISOR IS THE SERVER'S, below.)
+  check("an admin's denominator comes from the caller, not a server constant",
     /schoolDays: v\.number\(\)/.test(subSrc));
   const none = await run(merge(cohort("h", 20, { fedEthnicity: "1", chronic: 10 })), { schoolDays: 0 });
   check("zero school days refuses rather than dividing by it",
@@ -428,6 +463,34 @@ const multiRace = () => build(
   ["bw", 5, { fedEthnicity: "0", raceCodes: ["600", "700"], elaStatus: "EO", chronic: 3 }],
   ["u", 12, { fedEthnicity: "0", elaStatus: "EO", chronic: 6 }],
 );
+/**
+ * One type hands another's row back: the classification withholds its EL row
+ * (25, the smallest) to cover 4 assessment pending, and "Current English
+ * Learner" is the same 25 students.
+ */
+const coupled = () => build(
+  ["o", 60, { ...HISP, elaStatus: "EO", chronic: 30 }],
+  ["r", 40, { ...HISP, elaStatus: "RFEP", chronic: 12 }],
+  ["e", 25, { ...HISP, elaStatus: "EL", chronic: 12 }],
+  ["t", 4, { ...HISP, elaStatus: "TBD", chronic: 2 }],
+);
+/** multiRace with 20 in no race row, so only the double-counting rule withholds. */
+const multiRaceWide = () => build(
+  ["h", 100, { ...HISP, elaStatus: "EO", chronic: 50 }],
+  ["b", 30, { fedEthnicity: "0", raceCodes: ["600"], elaStatus: "EO", chronic: 15 }],
+  ["w", 25, { fedEthnicity: "0", raceCodes: ["700"], elaStatus: "EO", chronic: 10 }],
+  ["bw", 5, { fedEthnicity: "0", raceCodes: ["600", "700"], elaStatus: "EO", chronic: 3 }],
+  ["u", 20, { fedEthnicity: "0", elaStatus: "EO", chronic: 6 }],
+);
+/** elaPool with IFEP at 22, so withholding it is a choice the order makes, not the floor. */
+const elaWide = () => build(
+  ["o", 60, { ...HISP, elaStatus: "EO", chronic: 30 }],
+  ["r", 40, { ...HISP, elaStatus: "RFEP", chronic: 12 }],
+  ["e", 25, { ...HISP, elaStatus: "EL", chronic: 15 }],
+  ["i", 22, { ...HISP, elaStatus: "IFEP", chronic: 5 }],
+  ["t", 3, { ...HISP, elaStatus: "TBD", chronic: 2 }],
+  ["n", 2, { ...HISP, elaStatus: "", chronic: 1 }],
+);
 // ---- end residual datasets
 
 /**
@@ -443,12 +506,17 @@ const GOLDEN = {
 };
 const sha = (res) => createHash("sha256").update(JSON.stringify(res)).digest("hex");
 
-/** One answer for one role. The role is put back to admin afterwards. */
-async function as(role, data, Qx) {
+/**
+ * One answer for one role, asked the way this build's screen asks it (28
+ * school days, withheldOk). The role is put back to admin afterwards.
+ */
+async function as(role, data, Qx, args) {
   const q = Qx || Q;
   q.setMe({ role });
-  try { return await q.chronicBySubgroup.handler(makeCtx(data.restricted, data.attendance), { schoolDays: 28 }); }
-  finally { q.setMe({ role: "admin" }); }
+  try {
+    return await q.chronicBySubgroup.handler(makeCtx(data.restricted, data.attendance, data.days),
+      args || { schoolDays: 28, withheldOk: true });
+  } finally { q.setMe({ role: "admin" }); }
 }
 
 /**
@@ -551,8 +619,9 @@ console.log("\nTHE RESIDUAL TEST: SUBTRACTION CANNOT NAME FEWER THAN TEN (2026-1
 }
 {
   // ENGLISH LEARNER YES/NO ALWAYS COVERS EVERYONE: its residual is 0, which is
-  // nobody, not a pool. Both rows at 10 or more must reach PBIS as they are.
-  for (const [label, el] of [["30 of 100", 30], ["exactly 10 of 100", 10]]) {
+  // nobody, not a pool. Both rows at STEADY_FLOOR (20) or more must reach PBIS
+  // as they are.
+  for (const [label, el] of [["30 of 100", 30], ["exactly 20 of 100", 20]]) {
     const data = build(
       ["e", el, { ...HISP, elaStatus: "EL", chronic: Math.floor(el / 2) }],
       ["o", 100 - el - 30, { ...HISP, elaStatus: "EO", chronic: 20 }],
@@ -589,14 +658,9 @@ console.log("\nTHE RESIDUAL TEST: SUBTRACTION CANNOT NAME FEWER THAN TEN (2026-1
 {
   // ONE TYPE HANDS ANOTHER'S ROW BACK. "Current English Learner" is the same
   // students as the classification's "English Learner". Here the classification
-  // withholds its EL row (12, the smallest) to cover a pool of 4 -- and the
+  // withholds its EL row (25, the smallest) to cover a pool of 4 -- and the
   // yes/no row would put it straight back. The test across types catches it.
-  const data = build(
-    ["o", 60, { ...HISP, elaStatus: "EO", chronic: 30 }],
-    ["r", 40, { ...HISP, elaStatus: "RFEP", chronic: 12 }],
-    ["e", 12, { ...HISP, elaStatus: "EL", chronic: 6 }],
-    ["t", 4, { ...HISP, elaStatus: "TBD", chronic: 2 }],
-  );
+  const data = coupled();
   const pbis = await as("pbis", data);
   check("a row withheld from one type cannot come back through another",
     smallestPool(data, pbis) === null, JSON.stringify(smallestPool(data, pbis)));
@@ -632,16 +696,23 @@ console.log("\nTHE RESIDUAL TEST: SUBTRACTION CANNOT NAME FEWER THAN TEN (2026-1
 {
   // MULTI-RACE ERRS TOWARD WITHHOLDING. 5 students are in both the Black and
   // the White row; the whole school minus every race row takes them out twice.
-  // Here 12 more are in no race row, so no single sum or difference isolates
-  // the 5 -- and the owner's rule withholds a row anyway.
-  const data = multiRace();
+  // Here 20 more are in no race row, so no sum or difference counts fewer than
+  // STEADY_FLOOR (20) students -- and the owner's rule withholds a row anyway.
+  const data = multiRaceWide();
   const admin = await as("admin", data);
   const pbis = await as("pbis", data);
   check("admins see Hispanic, Black (35) and White (30)",
     groupsOf(admin, "race").join() === [RACE_H, RACE_B, "White"].join());
+  // The rank test alone: each race row given a type of its own, so the
+  // double-counting rule has nothing to count.
+  const alone = [RACE_H, RACE_B, "White"].map((g) => {
+    const members = data.restricted.flatMap((st, i) => (Q.reportedCategories(st).categories.includes(g) ? [i] : []));
+    return { axis: g, group: g, enrolled: members.length, members };
+  });
   check("no sum or difference isolates the 5 counted twice: the withholding below is the rule erring, not arithmetic",
-    smallestPool(data, admin) === null, JSON.stringify(smallestPool(data, admin)));
-  check("PBIS does not get both rows that share 1 to 9 students: the smaller (White) is withheld",
+    smallestPool(data, admin) === null && !Q.exposesSmallPool(alone, data.restricted.length),
+    JSON.stringify(smallestPool(data, admin)));
+  check("PBIS does not get both rows that share 1 to 19 students: the smaller (White) is withheld",
     groupsOf(pbis, "race").join() === [RACE_H, RACE_B].join() && heldOf(pbis)[0]?.axis === "race",
     groupsOf(pbis, "race").join(","));
 }
@@ -723,6 +794,385 @@ console.log("\nTHE RESIDUAL TEST: SUBTRACTION CANNOT NAME FEWER THAN TEN (2026-1
   const html3 = await drawGroups(scriptSrc, before);
   check("an answer from a server before 10/11 (no withheld field) still draws",
     /By race and ethnicity/.test(html3) && !/not shown at your access level/.test(html3));
+}
+
+// ============================================ THE REVIEW OF 2026-10-11
+// Four ways round the residual test, found by the review of d089b92: a
+// divisor the reader picks, two answers either side of a flip, the students
+// with no attendance yet, and a tab from before 10/11.
+
+console.log("\nTHE DIVISOR IS THE SERVER'S FOR PBIS: NO THRESHOLD TO MOVE (review, 2026-10-11)\n");
+
+/** Westbrook's shape with a spread of absence counts, as the review's sweep had it. */
+function spreadSchool() {
+  let seed = 42;
+  const rnd = () => ((seed = (seed * 1103515245 + 12345) % 2147483648) / 2147483648);
+  const absence = () => { const u = rnd(); return u < 0.85 ? Math.floor(rnd() * 7) : Math.floor(7 + Math.pow(rnd(), 2) * 24); };
+  const data = westbrook();
+  for (const a of data.attendance) a.daysAbsentYtd = absence();
+  return data;
+}
+
+/**
+ * THE REVIEW'S SWEEP, as PBIS. PBIS holds every student's absence count by
+ * name (Attendance Watch). For each count `a` that exactly one student has,
+ * ask at 10a-1 school days and at 10a+9: a row's chronic count moves by its
+ * students with exactly `a` absences, so a row that moves by 1 holds that
+ * student. Returns how many students had a group read off that way.
+ */
+async function sweepReads(Qx) {
+  const data = spreadSchool();
+  const byCount = new Map();
+  for (const a of data.attendance) byCount.set(a.daysAbsentYtd, (byCount.get(a.daysAbsentYtd) || 0) + 1);
+  const unique = [...byCount].filter(([a, n]) => a >= 1 && n === 1).map(([a]) => a);
+  let read = 0;
+  for (const a of unique) {
+    const lo = await as("pbis", data, Qx, { schoolDays: 10 * a - 1, withheldOk: true });
+    const hi = await as("pbis", data, Qx, { schoolDays: 10 * a + 9, withheldOk: true });
+    if (!lo.rows.length || lo.rows.length !== hi.rows.length) continue;
+    if (lo.rows.some((r, i) => r.chronic - hi.rows[i].chronic === 1)) read++;
+  }
+  return { read, unique: unique.length };
+}
+
+{
+  const data = spreadSchool();
+  const asked = [1, 9, 28, 279, 289, 1000, 0, -5];
+  const answers = [];
+  for (const d of asked) answers.push(await as("pbis", data, Q, { schoolDays: d, withheldOk: true }));
+  check("PBIS: whatever schoolDays the tab sends (1, 9, 28, 279, 289, 1000, 0, -5), the answer is the same, to the byte",
+    answers.every((x) => JSON.stringify(x) === JSON.stringify(answers[0])) && answers[0].rows.length > 0,
+    answers.map((x) => x.schoolDays).join(","));
+  check("...and it is divided by the server's own count of the school days on file (28), which it says",
+    answers[0].schoolDays === 28, String(answers[0].schoolDays));
+  const sw = await sweepReads(Q);
+  check("the review's sweep, as PBIS: no student's group is read off by moving the divisor",
+    sw.unique > 0 && sw.read === 0, JSON.stringify(sw));
+  // ADMINS KEEP THE ARGUMENT: the same two calls do move their answer, which
+  // is what made the sweep work. They are approved for an individual's race.
+  const lo = await as("admin", data, Q, { schoolDays: 279, withheldOk: true });
+  const hi = await as("admin", data, Q, { schoolDays: 289, withheldOk: true });
+  check("an admin's answer still divides by what the tab sends (279 and 289 differ)",
+    lo.schoolDays === 279 && hi.schoolDays === 289 && lo.baseline.chronic !== hi.baseline.chronic);
+
+  // A COUNT THE SERVER CANNOT MAKE is said, never guessed and never the tab's.
+  const empty = await as("pbis", { ...data, days: [] });
+  check("PBIS, with no school days on file to count: words, no row, and nothing divided by the tab's 28",
+    empty.notYet === true && empty.rows.length === 0 && empty.baseline === null
+    && /cannot be counted right now/.test(empty.reason) && !/refresh|reload/i.test(empty.reason), JSON.stringify(empty).slice(0, 200));
+}
+
+// THE SAME COUNT AS EVERY TAB'S. The server's port runs against the tab's own
+// count -- the real dailyAbsenceSeries handler feeding the real
+// WildcatRoster.schoolCalendar, the way loadAbsenceSeries feeds it -- on the
+// same tables and the same clock.
+const cjs = (src, deps = {}) => {
+  const m = { exports: {} };
+  const out = ts.transpileModule(src, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS } }).outputText;
+  new Function("module", "exports", "require", out)(m, m.exports, (p) => {
+    if (p in deps) return deps[p];
+    throw new Error("unexpected import " + p);
+  });
+  return m.exports;
+};
+const readRepo = (p) => readFileSync(new URL(p, import.meta.url), "utf8");
+const listSrc = readRepo("./convex/attendanceList.ts");
+const List = cjs(listSrc, {
+  "./_generated/server": { query: (d) => d },
+  "convex/values": { v: new Proxy({}, { get: () => (...a) => ({ a }) }) },
+  "./identity": { requireStaff: async () => ({ role: "admin", email: "a@b.org" }) },
+  "./accessRules": cjs(readRepo("./convex/accessRules.ts")),
+  "./views": cjs(readRepo("./convex/views.ts")),
+  "./absenceDayRules": cjs(readRepo("./convex/absenceDayRules.ts")),
+});
+new Function(rosterSrc)();
+const Roster = globalThis.WildcatRoster;
+
+const laDate = (ms) => new Intl.DateTimeFormat("en-CA",
+  { timeZone: "America/Los_Angeles", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date(ms));
+/** `hh:mm` on `iso` in Los Angeles. Every date here is in daylight time (UTC-7). */
+const laAt = (iso, hhmm) => Date.parse(`${iso}T${hhmm}:00-07:00`);
+const dayShift = (iso, n) => new Date(Date.parse(iso + "T00:00:00Z") + n * 864e5).toISOString().slice(0, 10);
+
+/** What a tab counts, at `nowMs`, from `table` and the totals' stamp. */
+async function tabCount(table, totalsAt, nowMs) {
+  const today = laDate(nowMs);
+  const ctx = { db: { query: () => ({ take: async () => table.slice() }) } };
+  const res = await List.dailyAbsenceSeries.handler(ctx, { today, days: 120 });
+  // loadAbsenceSeries: the first day is the oldest point when every day on file came back.
+  const pts = res.points || [];
+  res.firstDate = pts.length && pts.length >= (Number(res.schoolDaysOnFile) || 0) ? String(pts[0].date).slice(0, 10) : null;
+  const cal = Roster.schoolCalendar(res, today, totalsAt);
+  return cal.known ? cal.days : null;
+}
+
+/** School ran every weekday from 12 Aug except 4 and 7 Sep (no attendance at all on either). */
+const CAL = weekdaysFrom("2026-08-12", 60).filter((d) => d !== "2026-09-04" && d !== "2026-09-07" && d <= "2026-10-30");
+/**
+ * The table a rebuild stamped at `stampIso` `hhmm` leaves: every school day it
+ * has seen (that day itself from 10:00), plus the 1st and 5th school days
+ * after, where PowerSchool already holds absences entered ahead.
+ */
+function tableAt(stampIso, hhmm) {
+  const stamp = new Date(laAt(stampIso, hhmm)).toISOString();
+  const through = hhmm >= "10:00" ? stampIso : dayShift(stampIso, -1);
+  const after = CAL.filter((d) => d > through);
+  return [...CAL.filter((d) => d <= through), after[0], after[4]].filter(Boolean).map((d) => dayRow(d, stamp));
+}
+
+async function agreement(Qx) {
+  let tried = 0;
+  const wrong = [];
+  const compare = async (label, table, totalsAt, nowMs) => {
+    tried++;
+    const tab = await tabCount(table, totalsAt, nowMs);
+    const srv = Qx.schoolDaysSoFar(table, totalsAt, nowMs).days;
+    if (tab !== srv) wrong.push(`${label}: tab ${tab}, server ${srv}`);
+  };
+  const runs = [["06:30", 0], ["12:30", 0], ["12:30", -1], ["06:30", -1], ["12:30", -3], ["12:30", -6]];
+  for (const day of ["2026-09-08", "2026-10-05", "2026-10-07", "2026-10-09", "2026-10-10", "2026-10-11", "2026-10-12"]) {
+    for (const time of ["05:00", "08:00", "10:30", "12:15", "12:45", "18:00", "23:30"]) {
+      const now = laAt(day, time);
+      for (const [rt, back] of runs) {
+        if (laAt(dayShift(day, back), rt) > now) continue;
+        const table = tableAt(dayShift(day, back), rt);
+        for (const [tt, tback] of [[null, 0], ["06:00", 0], ["12:00", 0], ["12:00", -1]]) {
+          const totalsAt = tt === null ? null : new Date(laAt(dayShift(day, tback), tt)).toISOString();
+          if (totalsAt && Date.parse(totalsAt) > now) continue;
+          await compare(`${day} ${time}, copy ${dayShift(day, back)} ${rt}, totals ${totalsAt}`, table, totalsAt, now);
+        }
+      }
+    }
+  }
+  // The edges, where both must say unknown (or 0) together.
+  const noon = laAt("2026-10-07", "12:45");
+  const t = new Date(laAt("2026-10-07", "12:00")).toISOString();
+  await compare("an emptied table", [], t, noon);
+  await compare("no copy time", tableAt("2026-10-07", "12:30").map((r) => ({ ...r, syncedAt: undefined })), t, noon);
+  await compare("far fewer days than weekdays",
+    tableAt("2026-10-07", "12:30").filter((r, i, a) => i === 0 || i > a.length - 6), t, noon);
+  await compare("more rows than the read takes", Array.from({ length: 401 }, (_, i) =>
+    dayRow(dayShift("2025-08-01", i), new Date(laAt("2026-10-07", "12:30")).toISOString())), t, noon);
+  await compare("before the first day: only absences entered ahead", tableAt("2026-08-05", "06:30")
+    .filter((r) => r.date > "2026-08-05"), new Date(laAt("2026-08-05", "06:00")).toISOString(), laAt("2026-08-05", "08:00"));
+  return { tried, wrong };
+}
+
+{
+  const ag = await agreement(Q);
+  check(`the server counts what a tab counts, at every clock, copy and totals time tried (${ag.tried})`,
+    ag.tried > 500 && ag.wrong.length === 0, ag.wrong.slice(0, 3).join(" | "));
+  const rosterHour = Number((rosterSrc.match(/var CALENDAR_SEEN_HOUR = (\d+);/) || [])[1]);
+  const listCap = Number((listSrc.slice(listSrc.indexOf("export const dailyAbsenceSeries")).match(/const CAP = (\d+);/) || [])[1]);
+  check("its copy hour and its table cap are the tab's and dailyAbsenceSeries' own",
+    rosterHour === Q.CALENDAR_SEEN_HOUR && listCap === Q.DAY_TABLE_CAP, `${rosterHour}/${Q.CALENDAR_SEEN_HOUR} ${listCap}/${Q.DAY_TABLE_CAP}`);
+
+  // THROUGH THE QUERY: lunchtime on a school day, once the noon totals hold
+  // today, PBIS is divided by the tab's count -- today included.
+  const now = laAt("2026-10-07", "12:45");
+  Q.setNow(now);
+  try {
+    const data = westbrook();
+    const totals = new Date(laAt("2026-10-07", "12:00")).toISOString();
+    for (const a of data.attendance) a.syncedAt = totals;
+    const table = tableAt("2026-10-07", "12:30");
+    const pbis = await as("pbis", { ...data, days: table }, Q, { schoolDays: 3, withheldOk: true });
+    const tab = await tabCount(table, totals, now);
+    check("through the query: at 12:45 with the noon totals in, PBIS is divided by the tab's own count, today included",
+      tab === CAL.filter((d) => d <= "2026-10-07").length && pbis.schoolDays === tab, `${pbis.schoolDays} vs ${tab}`);
+  } finally { Q.setNow(NOW); }
+}
+
+console.log("\nA ROW DOES NOT FLIP ON A SMALL STEP (review, 2026-10-11)\n");
+
+/**
+ * A READER WHO KEEPS TWO ANSWERS: every way of adding, taking away or leaving
+ * out the race figures of both (each one's whole school and race rows), over
+ * the students of either. The smallest pool of 1 to 9 that holds a student
+ * present in BOTH answers, or null. A pool of only students who came or went
+ * between the two is what any two live counts show, and is not this leak.
+ */
+function smallestPoolAcross(first, second) {
+  const answers = [first, second];
+  const measured = (d) => new Set(d.attendance.map((a) => String(a.studentNumber)));
+  const has = answers.map(({ data }) => {
+    const m = measured(data);
+    return new Set(data.restricted.map((s) => String(s.studentNumber)).filter((n) => m.has(n)));
+  });
+  const record = new Map();
+  for (const { data } of answers) for (const s of data.restricted) record.set(String(s.studentNumber), s);
+  const figures = [];
+  answers.forEach(({ res }, k) => {
+    figures.push({ k, group: null });
+    for (const r of res.rows.filter((x) => x.axis === "race")) figures.push({ k, group: r.group });
+  });
+  const cells = new Map();
+  for (const [n, s] of record) {
+    const sig = figures.map((f) => (has[f.k].has(n) && (f.group === null || Q.reportedCategories(s).categories.includes(f.group)) ? 1 : 0));
+    const stable = has[0].has(n) && has[1].has(n);
+    const key = sig.join("") + (stable ? "s" : "");
+    const c = cells.get(key) || { v: sig, n: 0, stable };
+    c.n++;
+    cells.set(key, c);
+  }
+  let best = null;
+  const coef = new Array(figures.length).fill(0);
+  for (let t = 1; t < 3 ** figures.length; t++) {
+    let x = t;
+    for (let j = 0; j < figures.length; j++) { coef[j] = (x % 3) - 1; x = Math.floor(x / 3); }
+    let pool = 0, stable = false;
+    for (const c of cells.values()) {
+      let sum = 0;
+      for (let j = 0; j < coef.length; j++) sum += coef[j] * c.v[j];
+      if (sum !== 0) { pool += c.n; stable = stable || c.stable; }
+    }
+    if (pool > 0 && pool < 10 && stable && (!best || pool < best.pool)) {
+      best = { pool, using: figures.map((f, j) => coef[j] ? (coef[j] > 0 ? "+" : "-") + "day" + (f.k + 1) + ":" + (f.group || "Every student") : "").filter(Boolean).join(" ") };
+    }
+  }
+  return best;
+}
+
+/** Westbrook a copy later: 5 students enrol who are neither Hispanic nor Black. */
+const westbrookPlus5 = () => merge(westbrook(), cohort("new", 5, { fedEthnicity: "0", raceCodes: ["201"], elaStatus: "EO", chronic: 3 }));
+
+{
+  // WITHHELD, THEN SHOWN: the review's case. Day 1 withholds Black (5 in no
+  // shown race row); day 2 has 10 there. Asking for 10, day 2 showed Black and
+  // day 1's whole school minus Hispanic minus day 2's Black was day 1's 5.
+  const d1 = { data: westbrook(), res: await as("pbis", westbrook()) };
+  const d2 = { data: westbrookPlus5(), res: await as("pbis", westbrookPlus5()) };
+  check("five new students do not flip the Black row: PBIS is sent Hispanic only, both copies",
+    groupsOf(d1.res, "race").join() === RACE_H && groupsOf(d2.res, "race").join() === RACE_H,
+    groupsOf(d1.res, "race").join(",") + " / " + groupsOf(d2.res, "race").join(","));
+  check("...so nothing in the two answers together counts 1 to 9 students who were there for both",
+    smallestPoolAcross(d1, d2) === null, JSON.stringify(smallestPoolAcross(d1, d2)));
+  check("...and the floor it asks for is published as 20, ten above the display floor",
+    Q.STEADY_FLOOR === 20 && Q.SMALL_GROUP === 10);
+}
+{
+  // SHOWN, THEN WITHHELD: 20 in no race row (no race code on file) puts Black
+  // on screen; one of them leaves and it goes. What the two answers give back
+  // is the other 19.
+  const others = (n) => cohort("o", n, { fedEthnicity: "0", elaStatus: "EO", chronic: Math.min(n, 8) });
+  const base = () => build(["h", 300, { ...HISP, elaStatus: "EO", chronic: 150 }],
+    ["b", 47, { fedEthnicity: "0", raceCodes: ["600"], elaStatus: "EO", chronic: 25 }]);
+  const day1 = merge(base(), others(20));
+  const day2 = merge(base(), others(19));
+  const d1 = { data: day1, res: await as("pbis", day1) };
+  const d2 = { data: day2, res: await as("pbis", day2) };
+  check("a pool of 20 shows Black, and 19 withholds it",
+    groupsOf(d1.res, "race").join() === RACE_H + "," + RACE_B && groupsOf(d2.res, "race").join() === RACE_H);
+  check("...and the two answers together give back 19 students, never fewer than 10 who were there for both",
+    smallestPoolAcross(d1, d2) === null, JSON.stringify(smallestPoolAcross(d1, d2)));
+}
+{
+  // A GROUP OF 10 TO 19 IS ITSELF THAT FLIP: it appears the copy it reaches
+  // 10, and the copy before, it was part of a pool. So PBIS is sent groups of
+  // 20 or more; admins see it at 10.
+  const data = build(
+    ["e", 15, { ...HISP, elaStatus: "EL", chronic: 7 }],
+    ["o", 55, { ...HISP, elaStatus: "EO", chronic: 20 }],
+    ["r", 30, { ...HISP, elaStatus: "RFEP", chronic: 9 }],
+  );
+  const admin = await as("admin", data);
+  const pbis = await as("pbis", data);
+  check("a 15-student group: admins see it, PBIS is told one is withheld under its type",
+    groupsOf(admin, "el").includes("Current English Learner") && !groupsOf(pbis, "el").includes("Current English Learner")
+    && heldOf(pbis).some((x) => x.axis === "el") && heldOf(pbis).some((x) => x.axis === "ela"),
+    JSON.stringify(heldOf(pbis).map((x) => x.axis + ":" + x.groups)));
+  check("...and every row PBIS does get is the admin's, to the byte",
+    pbis.rows.every((r) => JSON.stringify(admin.rows.find((a) => a.axis === r.axis && a.group === r.group)) === JSON.stringify(r)));
+}
+
+console.log("\nA STUDENT WITH NO ATTENDANCE YET IS IN NO FIGURE PBIS GETS (review, 2026-10-11)\n");
+{
+  // The review's case: one new enrolee, Hispanic and an English Learner, whose
+  // attendance row has not arrived. Attendance Watch names them on its "no
+  // attendance on file" line; enrolled minus measured in each row said which
+  // rows they were in.
+  const base = westbrook();
+  const data = merge(base, cohort("new", 1, { ...HISP, elaStatus: "EL", noAttendance: true }));
+  const pbis = await as("pbis", data);
+  const without = await as("pbis", base);
+  const split = [pbis.baseline, ...pbis.rows].filter((r) => r.enrolled !== r.withAttendance);
+  check("no row PBIS gets, and not the whole school, counts a student with no attendance on file",
+    split.length === 0, split.map((r) => `${r.group || "Every student"}: ${r.enrolled - r.withAttendance}`).join(", "));
+  check("...the student is in no figure at all: the answer is the one without them, to the byte",
+    JSON.stringify(pbis) === JSON.stringify(without));
+  const admin = await as("admin", data);
+  check("admins still see them, enrolled and not measured (608 and 607)",
+    admin.baseline.enrolled === 608 && admin.baseline.withAttendance === 607);
+}
+{
+  // TEN OR MORE ENROLLED, FEWER THAN TEN MEASURED: 13 Asian students, 4 with
+  // no attendance yet. Its chronic and severe counts describe 9 students.
+  const data = merge(westbrook(),
+    cohort("as", 8, { fedEthnicity: "0", raceCodes: ["201"], elaStatus: "EO", chronic: 3 }),
+    cohort("an", 4, { fedEthnicity: "0", raceCodes: ["201"], elaStatus: "EO", noAttendance: true }));
+  const admin = await as("admin", data);
+  const pbis = await as("pbis", data);
+  const asian = admin.rows.find((r) => r.group === "Asian");
+  check("13 enrolled and 9 measured: admins see the row; PBIS gets no row of 9 measured students",
+    asian && asian.enrolled === 13 && asian.withAttendance === 9 && !groupsOf(pbis, "race").includes("Asian")
+    && !/Asian/.test(JSON.stringify(pbis)), JSON.stringify(asian));
+}
+
+console.log("\nA TAB FROM BEFORE 10/11 IS TOLD, NOT MISLED (review, 2026-10-11)\n");
+{
+  const data = westbrook();
+  const old = await as("pbis", data, Q, { schoolDays: 28 });
+  check("a screen that does not say it shows withheld groups (every screen from before 10/11) is sent no row while one is withheld: words only, asking nobody to refresh",
+    old.allowed === true && old.notYet === true && old.reason === Q.WITHHELD_NEEDS_UPDATE && old.rows.length === 0
+    && old.baseline === null && !/refresh|reload/i.test(old.reason), JSON.stringify(old).slice(0, 200));
+  const plain = build(["e", 30, { ...HISP, elaStatus: "EL", chronic: 15 }],
+    ["o", 40, { ...HISP, elaStatus: "EO", chronic: 20 }], ["r", 30, { ...HISP, elaStatus: "RFEP", chronic: 9 }]);
+  const oldPlain = await as("pbis", plain, Q, { schoolDays: 28 });
+  const newPlain = await as("pbis", plain);
+  check("...an answer that withholds nothing still reaches it, the same as this build's",
+    newPlain.withheldGroups === 0 && JSON.stringify(oldPlain) === JSON.stringify(newPlain));
+  check("...and admins are never told it: their answer is the same with or without withheldOk",
+    JSON.stringify(await as("admin", data, Q, { schoolDays: 28 })) === JSON.stringify(await as("admin", data)));
+
+  // THE SCREEN OPEN TABS RUN TODAY (668e785, stamp 20261009b), against this server.
+  let oldSrc = null;
+  try {
+    oldSrc = execFileSync("git", ["show", "668e785:script.js"],
+      { cwd: fileURLToPath(new URL("./", import.meta.url)), stdio: ["ignore", "pipe", "ignore"], maxBuffer: 256 << 20 }).toString();
+  } catch { /* no git here */ }
+  if (oldSrc) {
+    const html = await drawGroups(oldSrc, old);
+    check("the 668e785 screen (stamp 20261009b), against this server: the server's words, no row and no heading",
+      html.includes(Q.WITHHELD_NEEDS_UPDATE) && !/By race and ethnicity/.test(html) && !/Hispanic/.test(html), html.slice(0, 300));
+    const control = await drawGroups(oldSrc, await as("pbis", data));
+    check("...the control: handed the withheld answer, that screen lists Hispanic alone under the 'smaller groups' note and never says a group is withheld",
+      /By race and ethnicity/.test(control) && /smaller groups are not listed/.test(control)
+      && !/not shown at your access level/.test(control) && !/African American/.test(control), control.slice(0, 300));
+  } else {
+    console.log("  SKIP  the 668e785 screen against this server (git or that commit not available here)");
+  }
+}
+
+/** This build's loader, lifted, against a fake server: what it sends and what it keeps. */
+async function loaderSends(src, replies) {
+  const sent = [];
+  const win = { WildcatAuth: { getSession: () => ({ idToken: "t" }),
+    convexQuery: async (name, args) => { sent.push({ name, args }); return replies.shift(); } } };
+  const make = new Function("window", `let _sgCache = null;
+    ${liftFn(src, "loadAttendanceSubgroups")}
+    return { load: loadAttendanceSubgroups, cache: () => _sgCache };`);
+  const app = make(win);
+  const kept = [];
+  for (let i = 0, n = replies.length; i < n; i++) { await app.load(false, 28); kept.push(app.cache()); }
+  return { sent, kept };
+}
+{
+  const { sent, kept } = await loaderSends(scriptSrc, [{ allowed: true, notYet: true, reason: "x", rows: [] }, { allowed: true, rows: [] }]);
+  check("this build's screen says it shows withheld groups (withheldOk) on every call",
+    sent.length === 2 && sent.every((c) => c.name === "attendanceSubgroups:chronicBySubgroup" && c.args.withheldOk === true
+      && c.args.schoolDays === 28), JSON.stringify(sent));
+  check("...and keeps no 'not yet' answer, so the next draw asks again by itself",
+    kept[0] === null && kept[1] && kept[1].forDays === 28);
 }
 
 console.log("\nTHE SCREEN\n");
@@ -866,21 +1316,15 @@ const breakQuery = (label, from, to) => loadQuery((body) => {
   // 6. Each type checked only on its own: a row comes back through another type.
   const broken = breakQuery("types alone",
     "    while (shown.length && exposesSmallPool(shown, everyone, work)) drop(settle(shown));", "");
-  const coupled = build(
-    ["o", 60, { ...HISP, elaStatus: "EO", chronic: 30 }],
-    ["r", 40, { ...HISP, elaStatus: "RFEP", chronic: 12 }],
-    ["e", 12, { ...HISP, elaStatus: "EL", chronic: 6 }],
-    ["t", 4, { ...HISP, elaStatus: "TBD", chronic: 2 }],
-  );
-  const res = await as("pbis", coupled, broken);
+  const res = await as("pbis", coupled(), broken);
   check("TEETH: checking each type alone lets Current English Learner hand back the withheld EL row",
-    smallestPool(coupled, res)?.pool === 4, JSON.stringify(smallestPool(coupled, res)));
+    smallestPool(coupled(), res)?.pool === 4, JSON.stringify(smallestPool(coupled(), res)));
 }
 {
   // 7. Largest first: IFEP stays and English Only goes.
   const broken = breakQuery("largest first",
     "  a.enrolled - b.enrolled || a.axis.localeCompare(b.axis)", "  b.enrolled - a.enrolled || a.axis.localeCompare(b.axis)");
-  const res = await as("pbis", elaPool(), broken);
+  const res = await as("pbis", elaWide(), broken);
   check("TEETH: withholding the largest row instead of the smallest is caught",
     groupsOf(res, "ela").join() !== "English Only,Reclassified fluent (RFEP),English Learner", groupsOf(res, "ela").join(","));
 }
@@ -898,7 +1342,7 @@ const breakQuery = (label, from, to) => loadQuery((body) => {
   check("TEETH: treating 'nobody left over' as a pool withholds English Learner yes/no, and is caught",
     groupsOf(res, "el").length < 2, groupsOf(res, "el").join(","));
   const twice = breakQuery("zero counted twice",
-    "    if (twice > 0 && twice < SMALL_GROUP) return true;", "    if (twice < SMALL_GROUP) return true;");
+    "    if (twice > 0 && twice < STEADY_FLOOR) return true;", "    if (twice < STEADY_FLOOR) return true;");
   const res2 = await as("pbis", data, twice);
   check("TEETH: ...and so does treating 'nobody in two rows' as a pool",
     groupsOf(res2, "el").length < 2, groupsOf(res2, "el").join(","));
@@ -920,8 +1364,8 @@ const breakQuery = (label, from, to) => loadQuery((body) => {
 {
   // 9. Multi-race no longer errs toward withholding.
   const broken = breakQuery("double counting",
-    "    if (twice > 0 && twice < SMALL_GROUP) return true;", "");
-  const res = await as("pbis", multiRace(), broken);
+    "    if (twice > 0 && twice < STEADY_FLOOR) return true;", "");
+  const res = await as("pbis", multiRaceWide(), broken);
   check("TEETH: without the double-counting rule PBIS gets both rows that share 5 students",
     groupsOf(res, "race").join() === [RACE_H, RACE_B, "White"].join(), groupsOf(res, "race").join(","));
 }
@@ -971,6 +1415,61 @@ const breakQuery = (label, from, to) => loadQuery((body) => {
   const allHeld = { ...pbis, rows: pbis.rows.filter((r) => r.axis !== "race") };
   check("TEETH: a screen that drops a fully withheld type's heading is caught",
     !/By race and ethnicity/.test(await drawGroups(noHead, allHeld)));
+}
+
+// ------------------------------------------- the review's teeth (2026-10-11)
+{
+  // 14. PBIS divided by what the tab sends again: the sweep reads students off.
+  const broken = breakQuery("tab's divisor", "      days = counted.days;\n", "");
+  const sw = await sweepReads(broken);
+  check("TEETH: a PBIS answer divided by what the tab sends lets the sweep read a student's groups",
+    sw.read > 0, JSON.stringify(sw));
+}
+{
+  // 15. The server's count drifts from the tab's.
+  const noToday = breakQuery("no today",
+    "  const days = before + estimated + (todayCounted ? 1 : 0);", "  const days = before + estimated;");
+  check("TEETH: a server count that leaves today out disagrees with the tab's",
+    (await agreement(noToday)).wrong.length > 0);
+  const noLate = breakQuery("no late copy", "    if (weekday(d) && !seen.has(d) && d >= first) estimated++;", "");
+  check("TEETH: ...and so does one that skips the weekdays a late copy has not seen",
+    (await agreement(noLate)).wrong.length > 0);
+}
+{
+  // 16. The residual test asks for 10 again: two copies give back day 1's 5.
+  const broken = breakQuery("floor of 10", "const STEADY_FLOOR = SMALL_GROUP + 10;", "const STEADY_FLOOR = SMALL_GROUP;");
+  const d1 = { data: westbrook(), res: await as("pbis", westbrook(), broken) };
+  const d2 = { data: westbrookPlus5(), res: await as("pbis", westbrookPlus5(), broken) };
+  const leak = smallestPoolAcross(d1, d2);
+  check("TEETH: asking for 10, five new students flip the Black row and the two copies give back day 1's 5",
+    leak && leak.pool === 5, JSON.stringify(leak));
+}
+{
+  // 17. PBIS counts students with no attendance again.
+  const broken = breakQuery("everyone counted",
+    "    const students = tested ? restricted.filter((r) => absentOf.has(String(r.studentNumber || \"\"))) : restricted;",
+    "    const students = restricted;");
+  const data = merge(westbrook(), cohort("new", 1, { ...HISP, elaStatus: "EL", noAttendance: true }));
+  const res = await as("pbis", data, broken);
+  check("TEETH: counted, the student with no attendance shows in Hispanic, Current English Learner and English Learner",
+    ["Hispanic or Latino", "Current English Learner", "English Learner"].every((g) => {
+      const r = res.rows.find((x) => x.group === g);
+      return r && r.enrolled - r.withAttendance === 1;
+    }));
+}
+{
+  // 18. A tab from before 10/11 handed the withheld answer.
+  const broken = breakQuery("old tab",
+    "    if (residual && residual.withheldGroups > 0 && withheldOk !== true) {", "    if (false) {");
+  const res = await as("pbis", westbrook(), broken, { schoolDays: 28 });
+  check("TEETH: a screen from before 10/11 handed the withheld answer is caught", res.rows.length > 0 && !res.notYet);
+  // 19. This build's screen stops saying withheldOk, or keeps a "not yet".
+  const noFlag = breakOnce(scriptSrc, "{ schoolDays: schoolDays, withheldOk: true }", "{ schoolDays: schoolDays }", "flag");
+  check("TEETH: a screen that does not send withheldOk is caught",
+    (await loaderSends(noFlag, [{ allowed: true, rows: [] }])).sent[0].args.withheldOk !== true);
+  const keeps = breakOnce(scriptSrc, "if (!(res && res.notYet)) _sgCache = ", "_sgCache = ", "notYet");
+  check("TEETH: a screen that keeps a 'not yet' answer is caught",
+    (await loaderSends(keeps, [{ allowed: true, notYet: true, rows: [] }])).kept[0] !== null);
 }
 
 console.log(`\n${pass} passed, ${fail} failed\n`);

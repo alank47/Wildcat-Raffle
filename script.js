@@ -37468,12 +37468,17 @@
                          reason: 'Student group data comes from the SIS, which needs a Microsoft sign-in.' };
             }
             try {
+                // withheldOk: THIS SCREEN SAYS UNDER EACH TYPE how many groups
+                // are withheld and why (2026-10-11). A screen that does not
+                // send it is told so in words instead of drawing a withheld
+                // group as one under ten.
                 const res = await auth.convexQuery('attendanceSubgroups:chronicBySubgroup',
-                    { schoolDays: schoolDays }, session.idToken);
+                    { schoolDays: schoolDays, withheldOk: true }, session.idToken);
                 // KEYED ON THE DENOMINATOR. Correcting the holiday count moves
                 // who is chronic, so a cache that ignored it would keep
-                // showing rates worked out from the old divisor.
-                _sgCache = { forDays: schoolDays, res: res };
+                // showing rates worked out from the old divisor. A "not yet"
+                // answer is never kept: the next draw asks again by itself.
+                if (!(res && res.notYet)) _sgCache = { forDays: schoolDays, res: res };
                 return res;
             } catch (e) {
                 const msg = (e && e.message) || String(e);

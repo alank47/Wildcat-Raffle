@@ -58,8 +58,10 @@ const SUBGROUP_ROLES = ["admin", "superadmin", "pbis"];
  * individual's race (docs/field-sourcing-approval.md, 2026-08-19), and
  * discipline already exempts them the same way (suppressSmallCells). Anyone
  * else the gate lets in -- today that is the PBIS team -- goes through
- * withholdResiduals. Listed this way round so a role added to SUBGROUP_ROLES
- * later is tested by default, not exempt by default.
+ * withholdResiduals, is divided by the server's own day count (THE DAY
+ * COUNT) and is counted over measured students only. Listed this way round
+ * so a role added to SUBGROUP_ROLES later is tested by default, not exempt
+ * by default.
  */
 const SEES_EVERY_GROUP = ["admin", "superadmin"];
 
@@ -139,16 +141,17 @@ type Cell = {
 //
 // SO THE QUESTION IS ASKED OF THE ANSWER AS A WHOLE: can any sum or difference
 // of the figures it holds -- rows and the whole school -- describe more than
-// zero and fewer than ten students? If so, the smallest row whose going closes
+// zero and fewer than ten students (twenty since the review: STEADY_FLOOR,
+// below)? If so, the smallest row whose going closes
 // it is withheld -- or, when no single row does, one whole group type for
 // that answer -- and the question is asked again.
 //
 //   1. Each group type on its own first (race, English Learner yes/no,
 //      classification): its residual -- students in none of its shown rows --
-//      must be 0 or 10+. MULTI-RACE STUDENTS ERR TOWARD WITHHOLDING: a
-//      non-Hispanic student with two race codes is in two race rows, so
-//      subtracting both takes them out twice. If 1 to 9 students sit in two
-//      or more shown rows of one type, that alone withholds a row.
+//      must be 0 or STEADY_FLOOR+. MULTI-RACE STUDENTS ERR TOWARD
+//      WITHHOLDING: a non-Hispanic student with two race codes is in two race
+//      rows, so subtracting both takes them out twice. If 1 to 19 students
+//      sit in two or more shown rows of one type, that alone withholds a row.
 //   2. Then every type together. The English Learner yes/no rows are the
 //      classification's EL row and everyone else, so a row withheld from one
 //      type can come straight back through another. Two types can also nearly
@@ -157,14 +160,46 @@ type Cell = {
 // HOW "ANY SUM OR DIFFERENCE" IS CHECKED, without trying them all. Put the
 // students into cells: everyone in exactly the same shown rows is one cell. A
 // sum or difference of rows can only ever count whole cells. A combination
-// that counts nothing in any cell of ten or more students, and something in
-// the small ones, exists exactly when the shown rows -- read only across the
-// big cells -- are linearly dependent in a way they are not across every
-// cell. Matrix rank answers that exactly, on whole numbers (rankOf). Only the
-// small cells are ever searched, and only in sets of fewer than ten students.
+// that counts nothing in any cell of STEADY_FLOOR or more students, and
+// something in the small ones, exists exactly when the shown rows -- read
+// only across the big cells -- are linearly dependent in a way they are not
+// across every cell. Matrix rank answers that exactly, on whole numbers
+// (rankOf). Only the small cells are ever searched, and only in sets of fewer
+// than STEADY_FLOOR students.
 //
 // ADMINS ARE NOT PUT THROUGH THIS (SEES_EVERY_GROUP). For them the answer is
 // byte-for-byte what it was before this test existed.
+//
+// THE TEST ASKS FOR 20, NOT 10 (review, 2026-10-11): STEADY_FLOOR. It runs on
+// one answer at a time and remembers nothing, and the roster moves between
+// copies. Asking for 10 made a row flip the moment a pool crossed 10, and two
+// answers either side of the flip subtract: Westbrook's 5 plus 5 new students
+// put the Black row back on the next copy, and the first answer's whole
+// school minus Hispanic, minus the second answer's Black row, was the first
+// answer's 5 again, chronic and severe to the student. With 20, a row only
+// changes sides where a pool crosses 20, so the pool the other answer hands
+// back holds 10 or more unless 10 or more students moved in one step. Rows of
+// 10 to 19 are withheld from these readers the same way, because a group
+// crossing the display floor of 10 is the same flip ("Assessment pending"
+// rises with new enrolees and falls as they are assessed).
+//
+// CHOSEN OVER the two other ways the review offered: keeping each year's
+// withheld rows and only ever adding to them (state a query cannot write,
+// and it does nothing for a row that is shown first and withheld later), and
+// giving these readers race only as Hispanic / not Hispanic (stable, but only
+// for race). WHAT IT CANNOT CLOSE, said so it is not mistaken for closed: live
+// counts move, and a reader who keeps two answers sees each change between
+// them in the rows it belongs to. One new enrolee between two copies shows in
+// the rows that student is in. Only a frozen roster would stop that, and the
+// screen would then describe last month's school.
+
+/**
+ * The residual test's floor, for readers outside SEES_EVERY_GROUP: no sum or
+ * difference of what they hold may describe 1 to 19 students. Ten above the
+ * display floor so that a step of fewer than ten students cannot flip a row
+ * and hand back a pool under SMALL_GROUP (see above).
+ */
+const STEADY_FLOOR = SMALL_GROUP + 10;
 
 /** Anything with members, so the test can run on rows of any kind. */
 type Pooled = { axis: string; group: string; enrolled: number; members: number[] };
@@ -215,14 +250,14 @@ export function rankOf(m: number[][], cols: number[], work?: { left: number }): 
 
 /**
  * Could someone holding these rows and the whole-school total work out a
- * figure for more than zero and fewer than SMALL_GROUP students?
+ * figure for more than zero and fewer than STEADY_FLOOR students?
  *
  * `everyone` is the number of students in the whole-school figure; members
  * are positions 0..everyone-1.
  */
 export function exposesSmallPool(rows: Pooled[], everyone: number, work?: { left: number }): boolean {
   // 1. DOUBLE COUNTING INSIDE ONE TYPE -- multi-race students -- errs toward
-  // withholding: 1 to 9 students in two or more shown rows of one type is a
+  // withholding: 1 to 19 students in two or more shown rows of one type is a
   // pool, whatever the rank test below would say about it.
   const timesIn = new Map<string, Map<number, number>>();
   for (const r of rows) {
@@ -233,7 +268,7 @@ export function exposesSmallPool(rows: Pooled[], everyone: number, work?: { left
   for (const seen of timesIn.values()) {
     let twice = 0;
     for (const n of seen.values()) if (n >= 2) twice++;
-    if (twice > 0 && twice < SMALL_GROUP) return true;
+    if (twice > 0 && twice < STEADY_FLOOR) return true;
   }
 
   // 2. THE CELLS: students in exactly the same shown rows.
@@ -263,29 +298,29 @@ export function exposesSmallPool(rows: Pooled[], everyone: number, work?: { left
 
   const all = cellList.map((_, k) => k);
   const full = rankOf(m, all, work);
-  const big = all.filter((k) => cellList[k].size >= SMALL_GROUP);
+  const big = all.filter((k) => cellList[k].size >= STEADY_FLOOR);
   const bigRank = rankOf(m, big, work);
   // Every combination that cancels on all the big cells cancels everywhere:
-  // whatever the reader works out, it includes ten or more students.
+  // whatever the reader works out, it includes STEADY_FLOOR or more students.
   if (bigRank === full) return false;
 
   // Small cells some such combination can rest on. The others never matter.
-  const live = all.filter((k) => cellList[k].size < SMALL_GROUP && rankOf(m, [...big, k], work) > bigRank);
+  const live = all.filter((k) => cellList[k].size < STEADY_FLOOR && rankOf(m, [...big, k], work) > bigRank);
 
-  // Every largest set of live cells under SMALL_GROUP students. A combination
+  // Every largest set of live cells under STEADY_FLOOR students. A combination
   // that counts nothing outside the set exists exactly when dropping the set's
   // columns loses rank. A smaller set inside it would lose rank too, so only
   // the largest sets need asking.
   const pick: number[] = [];
   const search = (from: number, used: number): boolean => {
     if (from === live.length) {
-      const fits = live.some((k) => !pick.includes(k) && used + cellList[k].size < SMALL_GROUP);
+      const fits = live.some((k) => !pick.includes(k) && used + cellList[k].size < STEADY_FLOOR);
       if (fits || !pick.length) return false;
       const rest = all.filter((k) => !pick.includes(k));
       return rankOf(m, rest, work) < full;
     }
     const k = live[from];
-    if (used + cellList[k].size < SMALL_GROUP) {
+    if (used + cellList[k].size < STEADY_FLOOR) {
       pick.push(k);
       const hit = search(from + 1, used + cellList[k].size);
       pick.pop();
@@ -368,23 +403,157 @@ function withheldReason(groups: number, ranOut: boolean): string {
     return `${lead}: the check that no figure here can be narrowed to fewer than ${SMALL_GROUP} students `
       + `could not finish, so nothing is shown that it did not clear. Administrators see ${one ? "it" : "them"}.`;
   }
-  return `${lead}: added to or taken away from the figures shown here, ${one ? "its" : "their"} figures would give `
-    + `the figures for fewer than ${SMALL_GROUP} students, which can identify them. `
-    + `Administrators see ${one ? "it" : "them"}.`;
+  return `${lead}: added to or taken away from the figures shown here, now or once a few students join or leave, `
+    + `${one ? "its" : "their"} figures could give the figures for fewer than ${SMALL_GROUP} students, which can `
+    + `identify them. Administrators see ${one ? "it" : "them"}.`;
+}
+
+/**
+ * What a tab that has not said it can show a withheld group (no `withheldOk`)
+ * is told when the answer withholds one. That is every tab still running a
+ * screen from before 10/11: it draws only the rows it is sent, says a missing
+ * group is one "smaller" than 10, and drops a type's heading when every row
+ * of it is withheld -- so the 47-student Black row would read as a group under
+ * 10. Nobody is asked to do anything: the tab updates itself.
+ */
+export const WITHHELD_NEEDS_UPDATE = "Some student groups are now held back at your access level, and this screen "
+  + "cannot yet say which types or why. It shows them once the Hub updates itself.";
+
+// ===========================================================================
+// THE DAY COUNT, WORKED OUT HERE FOR EVERY READER THE RESIDUAL TEST RUNS ON
+// (review, 2026-10-11)
+// ===========================================================================
+//
+// THE LEAK IT CLOSES. Who is chronic depends on the divisor, and the divisor
+// was whatever the caller sent. Asked at 10a-1 days and again at 10a+9, every
+// row's chronic count moved by exactly its students with `a` absences; PBIS
+// holds each student's absences by name (Attendance Watch), so a student
+// whose count was unique in the school had their ethnicity and English
+// Learner status read straight off the rows. No residual test can see that:
+// it is the same rows, divided twice.
+//
+// SO A TESTED READER'S DIVISOR IS THE SERVER'S, whatever the tab sends, and
+// the answer's `schoolDays` says which count was used. Admins keep the
+// argument, as before.
+//
+// THE SAME COUNT AS EVERY TAB'S, so the screens still agree on who is
+// chronic: WildcatRoster.schoolCalendar (wildcat-roster.js), ported for the
+// one figure it returns -- the days before today with a row, the weekdays a
+// late copy has not vouched for, and today once the year totals hold it --
+// read from the same two tables (psAbsenceDayTotals as dailyAbsenceSeries
+// sends it, and psAttendance's newest stamp, which is schoolAttendance's
+// lastSyncedAt) at the server's own clock in Los Angeles. A test runs both
+// on the same tables and clocks, and they must agree. Convex may hand back an
+// answer worked out a little earlier until one of those tables is written;
+// the count does not move at midnight (yesterday leaves "today" and joins the
+// days before it), and today joins with the totals' noon copy, which is a
+// write, so such an answer still holds the right count.
+
+/** MUST MATCH CALENDAR_SEEN_HOUR in wildcat-roster.js: a copy stamped at or after this hour (Los Angeles) has seen that day. */
+const CALENDAR_SEEN_HOUR = 10;
+/** MUST MATCH dailyAbsenceSeries' CAP (attendanceList.ts): past it the count is unknown, never a slice. */
+const DAY_TABLE_CAP = 400;
+
+/** The Los Angeles calendar day and hour of an instant, or null. As wildcat-roster.js laDayHour. */
+function laDayHour(ms: number): { day: string; hour: number } | null {
+  if (!Number.isFinite(ms)) return null;
+  try {
+    const parts = new Intl.DateTimeFormat("en-US", {
+      timeZone: "America/Los_Angeles", year: "numeric", month: "2-digit", day: "2-digit",
+      hour: "2-digit", hourCycle: "h23",
+    }).formatToParts(new Date(ms));
+    const get = (t: string) => parts.find((p) => p.type === t)?.value ?? "";
+    const hour = Number(get("hour"));
+    return { day: get("year") + "-" + get("month") + "-" + get("day"), hour: hour === 24 ? 0 : hour };
+  } catch {
+    return null;
+  }
+}
+
+/** "YYYY-MM-DD" when it is a real calendar day, else null. Calendar days are UTC, never instants. */
+function realDay(iso: string): string | null {
+  const s = String(iso || "").slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return null;
+  const d = new Date(s + "T00:00:00Z");
+  return !isNaN(d.getTime()) && d.toISOString().slice(0, 10) === s ? s : null;
+}
+const shiftDay = (iso: string, n: number) =>
+  new Date(Date.parse(iso + "T00:00:00Z") + n * 86400000).toISOString().slice(0, 10);
+const weekday = (iso: string) => { const w = new Date(iso + "T00:00:00Z").getUTCDay(); return w !== 0 && w !== 6; };
+
+/**
+ * School days so far, as WildcatRoster.schoolCalendar counts them for a tab
+ * whose clock reads `nowMs`. `raw` is psAbsenceDayTotals as read (first row
+ * first); `totalsAt` is the newest psAttendance stamp. Null days, with the
+ * reason, wherever the tab's count would be unknown.
+ */
+export function schoolDaysSoFar(raw: Array<{ date?: unknown; syncedAt?: unknown }>, totalsAt: string | null,
+  nowMs: number): { days: number | null; reason: string } {
+  const unknown = (reason: string) => ({ days: null, reason });
+  const now = laDayHour(nowMs);
+  if (!now) return unknown("Today's date could not be read.");
+  const today = now.day;
+  if (raw.length > DAY_TABLE_CAP) {
+    return unknown("The school-day table is longer than this reads, so it cannot be counted. Tell an administrator.");
+  }
+  // What dailyAbsenceSeries sends a tab asking with today's date.
+  const usable = raw.map((r) => String(r.date || "").slice(0, 10)).filter((d) => d.length === 10 && d <= today).sort();
+  const seen = new Set<string>();
+  for (const d of usable) { const x = realDay(d); if (x) seen.add(x); }
+  const dates = [...seen].sort();
+  const onFile = usable.length;
+  const la = laDayHour(Date.parse(raw.length ? String(raw[0].syncedAt ?? "") : ""));
+  if (!onFile && !la) {
+    return unknown("No school days are on file right now: the twice-daily copy from PowerSchool is part-way "
+      + "through, or school has not started.");
+  }
+  if (!la) return unknown("The school days carry no copy time, so nothing can vouch for them.");
+  const yesterday = shiftDay(today, -1);
+  let confirmed = la.hour >= CALENDAR_SEEN_HOUR ? la.day : shiftDay(la.day, -1);
+  if (confirmed > yesterday) confirmed = yesterday;
+  if (!onFile) return { days: 0, reason: "" };
+  const first = realDay(usable[0]) || (dates.length >= onFile ? dates[0] : null);
+  if (!first) return unknown("The first school day could not be read.");
+
+  const before = Math.max(0, onFile - dates.filter((d) => d >= today).length);
+  let estimated = 0;
+  for (let d = shiftDay(confirmed, 1), n = 0; d <= yesterday && n < 400; d = shiftDay(d, 1), n++) {
+    if (weekday(d) && !seen.has(d) && d >= first) estimated++;
+  }
+  const totals = laDayHour(Date.parse(String(totalsAt || "")));
+  const rebuildSawToday = la.day === today && la.hour >= CALENDAR_SEEN_HOUR;
+  const todayCounted = !!totals && totals.day === today && totals.hour >= CALENDAR_SEEN_HOUR && today >= first
+    && (seen.has(today) || (!rebuildSawToday && weekday(today)));
+  const days = before + estimated + (todayCounted ? 1 : 0);
+  const countedTo = todayCounted ? today : yesterday;
+  let weekdays = 0;
+  for (let d = first, n = 0; d <= countedTo && n < 800; d = shiftDay(d, 1), n++) if (weekday(d)) weekdays++;
+  if (weekdays >= 10 && days < weekdays * 0.5) {
+    return unknown(`Far fewer school days are on file (${days}) than weekdays since the first one (${weekdays}), `
+      + "so the count cannot be trusted. Tell an administrator.");
+  }
+  return { days, reason: "" };
 }
 
 export const chronicBySubgroup = query({
   args: {
     /**
-     * Days in session, from the same two fields Attendance Watch uses.
+     * Days in session: the tab's count, the one every attendance tab divides by.
      *
-     * AN ARGUMENT, NOT A SERVER CONSTANT, so the two screens cannot disagree
-     * about who is chronic. The browser owns that number because a person
-     * corrects it for holidays there.
+     * AN ADMIN'S ANSWER DIVIDES BY IT, as it always has. Everyone the
+     * residual test runs on is divided by the server's own count instead
+     * (THE DAY COUNT, above): a divisor the reader picks is a threshold the
+     * reader moves.
      */
     schoolDays: v.number(),
+    /**
+     * Sent by the screen from 2026-10-11 on, which says under each type how
+     * many groups are withheld and why. A screen from before never sends it,
+     * and is told in words instead (WITHHELD_NEEDS_UPDATE).
+     */
+    withheldOk: v.optional(v.boolean()),
   },
-  handler: async (ctx, { schoolDays }) => {
+  handler: async (ctx, { schoolDays, withheldOk }) => {
     const staff = await requireStaff(ctx);
     // THE ROLES ONLY, NOT the per-person Attendance Watch grant (review
     // finding, 2026-09-30). This breakdown is by federal race/ethnicity
@@ -401,7 +570,33 @@ export const chronicBySubgroup = query({
       };
     }
 
-    const days = Math.max(0, Math.round(Number(schoolDays) || 0));
+    // EVERYONE OUTSIDE SEES_EVERY_GROUP -- today the PBIS team -- gets the
+    // residual test, the server's day count, and measured students only.
+    const tested = !SEES_EVERY_GROUP.includes(staff.role);
+
+    const att = await ctx.db.query("psAttendance").take(2000);
+    let days = Math.max(0, Math.round(Number(schoolDays) || 0));
+    if (tested) {
+      // THE SERVER'S COUNT, never the tab's (THE DAY COUNT, above). The
+      // totals' stamp is schoolAttendance's lastSyncedAt, worked out the
+      // same way.
+      let totalsAt: string | null = null;
+      for (const a of att) {
+        const s = typeof a.syncedAt === "string" ? a.syncedAt : null;
+        if (s && (!totalsAt || s > totalsAt)) totalsAt = s;
+      }
+      const counted = schoolDaysSoFar(await ctx.db.query("psAbsenceDayTotals").take(DAY_TABLE_CAP + 1), totalsAt,
+        Date.now());
+      if (counted.days === null) {
+        return {
+          allowed: true, notYet: true,
+          reason: "Student groups need the number of school days so far, and it cannot be counted right now. "
+            + counted.reason,
+          rows: [], baseline: null, unavailable: [], suppressedGroups: 0,
+        };
+      }
+      days = counted.days;
+    }
     if (!days) {
       return {
         allowed: true, notYet: true,
@@ -421,13 +616,25 @@ export const chronicBySubgroup = query({
       };
     }
 
-    const att = await ctx.db.query("psAttendance").take(2000);
     const absentOf = new Map<string, number>();
     for (const a of att) {
       const n = String(a.studentNumber || "");
       const d = Number(a.daysAbsentYtd);
       if (n && Number.isFinite(d)) absentOf.set(n, d);
     }
+
+    // THE STUDENTS THE ANSWER COUNTS. For a tested reader, only those with an
+    // attendance row (review, 2026-10-11). Every row carries two counts,
+    // enrolled and measured, so their difference is a second figure per row
+    // that the residual test never saw: with 1 to 9 students not yet measured
+    // in the school, each row said how many of them it held -- and Attendance
+    // Watch names them on its "no attendance on file" line, so a new
+    // enrolee's ethnicity and English Learner status were read off the rows.
+    // Left out, they are in no figure at all, and the floor and the residual
+    // test are applied to measured students, which is what every rate on
+    // this screen describes anyway. Nothing drawn changes: the screen shows
+    // measured students and never `enrolled`. Admins count everyone, as before.
+    const students = tested ? restricted.filter((r) => absentOf.has(String(r.studentNumber || ""))) : restricted;
 
     const cells = new Map<string, Cell>();
     const bump = (axis: string, group: string, absent: number | undefined, who: number) => {
@@ -449,7 +656,7 @@ export const chronicBySubgroup = query({
     let unknownEthnicity = 0, unclassified = 0;
     const unmappedCodes = new Set<string>();
 
-    for (const [who, r] of restricted.entries()) {
+    for (const [who, r] of students.entries()) {
       const absent = absentOf.get(String(r.studentNumber || ""));
 
       // The California rule, reused rather than restated: Hispanic ethnicity
@@ -470,7 +677,7 @@ export const chronicBySubgroup = query({
 
     // The baseline every row is read against.
     let allEnrolled = 0, allMeasured = 0, allChronic = 0, allSevere = 0;
-    for (const r of restricted) {
+    for (const r of students) {
       allEnrolled++;
       const absent = absentOf.get(String(r.studentNumber || ""));
       if (absent === undefined) continue;
@@ -493,9 +700,20 @@ export const chronicBySubgroup = query({
 
     // THE RESIDUAL TEST, for everyone outside SEES_EVERY_GROUP (2026-10-11).
     // A withheld row is a row of ten or more that subtraction would turn
-    // into a figure for fewer than ten; only how many, per type, leaves here.
-    const residual = SEES_EVERY_GROUP.includes(staff.role) ? null : withholdResiduals(kept, restricted.length);
+    // into a figure for fewer than ten, or could once a few students join or
+    // leave (STEADY_FLOOR); only how many, per type, leaves here.
+    const residual = tested ? withholdResiduals(kept, students.length) : null;
     const shownCells = residual ? residual.shown : kept;
+
+    // A TAB FROM BEFORE 10/11 is told in words when a group is withheld
+    // (WITHHELD_NEEDS_UPDATE): it would draw the withheld row as a group under
+    // ten. An answer that withholds nothing still reaches it as it always did.
+    if (residual && residual.withheldGroups > 0 && withheldOk !== true) {
+      return {
+        allowed: true, notYet: true, reason: WITHHELD_NEEDS_UPDATE,
+        rows: [], baseline: null, unavailable: [], suppressedGroups: 0,
+      };
+    }
 
     const rows = shownCells.map((c) => {
       const pct = c.withAttendance ? round1((c.chronic / c.withAttendance) * 100) : null;
@@ -543,8 +761,8 @@ export const chronicBySubgroup = query({
       lastSyncedAt: restricted.reduce(
         (a: string | null, r) => (!a || String(r.syncedAt) > a ? String(r.syncedAt) : a), null),
       // LAST, AND ONLY FOR READERS THE TEST RAN ON, so an admin's answer is
-      // the same bytes as before and a tab opened before 10/11 -- which reads
-      // none of this -- still draws every row it is sent.
+      // the same bytes as before. A tab opened before 10/11 reads none of
+      // this; it only ever gets here when nothing is withheld (see above).
       ...(residual ? { withheldGroups: residual.withheldGroups, withheld: residual.withheld } : {}),
     };
   },
