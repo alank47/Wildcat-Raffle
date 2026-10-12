@@ -44,9 +44,9 @@ import {
  * (docs/field-sourcing-approval.md, 2026-10-11 entry). To rebuild served
  * weeks on purpose, delete the month's group rows first.
  */
-function laToday(): string {
+function laToday(at: Date = new Date()): string {
   return new Intl.DateTimeFormat("en-CA", { timeZone: "America/Los_Angeles", year: "numeric", month: "2-digit", day: "2-digit" })
-    .format(new Date());
+    .format(at);
 }
 function dayBefore(iso: string): string {
   return new Date(Date.parse(iso + "T00:00:00Z") - 86400000).toISOString().slice(0, 10);
@@ -230,7 +230,14 @@ export const buildMonth = internalAction({
     const range = await yearRange(host, tok, schoolid, yearid);
     if (!range) return { ok: false, reason: `No year term for yearid ${yearid}.` };
 
-    const yesterday = dayBefore(laToday());
+    // ONE INSTANT for the last day read and the rows' stamp (review,
+    // 2026-10-12): the day before the stamp's day in Los Angeles is taken as
+    // the last day a build read -- by the group card for how far Trends
+    // reached, and by keptDates for what stored rows could hold. Stamped
+    // after the reads instead, a build started at 23:58 on a Friday read
+    // through Thursday but said Friday, and froze its week without Friday.
+    const startedAt = new Date();
+    const yesterday = dayBefore(laToday(startedAt));
     // A FINISHED YEAR IS LEFT ALONE by the nightly run. Once PowerSchool's
     // end-of-year run promotes everyone, a rebuild of June would file the
     // outgoing 8th graders under 9-12 with grades marked as recorded. A few
@@ -313,7 +320,7 @@ export const buildMonth = internalAction({
       catch (e) { groups = { built: [], error: "The group rows could not be built: " + why(e) }; }
       return { ...summary, dryRun: true, sample: built.days.slice(0, 4), months: built.months, groups };
     }
-    const syncedAt = new Date().toISOString();
+    const syncedAt = startedAt.toISOString();
     // THE BAND ROWS FIRST, exactly as before the group charts existed -- and
     // not at all on a groupsOnly build.
     if (!groupsOnly) {

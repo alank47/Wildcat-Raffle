@@ -876,9 +876,10 @@ function powerschool(fx, opts = {}) {
   return { readTable, calls };
 }
 const internalRef = new Proxy({}, { get: (_, mod) => new Proxy({}, { get: (_, fn) => `${String(mod)}.${String(fn)}` }) });
-function loadAction(ps, src = SRC.action, Mx = M) {
-  const prelude = `const Date = class extends globalThis.Date { constructor(...a) { super(...(a.length ? a : [${NOW}])); } static now() { return ${NOW}; } };\n`;
+function loadAction(ps, src = SRC.action, Mx = M, clock = () => NOW) {
+  const prelude = `const __clock = require("__clock"); const Date = class extends globalThis.Date { constructor(...a) { super(...(a.length ? a : [__clock()])); } static now() { return __clock(); } };\n`;
   return load(src, {
+    "__clock": clock,
     "./_generated/server": { internalAction: (d) => d },
     "./_generated/api": { internal: internalRef },
     "convex/values": { v: vStub },
@@ -887,7 +888,7 @@ function loadAction(ps, src = SRC.action, Mx = M) {
   }, prelude);
 }
 const ENV = { PS_HOST: "ps.example", PS_CLIENT_ID: "id", PS_CLIENT_SECRET: "secret", PS_SCHOOL_ID: "100", PS_YEAR_ID: "36" };
-async function runAction(name, args, { ps = powerschool(FX), queries = {}, src, Mx } = {}) {
+async function runAction(name, args, { ps = powerschool(FX), queries = {}, src, Mx, clock } = {}) {
   const saved = {};
   for (const k of Object.keys(ENV)) { saved[k] = process.env[k]; process.env[k] = ENV[k]; }
   const mutations = [], scheduled = [];
@@ -897,7 +898,7 @@ async function runAction(name, args, { ps = powerschool(FX), queries = {}, src, 
     scheduler: { runAfter: async (ms, ref, a) => { scheduled.push({ ms, ref, args: a }); } },
   };
   try {
-    const A = loadAction(ps, src, Mx);
+    const A = loadAction(ps, src, Mx, clock);
     const res = await A[name].handler(ctx, args);
     return { res, mutations, scheduled, calls: ps.calls };
   } finally {
@@ -1088,13 +1089,20 @@ suite.monthEdge = async (Mx) => {
   // September's last build ran on the morning of 9/30 (through 9/29) and its
   // first-week rebuilds all failed; October is built through 10/10. The
   // week of 9/28 must wait: a later September build would add 9/30 to it.
-  const t = world();
-  t.attendanceRunDays = t.attendanceRunDays.filter((r) => r.date !== "2026-09-30")
-    .map((r) => (r.date.startsWith("2026-09") ? { ...r, syncedAt: "2026-09-30T10:15:00.000Z" } : r));
-  t.attendanceRunGroupDays = t.attendanceRunGroupDays.filter((r) => r.date !== "2026-09-30")
-    .map((r) => (r.date.startsWith("2026-09") ? { ...r, syncedAt: "2026-09-30T10:15:00.000Z" } : r));
-  const res = (await ask(Mx, ADMIN, { group: "gender:F", periods: [[THIS_WEEKS[5]], [THIS_WEEKS[6]]] }, t)).res;
-  return res.periods[0].withheld === null && res.periods[1].withheld === "open";
+  // `groupsAt`: when September's GROUP rows were built -- the same morning,
+  // or by a groups-only mend after the week was over, with Trends' own
+  // September build still stopping short of it (only Trends' coverage then
+  // says the week can still gain a day).
+  const edge = async (groupsAt) => {
+    const t = world();
+    t.attendanceRunDays = t.attendanceRunDays.filter((r) => r.date !== "2026-09-30")
+      .map((r) => (r.date.startsWith("2026-09") ? { ...r, syncedAt: "2026-09-30T10:15:00.000Z" } : r));
+    t.attendanceRunGroupDays = t.attendanceRunGroupDays.filter((r) => r.date !== "2026-09-30")
+      .map((r) => (r.date.startsWith("2026-09") ? { ...r, syncedAt: groupsAt } : r));
+    const res = (await ask(Mx, ADMIN, { group: "gender:F", periods: [[THIS_WEEKS[5]], [THIS_WEEKS[6]]] }, t)).res;
+    return res.periods[0].withheld === null && res.periods[1].withheld === "open";
+  };
+  return await edge("2026-09-30T10:15:00.000Z") && await edge("2026-10-03T10:15:00.000Z");
 };
 {
   const m = await suite.mornings(M);
@@ -1135,20 +1143,29 @@ console.log("\nA SERVED WEEK KEEPS ITS VALUE: A LATER CORRECTION MOVES NO LINE (
 // named absence lists, so it knows whose record changed: the line that moved
 // said whether that child is an English Learner. Each night here goes
 // through the real write (replaceGroupMonth), as the nightly build does.
-/** The nightly build of October on the morning of `morning`, through the real write; `fix` corrects tonight's rows. */
-async function nightly(Mx, tables, morning, fix = (rows) => rows) {
+/**
+ * The nightly build of October on the morning of `morning`, through the real
+ * write; `fix` corrects tonight's rows. `drop`: dates PowerSchool holds no
+ * records for tonight; `copy`: [from, to] pairs, a stray record dated `to`
+ * (that day's figures, redated); `skip`: axes whose read failed tonight.
+ */
+async function nightly(Mx, tables, morning, fix = (rows) => rows, { drop = [], copy = [], skip = [] } = {}) {
   const t = asOfMorning(morning);
   const oct = (r) => r.date.startsWith("2026-10");
+  const tonight = (rows) => rows.filter((r) => oct(r) && !drop.includes(r.date))
+    .concat(copy.flatMap(([from, to]) => rows.filter((r) => r.date === from).map((r) => ({ ...r, date: to }))));
   // The band rows, as replaceMonth leaves them: October's replaced, stamped tonight.
-  tables.attendanceRunDays = tables.attendanceRunDays.filter((r) => !oct(r)).concat(t.attendanceRunDays.filter(oct));
-  const days = fix(t.attendanceRunGroupDays.filter(oct)).map(({ yearid, syncedAt, ...r }) => r);
+  tables.attendanceRunDays = tables.attendanceRunDays.filter((r) => !oct(r)).concat(tonight(t.attendanceRunDays));
+  const days = fix(tonight(t.attendanceRunGroupDays)).map(({ yearid, syncedAt, ...r }) => r);
   const schoolDays = [...new Set(days.map((r) => r.date))].sort();
   const whole = schoolDays.map((d) => {
     const g = days.filter((r) => r.date === d && r.axis === "gender");
     return { date: d, members: g.reduce((n, r) => n + r.members, 0), absentDays: g.reduce((n, r) => n + r.absentDays, 0) };
   });
+  const axes = Mx.groups.AXES.filter((x) => !skip.includes(x));
   return Mx.query.replaceGroupMonth.handler({ db: fakeDb(tables) },
-    { yearid: 36, month: "2026-10", syncedAt: morning + "T10:15:00.000Z", axes: Mx.groups.AXES, schoolDays, whole, days, skipped: [] });
+    { yearid: 36, month: "2026-10", syncedAt: morning + "T10:15:00.000Z", axes, schoolDays, whole,
+      days: days.filter((r) => axes.includes(r.axis)), skipped: skip.map((axis) => ({ axis, reason: "Race codes could not be read: HTTP 503" })) });
 }
 /** One whole day out on `date` corrected to present, for a student in these rows (one per axis that holds them). */
 const corrected = (date, rowsOf) => (rows) => rows.map((r) => (r.date === date && rowsOf.includes(r.axis + ":" + r.group)
@@ -1226,6 +1243,12 @@ suite.keptRule = (Mx) => {
     // Weeks decided one by one: the finished week kept, the one in progress rewritten.
     twoWeeks: K([...st(W, "2026-10-10"), ...st(week("2026-10-12").slice(0, 2), "2026-10-14")],
       [...W, ...week("2026-10-12").slice(0, 3)], "2026-10-15") === W.join(","),
+    // Rows of a Friday-morning build, kept by Saturday's (no records dated Friday then) and marked read through it:
+    // Friday's records arriving later do not reopen the week.
+    keptThrough: K(st(W.slice(0, 4), "2026-10-09").map((r) => ({ ...r, keptThrough: "2026-10-09" })), W, "2026-10-14") === W.join(",")
+      && K(st(W.slice(0, 4), "2026-10-09"), W, "2026-10-14") === "",
+    // A record dated a Saturday is no school day of the chart: the finished week before it is kept.
+    weekend: K(st(W, "2026-10-10"), [...W, "2026-10-10"], "2026-10-11") === [...W, "2026-10-10"].join(","),
   };
   return { ok: Object.values(cases).every(Boolean), cases };
 };
@@ -1245,6 +1268,133 @@ suite.keptRule = (Mx) => {
   check("...the write keeps the stored rows through keptDates, for every axis it builds, before anything is deleted or added",
     /keptDates\(old\.filter\(\(r\) => r\.axis === axis\), a\.schoolDays, buildDay\)/.test(SRC.query)
       && code(SRC.query).indexOf("keptDates(") < code(SRC.query).indexOf("ctx.db.delete(r._id)"));
+}
+
+// ===========================================================================
+console.log("\nA SERVED WEEK IS NEVER SERVED AGAIN WITH OTHER FIGURES, WHATEVER DAY TURNS UP LATER (review, 2026-10-12, third round)\n");
+// ===========================================================================
+// THE ATTACK, again: a finished week asked on two mornings. Keeping a week
+// judged its rows by what THEIR build had read. Rows a Friday-morning build
+// wrote read through Thursday, so with no records dated that Friday (an
+// outage, a register keyed in on Monday, a holiday) Saturday kept them and
+// the week was served Monday to Thursday -- and a record dated the Friday
+// arriving later had the week rewritten and served again, with every
+// correction since. So did a stray record dated a Saturday, and a week
+// served from the rows of a race read that failed on Saturday night.
+const W5 = THIS_WEEKS[7], FRI5 = addDays(W5, 4), WED5 = addDays(W5, 2);
+/** October not yet built; the months before it as world() has them. */
+function octFresh() {
+  const base = world();
+  return {
+    attendanceRunDays: base.attendanceRunDays.filter((r) => !r.date.startsWith("2026-10")),
+    attendanceRunGroupDays: base.attendanceRunGroupDays.filter((r) => !r.date.startsWith("2026-10")),
+    attendanceRunGroupMonths: [],
+  };
+}
+/** Night by night through the real write, what each line answers for the week of 10/5 the morning after: a rate, or why not. */
+async function weekEachMorning(Mx, staff, lines, nights) {
+  const tables = octFresh();
+  const seen = Object.fromEntries(lines.map((g) => [g, []]));
+  for (const [k, opts, fix] of nights) {
+    await nightly(Mx, tables, addDays(W5, k), fix, opts);
+    for (const g of lines) {
+      const p = (await ask(Mx, staff, { group: g, periods: [[W5]] }, tables)).res.periods[0];
+      seen[g].push(p.withheld ?? p.value);
+    }
+  }
+  return { seen, tables };
+}
+const oneValue = (vals) => new Set(vals.filter((x) => typeof x === "number")).size === 1;
+suite.lateFriday = async (Mx) => {
+  // No records dated Friday until Tuesday, when they are keyed in -- with an
+  // English Learner's Wednesday corrected the same day.
+  const el = corrected(WED5, ["gender:F", "race:none", "el:el"]);
+  const nights = [];
+  for (let k = 1; k <= 8; k++) nights.push([k, { drop: [FRI5] }]);
+  for (let k = 9; k <= 11; k++) nights.push([k, {}, el]);
+  const { seen } = await weekEachMorning(Mx, PBIS, ["el:el", "ela:EO", "gender:F"], nights);
+  // Served from Saturday (the fifth morning), and never with a second value.
+  return { ok: Object.values(seen).every((v) => typeof v[4] === "number" && oneValue(v)), seen };
+};
+suite.weekendRecord = async (Mx) => {
+  // A whole week, served Saturday; from Sunday a stray record dated that
+  // Saturday, and an English Learner's Wednesday corrected.
+  const el = corrected(WED5, ["gender:F", "race:none", "el:el"]);
+  const nights = [];
+  for (let k = 1; k <= 5; k++) nights.push([k, {}]);
+  for (let k = 6; k <= 7; k++) nights.push([k, { copy: [[FRI5, addDays(W5, 5)]] }, el]);
+  const { seen } = await weekEachMorning(Mx, PBIS, ["el:el", "ela:EO", "gender:F"], nights);
+  return { ok: Object.values(seen).every((v) => v.slice(4).every((x) => typeof x === "number") && oneValue(v)), seen };
+};
+suite.skippedThenLate = async (Mx) => {
+  // No records dated Friday through Saturday morning, and Saturday's race
+  // read fails; Sunday it works, Friday's records are in, and a Black
+  // student's Wednesday is corrected.
+  const black = corrected(WED5, ["gender:F", "race:black", "el:notel", "ela:EO"]);
+  const nights = [];
+  for (let k = 1; k <= 4; k++) nights.push([k, { drop: [FRI5] }]);
+  nights.push([5, { drop: [FRI5], skip: ["race"] }]);
+  for (let k = 6; k <= 7; k++) nights.push([k, {}, black]);
+  const { seen } = await weekEachMorning(Mx, ADMIN, ["race:black"], nights);
+  const v = seen["race:black"];
+  return { ok: v[4] === "open" && typeof v[6] === "number" && oneValue(v), seen };
+};
+{
+  const lf = await suite.lateFriday(M);
+  check("a week served Monday to Thursday (no records dated its Friday yet) is never served again when Friday's records "
+    + "and a correction arrive: it is withheld instead", lf.ok, JSON.stringify(lf.seen));
+  const lfLeak = await suite.lateFriday(modules({ groups: SRC.groups.replace("if (!w.stored.size || !(addDaysIso(monday, 4) < buildDay)) continue;", "continue;") }));
+  check("...and with nothing kept the same nights DO move the English Learner line (the test can see the leak)",
+    !lfLeak.ok && lfLeak.seen["el:el"].includes(92.2) && lfLeak.seen["el:el"].includes(92.3), JSON.stringify(lfLeak.seen));
+  const wr = await suite.weekendRecord(M);
+  check("a stray record dated a Saturday never reopens the finished week before it: every line keeps its value", wr.ok, JSON.stringify(wr.seen));
+  const sl = await suite.skippedThenLate(M);
+  check("a week whose race rows were built before its Friday is not served from them ('open'), so the race read that "
+    + "works the next night cannot serve it a second time", sl.ok, JSON.stringify(sl.seen));
+  const kr = suite.keptRule(M);
+  check("keptDates: a kept row's mark (keptThrough) counts as read; a weekend date never reopens a week",
+    kr.cases.keptThrough && kr.cases.weekend, JSON.stringify(kr.cases));
+}
+
+// ===========================================================================
+console.log("\nA BUILD THAT CROSSES MIDNIGHT SAYS WHAT IT READ (review, 2026-10-12, third round)\n");
+// ===========================================================================
+// The last day a build read is taken from its stamp (the day before the
+// stamp's day in Los Angeles), by keptDates and by the card's Trends
+// coverage. Stamped after the PowerSchool reads, a build started at 23:58 on
+// a Friday read through Thursday but said Friday: its week was then kept
+// without Friday, "no data" for good.
+suite.midnight = async (src) => {
+  // Friday 9/25, 23:58 in Los Angeles; each PowerSchool read takes 30 seconds.
+  let t = Date.parse("2026-09-26T06:58:00Z");
+  const ps0 = powerschool(FX);
+  const slow = { calls: ps0.calls, readTable: async (...x) => { t += 30000; return ps0.readTable(...x); } };
+  const late = await runAction("buildMonth", { yearid: 36, month: "2026-09" }, { ps: slow, src, clock: () => t });
+  // Saturday's nightly, 03:15.
+  const sat = await runAction("buildMonth", { yearid: 36, month: "2026-09" }, { src, clock: () => Date.parse("2026-09-26T10:15:00Z") });
+  const g = (run) => run.mutations.find((m) => m.ref === "attendanceGroupRunChart.replaceGroupMonth").args;
+  const b = (run) => run.mutations.find((m) => m.ref === "attendanceRunChartData.replaceMonth").args;
+  const tables = { attendanceRunGroupDays: [], attendanceRunGroupMonths: [] };
+  const db = fakeDb(tables);
+  await M.query.replaceGroupMonth.handler({ db }, g(late));
+  await M.query.replaceGroupMonth.handler({ db }, g(sat));
+  const FRI = "2026-09-25";
+  const readTo = (at) => addDays(M.groups.laDayOf(at), -1);
+  const friRows = tables.attendanceRunGroupDays.filter((r) => r.date === FRI).length;
+  return {
+    ok: late.res.to === "2026-09-24" && !g(late).schoolDays.includes(FRI) && t > Date.parse("2026-09-26T07:00:00Z")
+      && readTo(b(late).syncedAt) === late.res.to && b(late).syncedAt === g(late).syncedAt
+      && g(sat).schoolDays.includes(FRI) && friRows === 12,
+    to: late.res.to, stamp: b(late).syncedAt, friRows,
+  };
+};
+{
+  const mn = await suite.midnight(SRC.action);
+  check("a build started at 23:58 on Friday is stamped with its own start: its stamp says it read through Thursday "
+    + "(Trends and the group rows alike), and Saturday's build adds Friday to the week", mn.ok, JSON.stringify(mn));
+  check("...one instant gives both the last day read and the stamp",
+    /const startedAt = new Date\(\);\s*const yesterday = dayBefore\(laToday\(startedAt\)\);/.test(SRC.action)
+      && /const syncedAt = startedAt\.toISOString\(\);/.test(SRC.action));
 }
 
 // ===========================================================================
@@ -1547,7 +1697,8 @@ console.log("\nTEETH: EACH RULE, BROKEN ON PURPOSE, IS CAUGHT\n");
   await caught("groupsOnly rewriting the band rows", M, async () => suite.groupsOnly(actionMut("    if (!groupsOnly) {\n", "    if (true) {\n")));
   await caught("a backfill that rewrites last year's bands by default", M, async () => suite.backfillSays(actionMut(
     "if (groupsOnly === rewriteBands || (groupsOnly !== true && rewriteBands !== true)) {", "if (groupsOnly === true && rewriteBands === true) {")));
-  await caught("the week in progress served (no build-coverage check)", mutate("groups", "if (!covered(d)) open = true;", ""), suite.mornings);
+  await caught("a week Trends has not covered served (no build-coverage check)", mutate("groups", "if (!covered(d)) open = true;", ""),
+    async (Mx) => (await suite.mornings(Mx)).ok && await suite.monthEdge(Mx));
   await caught("a month's coverage taken from the newest build only", mutate("groups",
     "const through = builtThrough.get(date.slice(0, 7)) ?? newestBuilt;", "const through = newestBuilt;"), suite.monthEdge);
   await caught("the pool test at 10, not 30 (RFEP offered beside the IFEP pool)", mutate("groups",
@@ -1565,9 +1716,20 @@ console.log("\nTEETH: EACH RULE, BROKEN ON PURPOSE, IS CAUGHT\n");
   await caught("a week kept before it is over (its own week's corrections lost)", mutate("groups",
     "if (!w.stored.size || !(addDaysIso(monday, 4) < buildDay)) continue;", "if (!w.stored.size) continue;"), suite.keptRule);
   await caught("a week kept though its rows were built before its last day (stuck as 'no data')", mutate("groups",
-    "    if (w.days.some((d) => !w.stored.has(d) && d > w.readThrough)) continue;\n", ""), suite.servedKept);
+    "    if (w.days.some((d) => isWeekday(d) && !w.stored.has(d) && d > w.readThrough)) continue;\n", ""), suite.servedKept);
   await caught("a week kept though its rows were built before one of its days", mutate("groups",
-    "    if (w.days.some((d) => !w.stored.has(d) && d > w.readThrough)) continue;\n", ""), suite.staleMended);
+    "    if (w.days.some((d) => isWeekday(d) && !w.stored.has(d) && d > w.readThrough)) continue;\n", ""), suite.staleMended);
+  await caught("a kept week judged only by its own build (no keptThrough mark)", mutate("query",
+    "await ctx.db.patch(r._id, { keptThrough: readTo });", "void readTo;"), suite.lateFriday);
+  await caught("a kept week's mark not read back", mutate("groups",
+    'return typeof r.keptThrough === "string" && r.keptThrough > through ? r.keptThrough : through;', "return through;"), suite.lateFriday);
+  await caught("a weekend record reopening a finished week", mutate("groups",
+    "if (w.days.some((d) => isWeekday(d) && !w.stored.has(d) && d > w.readThrough)) continue;",
+    "if (w.days.some((d) => !w.stored.has(d) && d > w.readThrough)) continue;"), suite.weekendRecord);
+  await caught("a week served from rows built before its Friday", mutate("groups",
+    "        for (const r of byDate.get(d)?.values() ?? []) if (rowReadThrough(r) < friday) open = true;\n", ""), suite.skippedThenLate);
+  await caught("the build stamped after its reads", M, async () => suite.midnight(actionMut(
+    "    const syncedAt = startedAt.toISOString();\n", "    const syncedAt = new Date().toISOString();\n")));
   await caught("a stale row left behind", mutate("query", "for (const r of old) if (axes.includes(r.axis) && !kept.get(r.axis)!.has(r.date)) await ctx.db.delete(r._id);",
     "for (const r of old.slice(1)) if (axes.includes(r.axis) && !kept.get(r.axis)!.has(r.date)) await ctx.db.delete(r._id);"), suite.replaceClean);
 }

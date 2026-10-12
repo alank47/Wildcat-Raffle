@@ -5,7 +5,8 @@ import { GROUP_NONE } from "./runChartDays";
 import {
   AXES, GROUP_AXES, SERIES, TYPE_LABELS, FAMILY_AXES, NEVER_CHARTED, groupTypesFor,
   CHART_FLOOR, DAY_FLOOR, SMALL_CHART_GROUP, SIZE_ROUND, roundSize, checkPeriods, evaluatePeriods,
-  addDaysIso, laDayOf, typicalRows, linesForYear, currentAxes, keptDates, type GroupType, type StoredGroupDay,
+  addDaysIso, laDayOf, typicalRows, linesForYear, currentAxes, keptDates, rowReadThrough, mondayOfIso,
+  type GroupType, type StoredGroupDay,
 } from "./runChartGroups";
 
 /**
@@ -55,7 +56,8 @@ const RANGE_ROW_CAP = 6000;
  * the month's status row records what was built and what was skipped, why.
  * And a week that could already have been served keeps its stored rows on
  * every axis built (runChartGroups.keptDates): a served week's value never
- * changes, so no two mornings subtract to the night's corrections.
+ * changes, so no two mornings subtract to the night's corrections. Kept rows
+ * are marked read through their Friday (keptThrough).
  *
  * REFUSES rows that do not add up: every axis must hold every school day once,
  * each group once, and add up to the whole school exactly (the band build's
@@ -123,6 +125,15 @@ export const replaceGroupMonth = internalMutation({
       // stay, and tonight's rows for its days are dropped.
       const kept = new Map(axes.map((axis) => [axis, keptDates(old.filter((r) => r.axis === axis), a.schoolDays, buildDay)]));
       for (const r of old) if (axes.includes(r.axis) && !kept.get(r.axis)!.has(r.date)) await ctx.db.delete(r._id);
+      // ...and a kept row read only up to before its week's Friday is marked
+      // as read through tonight's read: no day that turns up later can have
+      // its week rewritten (and served again).
+      const readTo = addDaysIso(buildDay, -1);
+      for (const r of old) {
+        if (axes.includes(r.axis) && kept.get(r.axis)!.has(r.date) && rowReadThrough(r) < addDaysIso(mondayOfIso(r.date), 4)) {
+          await ctx.db.patch(r._id, { keptThrough: readTo });
+        }
+      }
       for (const r of a.days) {
         if (kept.get(r.axis)!.has(r.date)) continue;
         await ctx.db.insert("attendanceRunGroupDays", { ...r, yearid: a.yearid, syncedAt: a.syncedAt });

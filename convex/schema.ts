@@ -797,6 +797,11 @@ export default defineSchema({
     partialDays: v.number(),
     assumedPresentDays: v.number(),
     syncedAt: v.string(),
+    // Set by a build that KEPT this row after its week was over: the last
+    // day that build had read. A kept week is read through its Friday from
+    // then on, so no day that turns up later has it rewritten
+    // (runChartGroups.keptDates, rowReadThrough).
+    keptThrough: v.optional(v.string()),
   })
     .index("by_yearid_date", ["yearid", "date"])
     .index("by_axis_date", ["axis", "date"]),

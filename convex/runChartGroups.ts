@@ -528,6 +528,7 @@ export function checkPeriods(raw: unknown): { ok: true; periods: string[][] } | 
 export type StoredGroupDay = {
   yearid: number; date: string; axis: string; group: string; members: number;
   absentDays: number; fullDaysStrict: number; misrecordDaysByGap: number[]; partialDays: number;
+  syncedAt?: string; keptThrough?: string;
 };
 
 /** A rate to one decimal, as runWeeklyRate rounds it, or null with no student-days. */
@@ -550,7 +551,10 @@ export type VsRest = { yearid: number; periods: number; points: number; withinCh
  *   "open"      is not over: its Friday is today or later in Los Angeles,
  *               or one of its weekdays was not yet covered by its month's
  *               Trends build (a month built tonight covers up to
- *               yesterday). Then no later build can add a day to it.
+ *               yesterday) -- or its group rows were built before its
+ *               Friday was over and no build of their axis has kept them
+ *               since (rowReadThrough before the Friday). Then no later
+ *               build can add a day to it, nor rewrite it (keptDates).
  *   "few-days"  has 1 to MIN_WEEK_DAYS - 1 school days -- or the period
  *               has none at all. A week of none (a break) adds no day, so
  *               it is no reason to withhold the weeks beside it.
@@ -566,7 +570,8 @@ export type VsRest = { yearid: number; periods: number; points: number; withinCh
  * containing it, and two periods can only ever differ by whole served weeks.
  * And a week, once it could be served, is served from the same rows for good
  * (keptDates, below): a correction made after it reaches Trends, never the
- * group lines.
+ * group lines. Its rows are read through its Friday, so no day that turns up
+ * later can have it rewritten; a day that does leaves it "no-data".
  *
  *   trendsDays    every Trends school day (attendanceRunDays) of the months
  *                 the periods touch, with its year
@@ -617,11 +622,14 @@ export function evaluatePeriods(args: {
     const years = new Set<number>();
     let open = false, fewDays = false, mismatch = false;
     for (const w of weeks) {
-      if (addDaysIso(w, 4) >= today) open = true;
+      const friday = addDaysIso(w, 4);
+      if (friday >= today) open = true;
       let inWeek = 0;
       for (let i = 0; i < 5; i++) {
         const d = addDaysIso(w, i);
         if (!covered(d)) open = true;
+        // Served only from rows keptDates will never rewrite: read through the Friday.
+        for (const r of byDate.get(d)?.values() ?? []) if (rowReadThrough(r) < friday) open = true;
         const y = yearOf(d);
         if (y === undefined) { if (byDate.has(d)) mismatch = true; continue; }
         dates.push(d);
@@ -705,6 +713,21 @@ export function evaluatePeriods(args: {
 // happened -- a group read that failed on the night that would have added
 // it, so the week was "no data" and never served.
 //
+// AND A KEPT WEEK IS READ THROUGH ITS FRIDAY from then on (review,
+// 2026-10-12, third round). Rows a Friday-morning build wrote read through
+// Thursday; with no records dated Friday (a holiday, an outage, a register
+// keyed in on Monday) Saturday's build keeps them and the week is served as
+// Monday to Thursday. Judged by their own build, a record dated that Friday
+// arriving later would have the week rewritten -- and served again, with
+// every correction since. So the build that keeps such rows marks them
+// (keptThrough), and the week is never rewritten after; the day that
+// arrives leaves it "no-data" instead. Only weekdays
+// count: a record dated a Saturday or Sunday is no school day of the chart
+// (evaluatePeriods reads Monday to Friday), so it never reopens a week. And
+// the query serves a week only from rows read through its Friday, so a week
+// served is one this rule will never rewrite, whichever axis's read failed
+// on which night.
+//
 // THE COST, accepted: a correction PowerSchool takes after a week could be
 // served reaches Trends, never the group lines. On such a week the line and
 // "the rest of the school" add up to the school as it stood then, a little
@@ -717,19 +740,36 @@ export function evaluatePeriods(args: {
 // To rebuild served weeks on purpose (a bug in the group build), delete that
 // month's group rows first; the next build writes them afresh.
 
+/** The Monday of a date's week. */
+export function mondayOfIso(iso: string): string {
+  return addDaysIso(iso, -((new Date(iso + "T00:00:00Z").getUTCDay() + 6) % 7));
+}
+const isWeekday = (iso: string) => { const d = new Date(iso + "T00:00:00Z").getUTCDay(); return d >= 1 && d <= 5; };
+
+/**
+ * The last day a stored row's builds had read: the day before the day of the
+ * build that wrote it (in Los Angeles), or the later day a build that kept it
+ * had read (keptThrough). A time that cannot be read is taken to have read
+ * everything (keeping is the safe side).
+ */
+export function rowReadThrough(r: { syncedAt?: string; keptThrough?: string }): string {
+  const built = laDayOf(r.syncedAt);
+  const through = built ? addDaysIso(built, -1) : "9999-12-31";
+  return typeof r.keptThrough === "string" && r.keptThrough > through ? r.keptThrough : through;
+}
+
 /**
  * The dates of one month whose stored rows of one axis a build keeps -- and
  * whose newly built rows it drops. `stored`: that axis's stored rows in the
  * month; `schoolDays`: this build's school days; `buildDay`: the build's day
- * in Los Angeles. A build reads through the day before its own, so that is
- * the last day stored rows could hold; a time that cannot be read is taken
- * to have read everything (keeping is the safe side).
+ * in Los Angeles. A week is rewritten only when a WEEKDAY it lacks comes
+ * after everything its rows had read (rowReadThrough).
  */
-export function keptDates(stored: Array<{ date: string; syncedAt: string }>, schoolDays: string[], buildDay: string): Set<string> {
-  const mondayOf = (iso: string) => addDaysIso(iso, -((new Date(iso + "T00:00:00Z").getUTCDay() + 6) % 7));
+export function keptDates(stored: Array<{ date: string; syncedAt?: string; keptThrough?: string }>, schoolDays: string[],
+  buildDay: string): Set<string> {
   const weeks = new Map<string, { stored: Set<string>; readThrough: string; days: string[] }>();
   const weekOf = (date: string) => {
-    const m = mondayOf(date);
+    const m = mondayOfIso(date);
     let w = weeks.get(m);
     if (!w) { w = { stored: new Set(), readThrough: "", days: [] }; weeks.set(m, w); }
     return w;
@@ -737,15 +777,14 @@ export function keptDates(stored: Array<{ date: string; syncedAt: string }>, sch
   for (const r of stored) {
     const w = weekOf(r.date);
     w.stored.add(r.date);
-    const built = laDayOf(r.syncedAt);
-    const through = built ? addDaysIso(built, -1) : "9999-12-31";
+    const through = rowReadThrough(r);
     if (through > w.readThrough) w.readThrough = through;
   }
   for (const d of schoolDays) weekOf(d).days.push(d);
   const kept = new Set<string>();
   for (const [monday, w] of weeks) {
     if (!w.stored.size || !(addDaysIso(monday, 4) < buildDay)) continue;
-    if (w.days.some((d) => !w.stored.has(d) && d > w.readThrough)) continue;
+    if (w.days.some((d) => isWeekday(d) && !w.stored.has(d) && d > w.readThrough)) continue;
     for (const d of w.stored) kept.add(d);
     for (const d of w.days) kept.add(d);
   }
