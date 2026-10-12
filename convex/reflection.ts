@@ -398,6 +398,15 @@ export async function rosterFor(ctx: Ctx, studentNumbers: string[]): Promise<Rec
 }
 
 /**
+ * THE ROOM'S MARKS BELONG TO ONE LIST (review, 2026-10-12). A detention that
+ * leaves its list (a carry released before its pull and sent back to wait)
+ * and is listed again starts with none: a Here check made on the list it
+ * left rode to the next one, already checked, and the student was served
+ * there without coming and without anyone pressing anything.
+ */
+const NO_ROOM_MARKS = { roomHere: undefined, roomNotHere: undefined, roomMarkedBy: undefined, roomMarkedAt: undefined };
+
+/**
  * MAKE D'S LIST, inside the transaction that calls this (the closing read's
  * applyRead, or the tick's fallback).
  *
@@ -462,7 +471,7 @@ async function freezeDay(ctx: MutationCtx, f: {
       }
     }
     if (row.serve !== "new") {
-      await ctx.db.patch(row.serve as Id<"reflectionUnits">, { state: "listed", serveDay: date, tags: row.tags, ...shown });
+      await ctx.db.patch(row.serve as Id<"reflectionUnits">, { state: "listed", serveDay: date, tags: row.tags, ...shown, ...NO_ROOM_MARKS });
     }
     for (const q of row.queued) {
       const u = pending.find((p) => p._id === q);
@@ -810,7 +819,7 @@ async function rejoinDetention(ctx: MutationCtx, unitId: Id<"reflectionUnits"> |
   await unrelease(ctx, u._id, u.releasedAt);
   await ctx.db.patch(last._id, {
     state: "pending", serveDay: undefined, listedAt: undefined, owes: undefined, puSnapshot: undefined, lunchSnapshot: undefined,
-    absentMorning: undefined,
+    absentMorning: undefined, ...NO_ROOM_MARKS,
     tags: last.tags.filter((tag) => !/^Owes \d+$/.test(tag)),
   });
   return "restored";

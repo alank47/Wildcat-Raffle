@@ -690,6 +690,13 @@ const CASES = [
   { guard: "without PowerSchool the day's review item is counted again (and the admin's acknowledgement lost)", file: SERVER, test: READER_TEST,
     from: "  if (!c.summary) return out;\n", to: "",
     mustFail: "...and the day's review item, which only a read can count, is left as the last read raised it, with the admin's acknowledgement" },
+  // Review, 2026-10-12: the room's marks belong to one list.
+  { guard: "a carry sent back to wait keeps the Here check of the list it left", file: SERVER, test: READER_TEST,
+    from: "    absentMorning: undefined, ...NO_ROOM_MARKS,", to: "    absentMorning: undefined,",
+    mustFail: "rides: the mark typed back, the carry waits for the next list again -- without the Here check made on the list it left" },
+  { guard: "the freeze lists a waiting detention with whatever room marks it carries", file: SERVER, test: READER_TEST,
+    from: "tags: row.tags, ...shown, ...NO_ROOM_MARKS });", to: "tags: row.tags, ...shown });",
+    mustFail: "rides: Thursday's list claims the carry with no room marks: 0 of 1 here until someone checks Y" },
   { guard: "the freeze stamps no room mode on a new list", file: SERVER, test: READER_TEST,
     from: "    roomMode: ROOM_MODE_FOR_NEW_LISTS,\n", to: "",
     mustFail: "check-off: the list is made at 11:45, stamped to take its room attendance by checking Here" },

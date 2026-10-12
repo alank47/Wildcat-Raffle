@@ -67,6 +67,8 @@
 //      on this build's screen.
 //  29. A list made without PowerSchool (fallback) takes the room's fix of
 //      the morning after, and leaves the day's review item to a read.
+//  30. A Here check never rides a detention onto the next list: a carry
+//      released before its pull and sent back to wait loses it.
 //
 // TEETH: scripts/reflection-teeth.mjs breaks the direct id confirmation, the
 // natural key, the lease expiry, the "unconfirmed changes nothing" rule,
@@ -2318,6 +2320,66 @@ try {
       /^Room attendance not recorded Wed 10\/14 \(2 detentions decided from PowerSchool\)$/.test(raised.reason ?? "") && !!raised.resolvedAt
         && J(w.day(WED).fallbackReview) === J(raised), J({ raised, now: w.day(WED).fallbackReview }));
     w.ctl.down = false;
+  }
+
+  // ==========================================================================
+  console.log("\n30. A HERE CHECK NEVER RIDES A DETENTION ONTO THE NEXT LIST\n");
+  // ==========================================================================
+  // (review, 2026-10-12) HS live. Y does not come on Tuesday, so Y's carry
+  // is on Wednesday's list. Wednesday the room opens at 11:42, before the
+  // 12:08 HS pull, and Y is checked Here at 11:50. Y's Tuesday mark is
+  // deleted at 11:55 and read at 12:00 -- before the pull -- so the carry
+  // is released, and when the mark is typed back it waits for the next list
+  // again. Its Here check went with it: Thursday's list showed "1 of 1 here"
+  // before anyone touched it, and Y was served without coming.
+  {
+    const TUE = "2026-10-13", WED = "2026-10-14", THU = "2026-10-15";
+    const hs = { grade: 10, sections: HS };
+    const staff = {
+      admin: { email: "admin@school.test", role: "admin" },
+      granted: { email: "granted@school.test", role: "campusaide", reflectionList: true, reflectionListUntil: "2026-12-18" },
+    };
+    const w = await world({
+      students: { Y: hs, ...Object.fromEntries(Array.from({ length: 10 }, (_, i) => [`HF${i}`, { grade: 10, sections: HS, filler: true }])) },
+      days: [{ date: TUE, slots: TUE_SLOTS }, { date: WED, slots: WED_SLOTS }, { date: THU, slots: MON_SLOTS }],
+      settings: { modeByDivision: { ms: "off", hs: "live" }, countFromDateByDivision: { ms: null, hs: "2026-10-12" } },
+    });
+    for (const t of Object.values(staff)) await w.store.db.insert("teachers", { name: "Staff", ticketsAwarded: 0, ...t });
+    const as = (who) => { w.rt.signIn({ issuer: STAFF_ISSUER, email: staff[who].email }); return w.rt; };
+    const unitOf = (sn, day) => w.units(sn).find((u) => u.serveDay === day);
+    const byId = (id) => w.units().find((u) => u._id === id);
+    const marks = (u) => ({ here: u?.roomHere, notHere: u?.roomNotHere, by: u?.roomMarkedBy, at: u?.roomMarkedAt });
+    const yRow = w.mark(TUE, "Y", 3, "T");
+    await drive(w, la(TUE, "07:30"), la(TUE, "11:45"));
+    clock.set(la(TUE, "13:00"));
+    const tueDone = await as("granted").run("reflectionRoom.roomAttendanceDone", { day: TUE, noShowIds: [unitOf("Y", TUE)._id] });
+    await drive(w, la(TUE, "13:05"), la(TUE, "15:45"));
+    await drive(w, la(WED, "07:30"), la(WED, "11:20"));
+    const carry = unitOf("Y", WED);
+    clock.set(la(WED, "11:50"));
+    const early = await as("granted").run("reflectionRoom.markHere", { unitId: carry._id, here: true });
+    clock.set(la(WED, "11:55")); w.unmark(yRow);
+    clock.set(la(WED, "12:00"));
+    const read = await as("admin").run("reflectionRoom.readNow", {});
+    await runJobs(w, Date.parse(la(WED, "12:01")));
+    check("rides: Y's carry is on Wednesday's list and checked Here at 11:50; the mark deleted and read at 12:00, before the 12:08 HS pull, releases it",
+      tueDone.ok && carry?.kind === "carry" && early.ok && read.ok && byId(carry._id).state === "released", J({ tueDone, early, read, state: byId(carry._id).state }));
+    await drive(w, la(WED, "12:05"), la(WED, "15:45"), [[la(WED, "13:10"), () => w.mark(TUE, "Y", 3, "T")]]);
+    check("rides: the mark typed back, the carry waits for the next list again -- without the Here check made on the list it left",
+      byId(carry._id).state === "pending" && !byId(carry._id).serveDay && J(marks(byId(carry._id))) === J({}), J(marks(byId(carry._id))));
+    // Whatever else might ever leave a mark on a waiting detention, the list
+    // that claims it starts it with none.
+    await w.store.db.patch(carry._id, { roomHere: true, roomNotHere: true, roomMarkedBy: "granted@school.test", roomMarkedAt: la(WED, "11:50") });
+    await drive(w, la(THU, "07:30"), la(THU, "11:45"));
+    clock.set(la(THU, "13:05"));
+    const thu = await as("granted").run("reflectionList.listForDay", { day: "today", lunchOk: true, checkinOk: true });
+    check("rides: Thursday's list claims the carry with no room marks: 0 of 1 here until someone checks Y",
+      unitOf("Y", THU)?._id === carry._id && J(marks(unitOf("Y", THU))) === J({}) && thu.room.of === 1 && thu.room.here === 0,
+      J({ marks: marks(unitOf("Y", THU)), room: thu.room && { of: thu.room.of, here: thu.room.here } }));
+    // Y never comes; nobody presses anything. PowerSchool has Y gone after Power-Up.
+    await drive(w, la(THU, "13:05"), la(THU, "15:45"), [[la(THU, "13:30"), () => { for (const slot of [8, 6, 7]) w.mark(THU, "Y", slot, "A"); }]]);
+    check("rides: ...so Y is PowerSchool's on Thursday, and carries -- never served by a check made on another list",
+      byId(carry._id).state === "carried" && byId(carry._id).carryBasis === "powerschool", J([byId(carry._id).state, byId(carry._id).carryBasis]));
   }
 
   // ==========================================================================
