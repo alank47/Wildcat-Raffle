@@ -37557,8 +37557,18 @@
             ];
             AXES.forEach(ax => {
                 const rows = (res.rows || []).filter(r => r.axis === ax.key);
-                if (!rows.length) return;
+                // WITHHELD BY THE RESIDUAL TEST (2026-10-11): a group of ten
+                // or more that, taken from the whole school with the rows
+                // shown, would leave the figures for fewer than ten. The
+                // server sends how many and why, never which or its numbers,
+                // and the sentence goes under the type it came from -- a type
+                // with every row withheld still shows its heading, so a
+                // missing group is never read as a group with no gap.
+                const held = (res.withheld || []).find(w => w && w.axis === ax.key && w.groups > 0);
+                if (!rows.length && !held) return;
                 html += '<h4 class="wc-sg-axis">' + escapeHtml(ax.label) + '</h4>';
+                if (held) html += '<p class="wc-att-basis-note">' + escapeHtml(held.reason) + '</p>';
+                if (!rows.length) return;
                 html += '<div class="wc-att-list wc-sg-list">';
                 rows.forEach(r => {
                     // ABOVE OR BELOW, and by how much. The absolute rate alone
