@@ -1263,6 +1263,9 @@ try {
     check("the roles see 'Room attendance not recorded' for the last list until it is acknowledged",
       flagged.banners.some((b) => b.id === "room-not-recorded" && /^Room attendance not recorded Fri 10\/9 \(3 detentions decided from PowerSchool\)\./.test(b.text)),
       J(flagged.banners.map((b) => b.id)));
+    check("...and, that list made before check-off (no room mode stamped), it says to tick Not here",
+      flagged.banners.find((b) => b.id === "room-not-recorded")?.text.endsWith(". Tick Not here and press Attendance done each day."),
+      J(flagged.banners.find((b) => b.id === "room-not-recorded")));
     const addDay = await as("pbis").run("reflectionRoom.resolveReview", { kind: "day", id: mon, action: "add" });
     const okDay = await as("pbis").run("reflectionRoom.resolveReview", { kind: "day", id: mon, action: "dismiss", reason: "Supervisor forgot; told her" });
     check("a day's item can only be dismissed, with a reason, and then leaves the queue",
@@ -2097,6 +2100,15 @@ try {
     check("...and the day's review says Attendance done was not pressed, and how many PowerSchool decided",
       w.day(WED).fallbackReview?.reason === "Attendance done not pressed Wed 10/14 (1 checked Here; 1 detention decided from PowerSchool)",
       J(w.day(WED).fallbackReview));
+    // Thursday morning, the roles' banner about it says what to do on a
+    // check-off list -- never "Tick Not here", which no screen offers there.
+    clock.set(la("2026-10-15", "08:00"));
+    const thuBanner = (await as("pbis").run("reflectionList.listForDay", { day: "today", lunchOk: true, checkinOk: true }))
+      .banners.find((b) => b.id === "room-not-recorded");
+    check("check-off: the next morning's banner says what the check-off room does: check Here as they arrive, Attendance done after the last sitting",
+      thuBanner?.text === "Attendance done not pressed Wed 10/14 (1 checked Here; 1 detention decided from PowerSchool). "
+        + "Check Here next to each student as they arrive, and press Attendance done after the last sitting." && !/Not here/.test(thuBanner.text),
+      J(thuBanner));
 
     // ---- THE SCREENS, against this server: this build's, and the one open
     // tabs ran before check-off (2f0fdd0, stamp 20261012b).

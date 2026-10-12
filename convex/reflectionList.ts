@@ -899,13 +899,20 @@ export const listForDay = query({
         banners.push({ id: "pt-blank", level: "info", text: `Promise Time AM attendance not in yet for ${row!.ptBlankSections} section${row!.ptBlankSections === 1 ? "" : "s"}.` });
       }
       // ROOM ATTENDANCE NOT RECORDED on the last list (build step 8b): the
-      // room ran without ticking Not here, so its carries were left to
-      // PowerSchool. Until someone acknowledges it in the review queue.
+      // room never pressed Attendance done, so the carries of the students
+      // it did not check Here (on a list made before check-off: all of them)
+      // were left to PowerSchool. Until someone acknowledges it in the review
+      // queue. What to do next time is said the way that list takes its
+      // attendance (review, 2026-10-12): no screen offers a Not here box on a
+      // check-off list.
       if (date === today) {
         const before = await ctx.db.query("reflectionDays").withIndex("by_date", (q) => q.lt("date", today)).order("desc").take(10);
         const lastList = before.find((d) => d.frozenAt);
         if (lastList?.fallbackReview && !lastList.fallbackReview.resolvedAt) {
-          banners.push({ id: "room-not-recorded", level: "warn", text: `${lastList.fallbackReview.reason}. Tick Not here and press Attendance done each day.` });
+          const todo = roomModeOf(lastList) === "checkin"
+            ? "Check Here next to each student as they arrive, and press Attendance done after the last sitting."
+            : "Tick Not here and press Attendance done each day.";
+          banners.push({ id: "room-not-recorded", level: "warn", text: `${lastList.fallbackReview.reason}. ${todo}` });
         }
       }
       if (date === today && (row?.heldCount ?? 0) > 0) {
