@@ -1023,6 +1023,13 @@ console.log("\nGOVERNANCE: THE APPROVAL IS ON RECORD, AND NOTHING ELSE WAS WIDEN
         + "printing allowed for the same roles.\""));
   check("...and an individual's English Learner status is still NOT approved for anyone",
     /\*\*An individual student's status: NOT approved\.\*\*/.test(approval));
+  // The record says what is served as built, including what it costs: a
+  // served week is never rewritten, so a later correction (or a month mended
+  // for its groups only) leaves the group lines a little off Trends' line.
+  check("...and it says a served week keeps its value, and that the group lines can then sit a little off Trends (accepted, for the owner to confirm)",
+    /\*\*A served week keeps its value for good\*\*/.test(approval)
+      && flat.includes("a correction PowerSchool takes after a week could be served reaches Trends but not the group lines")
+      && flat.includes("a month mended for its group rows only") && flat.includes("The whole-school line on the card is always Trends' own"));
   check("restrictedPolicy.ts is untouched: PBIS holds no restricted field, and no role holds elaStatus",
     /pbis: \[\],/.test(policySrc) && /admin: \["fedEthnicity", "raceCodes"\],/.test(policySrc) && !/: \[[^\]]*"elaStatus"/.test(policySrc));
   const restricted = schemaSrc.slice(schemaSrc.indexOf("RESTRICTED demographics"), schemaSrc.indexOf("psRestricted: defineTable"));

@@ -292,7 +292,31 @@ a change shows when it happens.
   (as built 2026-10-12, after review). A week is served only once no nightly
   build can add a day to it, and a week of one school day is withheld in every
   period containing it, so no two answers can be subtracted to a single day's
-  rate.
+  rate. (A week with no school days at all, a break, adds nothing to a period
+  and withholds nothing.)
+- **A served week keeps its value for good** (as built 2026-10-12, second
+  review). Waiting for a week to finish stopped it gaining a day, but not its
+  figures changing: each night the build rebuilds the current month from
+  PowerSchool, so the same finished week asked on two mornings differed by
+  exactly the corrections made overnight, and only the lines holding the
+  corrected student moved. One whole-day correction moves Current English
+  Learner (about 115 students) by 0.17 points, so it always showed; set
+  against the named absence lists, the line that moved said whether that
+  child is an English Learner. Now, once a week could have been served, the
+  nightly build and the mend never rewrite its group rows: it is served from
+  the same rows every morning after.
+- **What that costs, accepted as built (for the owner to confirm):** a
+  correction PowerSchool takes after a week could be served reaches Trends
+  but not the group lines. On such a week the group's rate and "the rest of
+  the school" add up to the school as it stood when the week was first
+  servable, a little off Trends' whole-school line (0.1 point on the one week
+  of September measured with late corrections); a month mended for its group
+  rows only (rebuilt with newer data than its Trends rows) differs the same
+  way. The whole-school line on the card is always Trends' own. The
+  difference is the whole school's corrections and says nothing about any
+  group: no line holds the corrected student differently from before. The
+  alternative was to hold every week back until its month leaves the nightly
+  rebuild (the 8th of the next month), up to five weeks behind Trends.
 - **No individual figures.** The server sends a rate per week and a group size
   rounded to the nearest 5 — never a member count, student-days, absence count,
   date of membership or id. Gender is a Standard field, not a restricted one;
