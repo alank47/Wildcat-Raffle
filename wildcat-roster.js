@@ -2878,6 +2878,197 @@
     return '';
   }
 
+  // =====================================================================
+  // THE WEEKLY RATE BY STUDENT GROUP (2026-10-12)
+  //
+  // The Student groups card draws ONE group against the whole school. The
+  // two lines come from two places, on purpose:
+  //
+  //   THE WHOLE SCHOOL is Trends' own line -- runRateModel over the same
+  //   rows (attendanceRunChartData:series), the same weeks and the same
+  //   threshold -- so the card and Trends can never disagree about it.
+  //
+  //   THE GROUP is the server's (attendanceGroupRunChart:groupWeeks), which
+  //   serves RATES ONLY, one per period asked for, and withholds a period
+  //   when any day in it could single out a handful of students. The
+  //   browser never holds a group's members, absences or student-days.
+  //
+  // THE PERIODS ARE DECIDED HERE, on the whole-school days, by the one rule
+  // Trends uses (runWeekGroups), and sent by their Mondays -- so a group's
+  // point is always exactly the stretch of days of the whole school's point
+  // beside it, short weeks merged or kept apart by the same setting.
+  // =====================================================================
+
+  /** The server's limits on one ask (convex/runChartGroups.ts MAX_PERIOD_WEEKS, MAX_PERIODS). */
+  var GROUP_MAX_PERIOD_WEEKS = 4;
+  var GROUP_MAX_PERIODS = 120;
+
+  /**
+   * What to ask the server for: this year's and last year's week groups,
+   * each named by its Mondays, and -- for the faint "same week last year"
+   * line -- each of this year's groups moved back 364 days, Monday to
+   * Monday, over exactly the days runLastYearWeekly reads.
+   *
+   * Two asks, never one: the same Monday may not appear twice in one ask
+   * (the server refuses it), and last year's own week groups do not line up
+   * with this year's moved back. A group too long for the server (more than
+   * four weeks, never seen in two years of data) is left out and counted.
+   *
+   * `opts` { policy, settings, today }, as runRateModel takes them.
+   */
+  function runGroupAsk(res, opts) {
+    var o = opts || {};
+    var days = (res && res.days) || [];
+    var newest = -Infinity;
+    days.forEach(function (d) { if (d && d.yearid > newest) newest = d.yearid; });
+    if (!isFinite(newest)) return { periods: [], ghost: [], newestYear: null, skipped: 0 };
+    var groups = runWeekGroups(runSeriesDays(days, 'all', o.settings), o.policy, o.today);
+    var periods = [];
+    var skipped = 0;
+    groups.forEach(function (g) {
+      if (g.yearid < newest - 1) return;
+      var weeks = g.parts.map(function (p) { return p.week; });
+      if (weeks.length > GROUP_MAX_PERIOD_WEEKS) { skipped++; return; }
+      periods.push(weeks);
+    });
+    if (periods.length > GROUP_MAX_PERIODS) {
+      skipped += periods.length - GROUP_MAX_PERIODS;
+      periods = periods.slice(periods.length - GROUP_MAX_PERIODS);
+    }
+    var ghost = [];
+    groups.forEach(function (g) {
+      if (g.yearid !== newest) return;
+      var start = shiftDays(weekOf(g.from), -364);
+      var end = shiftDays(weekOf(g.to), -364);
+      var mondays = [];
+      for (var m = start; m && m <= end && mondays.length <= GROUP_MAX_PERIOD_WEEKS; m = shiftDays(m, 7)) mondays.push(m);
+      if (mondays.length && mondays.length <= GROUP_MAX_PERIOD_WEEKS) ghost.push(mondays);
+    });
+    return { periods: periods, ghost: ghost, newestYear: newest, skipped: skipped };
+  }
+
+  /**
+   * The spread of the weekly gap to the rest of the school, so a sentence
+   * about a gap can say whether it is bigger than the weeks themselves wobble.
+   * Measured on THIS group's own weeks, so absences bunched in a few
+   * students are in it (a binomial guess would understate it). Null under
+   * three weeks: too few to say anything.
+   */
+  function runGapSpread(points, year) {
+    var gaps = (points || []).filter(function (p) {
+      return p && p.yearid === year && typeof p.rest === 'number' && isFinite(p.rest) && isFinite(Number(p.value));
+    }).map(function (p) { return Number(p.value) - p.rest; });
+    var n = gaps.length;
+    if (n < 3) return null;
+    var mean = gaps.reduce(function (a, b) { return a + b; }, 0) / n;
+    var sd = Math.sqrt(gaps.reduce(function (a, g) { return a + (g - mean) * (g - mean); }, 0) / (n - 1));
+    var se = sd / Math.sqrt(n);
+    return { n: n, mean: Math.round(mean * 10) / 10, se: Math.round(se * 100) / 100, withinChance: Math.abs(mean) <= 2 * se };
+  }
+
+  /**
+   * EVERYTHING THE GROUP CARD DRAWS, as plain data.
+   *
+   *   `res`     attendanceRunChartData:series (the Trends rows)
+   *   `answer`  groupWeeks for the periods runGroupAsk named
+   *   `opts`    { group, policy, settings, today, ghost }  -- `ghost` is the
+   *             answer for runGroupAsk's `ghost` periods, or null for no
+   *             "same week last year" line
+   *
+   * THE WHOLE SCHOOL IS A REFERENCE: its points are Trends' own, value for
+   * value, and it gets no median and no signal on this card (Trends reads
+   * it). THE GROUP gets the run-chart rules, read like Trends reads its
+   * lines: this year only while it becomes its own normal, or -- once the
+   * whole school's weekly median is frozen -- over those same weeks, with the
+   * group's OWN median there. That median is RECALCULATED every time, never
+   * stored or frozen (no group baseline exists on the server, so none can
+   * reach anyone the group is not shown to), and the screen says so.
+   *
+   * A withheld period is a GAP, never a zero: it is listed in `withheld`
+   * with the server's reason, and the rules read the points either side of
+   * it as neighbours.
+   */
+  function runGroupRateModel(res, answer, opts) {
+    var o = opts || {};
+    var whole = runRateModel(res, { measure: 'weeklyRate', policy: o.policy, series: ['all'], settings: o.settings,
+                                    today: o.today, candidate: null });
+    var newest = whole.newestYear;
+    var keep = function (p) { return newest === null || p.yearid >= newest - 1; };
+    var axis = whole.axis.filter(keep).map(function (a) { return { key: a.key, from: a.from, to: a.to, yearid: a.yearid }; });
+    var indexOf = {};
+    axis.forEach(function (a, i) { indexOf[a.key] = i; });
+    var refPoints = (whole.series[0] ? whole.series[0].points : []).filter(keep).map(function (p) {
+      return Object.assign({}, p, { x: indexOf[p.key] });
+    });
+    var refBy = {};
+    refPoints.forEach(function (p) { refBy[p.key] = p; });
+
+    var served = {};
+    ((answer && answer.periods) || []).forEach(function (p) { if (p && p.key) served[p.key] = p; });
+    var points = [];
+    var withheld = [];
+    axis.forEach(function (a, i) {
+      var s = served[a.key];
+      var ref = refBy[a.key] || {};
+      var ok = s && !s.withheld && typeof s.value === 'number' && isFinite(s.value);
+      if (!ok) {
+        withheld.push({ key: a.key, from: a.from, to: a.to, yearid: a.yearid, x: i,
+                        why: s ? (s.withheld || 'no-data') : 'not-asked' });
+        return;
+      }
+      points.push({ key: a.key, from: a.from, to: a.to, yearid: a.yearid, x: i, value: s.value,
+                    rest: (typeof s.rest === 'number' && isFinite(s.rest)) ? s.rest : null,
+                    schoolDays: ref.schoolDays, flag: ref.flag || null, merged: !!ref.merged, parts: ref.parts || [] });
+    });
+
+    // THE WHOLE SCHOOL'S FROZEN WEEKS, if any: the group is read over them,
+    // against its own median there.
+    var wholeBase = null;
+    ((res && res.baselines) || []).forEach(function (b) {
+      if (b && b.measure === 'weeklyRate' && b.series === 'all') wholeBase = b;
+    });
+    var baseline = null;
+    if (wholeBase) {
+      var inBase = points.filter(function (p) { return p.from >= wholeBase.from && p.from <= wholeBase.to; });
+      var med = runChartMedian(inBase.map(function (p) { return p.value; }));
+      if (med !== null) baseline = { from: wholeBase.from, to: wholeBase.to, median: med, points: inBase.length, recalculated: true };
+    }
+    var analysis = runChartAnalysis(points, baseline, { scopeFrom: whole.newestFrom || '9999-12-31' });
+
+    // SAME WEEK LAST YEAR, this year's points only, matched by the Monday
+    // runGroupAsk moved each one back to.
+    var ghostBy = {};
+    ((o.ghost && o.ghost.periods) || []).forEach(function (p) { if (p && p.key) ghostBy[p.key] = p; });
+    var lastYear = points.map(function (p) {
+      if (!o.ghost || p.yearid !== newest) return null;
+      var g = ghostBy[shiftDays(weekOf(p.from), -364)];
+      return g && !g.withheld && typeof g.value === 'number' && isFinite(g.value) ? { key: p.key, x: p.x, value: g.value } : null;
+    });
+    var vsLastYear = o.ghost ? runVsLastYear(points, lastYear, 'weeklyRate') : null;
+
+    var yearBreaks = [];
+    for (var i = 1; i < axis.length; i++) if (axis[i].yearid !== axis[i - 1].yearid) yearBreaks.push(i);
+    var notes = (whole.notes || []).map(function (n) {
+      var a = n.x >= 0 ? whole.axis[n.x] : null;
+      var x = a && indexOf[a.key] !== undefined ? indexOf[a.key] : -1;
+      return Object.assign({}, n, { x: x });
+    });
+
+    return {
+      measure: 'weeklyRate', meta: RATE_MEASURES.weeklyRate, policy: whole.policy,
+      newestYear: newest, newestFrom: whole.newestFrom,
+      axis: axis, yearBreaks: yearBreaks, notes: notes,
+      reference: { series: 'all', points: refPoints },
+      series: [{ series: o.group || 'group', points: points, analysis: analysis, baseline: baseline,
+                 lastYear: lastYear, vsLastYear: vsLastYear }],
+      withheld: withheld, wholeBaseline: wholeBase,
+      vsRest: (answer && answer.vsRest) || null,
+      gapSpread: runGapSpread(points, newest),
+      thisYear: axis.filter(function (a) { return a.yearid === newest; }).length,
+      pendingWeeks: whole.pendingWeeks, shortPeriods: whole.shortPeriods, missingMonths: whole.missingMonths
+    };
+  }
+
   /**
    * IS THE ATTENDANCE DATA CURRENT? The verdict on the record the rebuild
    * writes after every run (appState "attendanceRebuild"), for the admin card
@@ -3092,6 +3283,11 @@
     RATE_MEASURES: RATE_MEASURES,
     runRateModel: runRateModel,
     rateSignalReading: rateSignalReading,
+    GROUP_MAX_PERIOD_WEEKS: GROUP_MAX_PERIOD_WEEKS,
+    GROUP_MAX_PERIODS: GROUP_MAX_PERIODS,
+    runGroupAsk: runGroupAsk,
+    runGapSpread: runGapSpread,
+    runGroupRateModel: runGroupRateModel,
     REBUILD_LIMITS: REBUILD_LIMITS,
     rebuildHealthVerdict: rebuildHealthVerdict,
     absenceSeriesValues: absenceSeriesValues,

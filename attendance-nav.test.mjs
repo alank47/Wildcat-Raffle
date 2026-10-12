@@ -4,11 +4,13 @@
 // layout -- Year so far | Week or month | Trends | Perfect attendance |
 // Student groups -- with every high and medium point of the critique applied.
 //
-//   A. THE TABS AND THE GATES. Admin, superadmin and PBIS see all five; the
-//      per-person Attendance Watch grant sees four (never Student groups, and
-//      a remembered Student groups lands on Year so far); teachers and aides
-//      without the grant cannot open the tab at all. The grant reads, never
-//      sets: no box, picker or button on any tab changes anything.
+//   A. THE TABS AND THE GATES. Admin, superadmin and PBIS see all five; so,
+//      since 2026-10-12, does the per-person Attendance Watch grant -- whose
+//      Student groups shows the gender charts only, never the year-to-date
+//      table (attendance-group-card.test.mjs runs both). Anyone with neither
+//      lands on Year so far; teachers and aides without the grant cannot open
+//      the tab at all. The grant reads, never sets: no box, picker or button
+//      on any tab changes anything.
 //   B. THE SCHOOL-DAY COUNT replaces the unsaved "School year started" and
 //      "Holidays" boxes: the days PowerSchool took attendance before today,
 //      PLUS TODAY ONCE THE YEAR TOTALS IT DIVIDES HOLD TODAY (their copy is
@@ -159,7 +161,7 @@ const FNS = [
   "escapeHtml", "wcSortCellText", "wcSortValue", "wcSortColumnType", "wcSortOrder", "wcSortSet", "wcSortItems", "wcSortTh",
   "wcSortRowCellText", "wcSortRowsHtml", "wcSortMarkHead", "wcSortApplyDom", "wcSortClick",
   "cashChipsHtml", "cashFoldKey", "cashFoldHtml", "wcForgetTab",
-  "attViewKey", "attGroupsAllowed", "attRememberView", "attRememberedView", "setAttendanceView", "drawAttendanceView",
+  "attViewKey", "attGroupsAllowed", "attGroupChartsAllowed", "attRememberView", "attRememberedView", "setAttendanceView", "drawAttendanceView",
   "refreshAttendanceView", "attMovedNoteKey", "attMovedNoteHtml", "renderAttMovedNote", "dismissAttMovedNote",
   "openAttGlossary", "closeAttGlossary", "attGlossaryKeydown", "attCopiedAt", "attRateBuiltAt", "attDataLineHtml", "renderAttDataLine",
   "ensureSchoolCalendar", "attTodayIso", "setAttendanceWindow", "setAttendanceWindowBand", "setAttendanceWindowKind",
@@ -184,7 +186,7 @@ function loadApp(src, G) {
     let currentUser = G.currentUser || null;
     let students = G.students || [];
     let riskSettings = {};
-    var WC_VIEW_KEY = 'wc_view_tab', WC_CASH_VIEW_KEY = 'wcCashAnalyticsView', WC_ATT_VIEW_KEY = 'wcAttendanceView';
+    var WC_VIEW_KEY = 'wc_view_tab', WC_CASH_VIEW_KEY = 'wcCashAnalyticsView', WC_ATT_VIEW_KEY = 'wcAttendanceView', WC_ATT_GROUP_KEY = 'wcAttGroup';
     const _wcSortState = new Map(), _wcSortRedraw = new Map(), _cashOpenFolds = new Set(), _attMovedNoteGone = new Set();
     let _attCache = G.attCache || null, _attBusy = false, _attView = 'watch', _attGradeFilter = 'all';
     let _attWindow = 'lastWeek', _attWinBand = 'some', _attWinKind = 'any', _attWinAll = false, _attWinSeq = 0;
@@ -206,6 +208,8 @@ function loadApp(src, G) {
     async function renderAttendanceWindow(f) { drawn.push('window' + (f ? '!' : '')); }
     async function renderPerfectAttendance(f) { drawn.push('perfect' + (f ? '!' : '')); }
     async function renderAttendanceSubgroups(f) { drawn.push('subgroup' + (f ? '!' : '')); }
+    async function renderAttendanceGroupChart(f) { drawn.push('groups' + (f ? '!' : '')); }
+    function forgetAttendanceGroupChart() { G.groupForgotten = (G.groupForgotten || 0) + 1; }
     async function renderAttendanceRate(f) { drawn.push('rate' + (f ? '!' : '')); }
     function fetchAttendanceRebuildHealth() { return Promise.resolve(); }
     function attendanceRebuildVerdict() { return G.verdict || { level: 'unknown', headline: '' }; }
@@ -298,7 +302,7 @@ console.log("\nA. The five tabs, one question each, in the house pill style");
   check("each tab asks its question at its top",
     ["Who has missed the most school this year?", "Who was out on the last school day, last week, or this month?",
      "Is attendance getting better?", "Who had no absences and no unexcused tardies?",
-     "Is chronic absence higher for some groups than for the school as a whole?"].every((q) => pane.includes(q)));
+     "Is attendance different for some groups of students, and is it changing?"].every((q) => pane.includes(q)));
   check("one title with the house calendar icon, no emoji",
     /<h2 class="page-title"><svg class="wc-icon"[^>]*><use href="#wci-calendar"><\/use><\/svg> Attendance Watch<\/h2>/.test(pane) && !/📅/.test(pane));
   check("ONE Refresh, in the header, aimed at the tab on screen",
@@ -346,23 +350,43 @@ console.log("\nA. Switching: one pressed button, one pane, aliases, and who sees
     const sg = w.dom.buttons.find((b) => b.getAttribute("data-attview") === "subgroup");
     check(`${role}: Student groups is shown and opens`, sg.hidden === false && w.app.state._attView === "subgroup" && w.dom.els.attSubgroupView.hidden === false);
   }
+  // THE GRANT SINCE 2026-10-12 (owner, 10/11): Student groups opens, for the
+  // gender charts only. Deliberately rewritten from "hidden for the grant".
   const aide = { id: "C1", role: "campusaide", attendanceWatch: true };
   const g = world({ user: aide });
   await g.app.setAttendanceView("subgroup");
   const sg = g.dom.buttons.find((b) => b.getAttribute("data-attview") === "subgroup");
-  check("the view-only grant: Student groups is hidden, and asking for it lands on Year so far",
-    sg.hidden === true && g.app.state._attView === "watch" && g.dom.els.attSubgroupView.hidden === true && !g.G.drawn.includes("subgroup"));
-  check("...four tabs for the grant, five for the roles",
-    g.dom.buttons.filter((b) => !b.hidden).length === 4);
+  check("the view-only grant: Student groups is shown and opens (the gender charts)",
+    sg.hidden === false && g.app.state._attView === "subgroup" && g.dom.els.attSubgroupView.hidden === false
+      && g.G.drawn.includes("groups") && g.G.drawn.includes("subgroup"));
+  check("...and the year-to-date table's wrapper is hidden for it before anything draws, shown for the roles",
+    g.dom.els.attSubgroupCard.hidden === true
+      && await (async () => { const w = world({ user: { id: "P1", role: "pbis" } }); await w.app.setAttendanceView("subgroup"); return w.dom.els.attSubgroupCard.hidden === false; })());
+  check("...five tabs for the grant, as for the roles",
+    g.dom.buttons.filter((b) => !b.hidden).length === 5);
+  // Anyone with neither the roles nor the grant (a previewed teacher, say):
+  // the tab is hidden and asking for it lands on Year so far.
+  const none = world({ user: { id: "T1", role: "teacher" } });
+  await none.app.setAttendanceView("subgroup");
+  const ns = none.dom.buttons.find((b) => b.getAttribute("data-attview") === "subgroup");
+  check("neither the roles nor the grant: Student groups is hidden, and asking for it lands on Year so far",
+    ns.hidden === true && none.app.state._attView === "watch" && none.dom.els.attSubgroupView.hidden === true && !none.G.drawn.includes("subgroup"));
+  check("...four tabs for them",
+    none.dom.buttons.filter((b) => !b.hidden).length === 4);
   check("teachers and aides without the grant cannot open Attendance Watch at all",
     !D.canOpenDisciplineTab("teacher", "attendance", { role: "teacher" }) && !D.canOpenDisciplineTab("campusaide", "attendance", { role: "campusaide" })
     && D.canOpenDisciplineTab("campusaide", "attendance", { role: "campusaide", attendanceWatch: true })
     && !D.disciplineTabsFor("teacher", { role: "teacher" }).includes("attendance"));
-  // TEETH: drop the role check and the grant sees Student groups.
+  // TEETH: drop the gate and someone with neither lands on Student groups.
   const broken = breakOnce(scriptSrc, "            if (_attView === 'subgroup' && !groupsOk) _attView = 'watch';\n", "", "gate");
-  const b = world({ src: broken, user: aide });
+  const b = world({ src: broken, user: { id: "T1", role: "teacher" } });
   await b.app.setAttendanceView("subgroup");
-  check("TEETH: without the gate the grant would land on Student groups", b.app.state._attView === "subgroup");
+  check("TEETH: without the gate someone with neither would land on Student groups", b.app.state._attView === "subgroup");
+  // TEETH: the tab gated on the TABLE check again shuts the grant out of its charts.
+  const tableGate = breakOnce(scriptSrc, "            const groupsOk = attGroupChartsAllowed();\n", "            const groupsOk = attGroupsAllowed();\n", "chart gate");
+  const tg = world({ src: tableGate, user: aide });
+  await tg.app.setAttendanceView("subgroup");
+  check("TEETH: the tab gated on the table check would land the grant on Year so far", tg.app.state._attView === "watch");
 }
 
 console.log("\nB. The school-day count: before today, plus today once the midday totals hold it; unknown said");
@@ -1078,12 +1102,18 @@ console.log("\nG. The remembered tab: this browser tab, this person, cleared at 
   try { await throwing.app.setAttendanceView("rate"); } catch (e) { threw = e; }
   check("storage that refuses (a private window) costs nothing: no error, the tab still opens", threw === null && throwing.app.state._attView === "rate");
   check("...and the remembered view falls back to Year so far", throwing.app.attRememberedView() === "watch");
-  // The grant's remembered Student groups lands on Year so far.
+  // A remembered Student groups opens Student groups for the grant (2026-10-12),
+  // and Year so far for someone with neither.
   const g = world({ user: { id: "C1", role: "campusaide", attendanceWatch: true } });
   g.session.setItem("wcAttendanceView", JSON.stringify({ who: "C1", view: "subgroup", win: "lastMonth" }));
   await g.app.setAttendanceView(g.app.attRememberedView());
-  check("a grant holder's remembered Student groups opens Year so far, and the period is kept",
-    g.app.state._attView === "watch" && g.app.state._attWindow === "lastMonth");
+  check("a grant holder's remembered Student groups opens Student groups, and the period is kept",
+    g.app.state._attView === "subgroup" && g.app.state._attWindow === "lastMonth");
+  const t = world({ user: { id: "T1", role: "teacher" } });
+  t.session.setItem("wcAttendanceView", JSON.stringify({ who: "T1", view: "subgroup", win: "lastMonth" }));
+  await t.app.setAttendanceView(t.app.attRememberedView());
+  check("...someone with neither: their remembered Student groups opens Year so far, and the period is kept",
+    t.app.state._attView === "watch" && t.app.state._attWindow === "lastMonth");
   check("the switch is wired: opening Attendance Watch restores it",
     /subtab === 'attendance'\)\s*\{[\s\S]{0,320}setAttendanceView\(attRememberedView\(\)\)/.test(scriptSrc));
   check("wcForgetTab removes the attendance key", /removeItem\(WC_ATT_VIEW_KEY\)/.test(liftFn(scriptSrc, "wcForgetTab")));
@@ -1139,6 +1169,7 @@ console.log("\nG. Teacher view and a change of person");
   v.app.wipeAttendanceViews();
   check("the wipe empties Year so far, Week or month, Perfect attendance and Student groups, drops the groups and goes back to Year so far",
     lists(v) === "" && v.app.state._sgCache === null && v.app.state._attView === "watch");
+  check("...and forgets the group chart (its card, answers, chosen group and sheet)", v.G.groupForgotten === 1);
   // Run through the real hook: same person, nothing goes; a new person, everything does.
   const hook = world({ override: viewer + "\nG.viewerChanged = () => cashViewerChanged();" });
   hook.G.viewerChanged();
@@ -1241,7 +1272,11 @@ console.log("\nA. The view-only grant reads, never sets");
       const handlers = [...pane.matchAll(/on(?:change|input|click)="([a-zA-Z]+)\(/g)].map((m) => m[1]);
       const ok = new Set(["refreshAttendanceView", "setAttendanceView", "openAttGlossary", "setAttendanceYearKind", "setAttendanceGradeFilter",
         "renderAttendanceWatch", "setAttendanceWindow", "setAttendanceWindowKind", "renderAttendanceWindow", "setAttendanceRateMeasure",
-        "setAbsenceRunSeries", "openPerfectAttendanceSheet", "setPerfectWindow", "setPerfectMonth", "renderPerfectAttendance"]);
+        "setAbsenceRunSeries", "openPerfectAttendanceSheet", "setPerfectWindow", "setPerfectMonth", "renderPerfectAttendance",
+        // The Student groups chart prints what it shows (2026-10-12); its
+        // group, short-week and last-year controls are drawn by the card and
+        // only choose what to look at (attendance-group-card.test.mjs).
+        "openGroupChartSheet"]);
       return handlers.every((h) => ok.has(h));
     })());
 }

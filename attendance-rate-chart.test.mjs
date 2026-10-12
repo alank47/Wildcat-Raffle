@@ -728,7 +728,7 @@ console.log("\nTHE SCREEN\n");
     ${liftFn("cashFoldHtml")}
     ${liftConst("AR_SERIES")}
     ${liftConst("AR_POLICY_WORDS")}
-    ${["arSeriesInfo", "arYearLabel", "arPeriodLabel", "arFmt", "arDefaultRange", "renderAttendanceRateBody"].map(liftFn).join("\n")}
+    ${["arSeriesInfo", "arYearLabel", "arPeriodLabel", "arFmt", "arDefaultRange", "arPlotHtml", "renderAttendanceRateBody"].map(liftFn).join("\n")}
     return { render: renderAttendanceRateBody, signIn: (u) => { currentUser = u; } };`)(R, { WildcatDiscipline: WD });
   const bodyAs = (user) => (res, r, st) => { screen.signIn(user); return screen.render(res, r, st); };
   const body = bodyAs({ role: "admin", email: "admin@x" });

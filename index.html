@@ -3548,7 +3548,8 @@
                          Discipline's switchAnalyticsTab clears .active on every
                          '.analytics-tabs .analytics-tab' on the page. Student
                          groups is hidden by setAttendanceView for anyone
-                         outside admin, superadmin and PBIS. -->
+                         outside admin, superadmin, PBIS and the Attendance
+                         Watch grant (who sees its gender charts only). -->
                     <div class="subtab-bar wc-att-views" id="attViewSwitch" role="group" aria-label="Attendance Watch views">
                         <button type="button" class="analytics-tab active" data-attview="watch" aria-pressed="true"
                                 onclick="setAttendanceView('watch')"><svg class="wc-icon" aria-hidden="true" focusable="false"><use href="#wci-history"></use></svg> Year so far</button>
@@ -3770,30 +3771,49 @@
                     </div><!-- /attPerfectView -->
 
                     <div id="attSubgroupView" hidden>
-                    <!-- CHRONIC ABSENTEEISM BY STUDENT GROUP.
-                         The equity report every state dashboard carries, and
-                         the one legitimate use of protected characteristics
-                         here: it describes how the SCHOOL is doing by group
-                         and never says anything about a named child.
+                    <!-- STUDENT GROUPS: two cards that count differently, and
+                         each says how (owner's decisions, 2026-10-11).
 
-                         SUPPRESSION IS SERVER-SIDE. A group under ten
-                         students never becomes a row, because "50% of
-                         Pacific Islander students" at a school with two of
-                         them is a sentence about one specific child.
+                         THE WEEKLY RATE BY GROUP (2026-10-12), first: one
+                         group against the whole school, week by week, whole
+                         days only, students who left included. The server
+                         lists the groups each person may see -- the
+                         Attendance Watch grant gets gender only -- and sends
+                         rates, never counts. See renderAttendanceGroupChart.
 
-                         ADMINS, SUPERADMINS AND PBIS ONLY: the button is
-                         hidden for anyone else and the server refuses them.
-
-                         THE BASELINE LEADS. Measured 2026-09-22: 52.4% of the
-                         whole school is chronically absent, so a 55% subgroup
-                         rate reads as alarming until you see it. -->
-                        <p class="wc-view-q">Is chronic absence higher for some groups than for the school as a whole?</p>
-                        <p class="wc-trend-note">Race and ethnicity, and English Learner groups, year to date, against the whole school. Groups under 10 students are never shown.</p>
-                        <div class="wc-card panel-card wc-sg-card">
-                            <div class="page-header wc-sg-header">
-                                <h3 class="wc-sg-title">Chronic absence by student group</h3>
+                         CHRONIC ABSENTEEISM BY STUDENT GROUP, second: the
+                         year-to-date table, any missed period, students
+                         enrolled today. ADMINS, SUPERADMINS AND PBIS ONLY:
+                         hidden for the grant (a BARE wrapper, so `hidden`
+                         cannot be beaten by a display rule) and refused by
+                         the server. Suppression is server-side: a group under
+                         ten students never becomes a row. The baseline leads:
+                         52.4% of the whole school was chronically absent on
+                         2026-09-22, so a 55% group reads as alarming until
+                         you see it. -->
+                        <p class="wc-view-q">Is attendance different for some groups of students, and is it changing?</p>
+                        <p class="wc-trend-note">Groups of students against the whole school, never a named child. A group too small to show without identifying students is never shown.</p>
+                        <div id="attGroupCard">
+                            <div class="wc-card panel-card wc-rc-card wc-ar-card wc-gr-card">
+                                <div class="page-header wc-rc-header">
+                                    <h3 class="wc-rc-title">Weekly attendance rate by student group</h3>
+                                    <!-- Prints exactly the chart on screen. See openGroupChartSheet(). -->
+                                    <button type="button" class="btn btn-secondary" id="attGroupPrint" onclick="openGroupChartSheet()"><svg class="wc-icon" aria-hidden="true" focusable="false"><use href="#wci-printer"></use></svg> Print / PDF</button>
+                                </div>
+                                <div class="wc-chips"><span class="wc-chip">Week by week &middot; this school year and last</span><span class="wc-chip wc-chip-unit">whole days only &middot; includes students who have left</span></div>
+                                <p class="wc-att-answer" id="attGroupAnswer"></p>
+                                <div id="attGroupBody"></div>
                             </div>
-                            <div id="attSubgroupBody"></div>
+                        </div>
+                        <div id="attSubgroupCard" hidden>
+                            <p class="wc-view-q wc-sg-q">Is chronic absence higher for some groups than for the school as a whole?</p>
+                            <p class="wc-trend-note">Race and ethnicity, and English Learner groups, year to date, against the whole school. Groups under 10 students are never shown.</p>
+                            <div class="wc-card panel-card wc-sg-card">
+                                <div class="page-header wc-sg-header">
+                                    <h3 class="wc-sg-title">Chronic absence by student group</h3>
+                                </div>
+                                <div id="attSubgroupBody"></div>
+                            </div>
                         </div>
                     </div><!-- /attSubgroupView -->
                 </div>

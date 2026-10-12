@@ -143,9 +143,31 @@ console.log("\nThe screens: two tabs, view only");
     /convexMutation\('staffInvites:setStaffAttendanceWatch'/.test(save) && /teacher\.attendanceWatch = watchResult\.on === true/.test(save));
   check("...before the staff table redraws", save.indexOf("setStaffAttendanceWatch") < save.indexOf("updateTeachersTable();"));
   check("the dialog has the checkbox", /id="editTeacherAttendanceWatch"/.test(read("./index.html")));
-  const view = s.slice(s.indexOf("function setAttendanceView(view)"), s.indexOf("function setAttendanceView(view)") + 900);
-  check("the 'By student group' view is hidden and refused for a grant holder",
-    /if \(_attView === 'subgroup' && !groupsOk\) _attView = 'watch';/.test(view) && /b\.hidden = !groupsOk;/.test(view));
+  // REWRITTEN DELIBERATELY (2026-10-12, owner 10/11): Student groups now
+  // OPENS for a grant holder -- for the gender charts only, which the server
+  // lists (runChartGroups.groupTypesFor) -- and the race and English Learner
+  // table on it is still the roles' alone. So the tab is gated on the chart
+  // check (the roles, or attendanceWatch === true), and the table on the
+  // role check, both in the browser and on the server.
+  const view = s.slice(s.indexOf("function setAttendanceView(view)"), s.indexOf("function setAttendanceView(view)") + 1600);
+  check("the Student groups TAB is gated on the chart check (roles, or the grant), and refused to anyone with neither",
+    /const groupsOk = attGroupChartsAllowed\(\);/.test(view)
+    && /if \(_attView === 'subgroup' && !groupsOk\) _attView = 'watch';/.test(view) && /b\.hidden = !groupsOk;/.test(view));
+  const charts = s.slice(s.indexOf("function attGroupChartsAllowed()"), s.indexOf("function attGroupChartsAllowed()") + 200);
+  check("...the chart check is the role check OR a real true grant, nothing looser",
+    /if \(attGroupsAllowed\(\)\) return true;\s*return !!\(currentUser && currentUser\.attendanceWatch === true\);/.test(charts));
+  check("...the TABLE on that tab keeps the role check: hidden in setAttendanceView, never drawn, never asked for",
+    /if \(sgTable\) sgTable\.hidden = !attGroupsAllowed\(\);/.test(view)
+    && /async function renderAttendanceSubgroups\(force\) \{[\s\S]{0,700}if \(!attGroupsAllowed\(\)\) \{\s*if \(tableWrap\) tableWrap\.hidden = true;/.test(s)
+    && /async function loadAttendanceSubgroups\(force, schoolDays\) \{[\s\S]{0,500}if \(!attGroupsAllowed\(\)\) \{\s*return \{ allowed: false/.test(s));
+  check("...and every other 'has Student groups?' caller still means the table (the role check)",
+    (s.match(/attGroupChartsAllowed\(\)/g) || []).length === 3
+    && /host\.innerHTML = attMovedNoteHtml\(attGroupsAllowed\(\)\);/.test(s));
+  const q = read("./convex/attendanceGroupRunChart.ts");
+  const rules = read("./convex/runChartGroups.ts");
+  check("the server: the group chart's read takes the grant for gender only, by a direct check, never canReadInsights",
+    /if \(staff\.attendanceWatch === true\) return \["gender"\];/.test(rules) && /const types = groupTypesFor\(staff\);/.test(q)
+    && !/canReadInsights/.test(q.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "")));
   check("thresholds are locked on EVERY render, not only the first",
     /if \(!_ewSettingsHydrated\) hydrateRiskSettingsInputs\(settings\);\s*applyRiskSettingsLock\(\);/.test(s));
   check("a cached pre-grant staff record cannot hide the grant",

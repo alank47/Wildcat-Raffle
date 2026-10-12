@@ -406,11 +406,17 @@ function breakOnce(src, from, to, label) {
   return src.slice(0, at) + to + src.slice(at + from.length);
 }
 
-/** The shipped renderer, drawing one answer into a fake panel. */
-async function drawGroups(src, res) {
+/**
+ * The shipped renderer, drawing one answer into a fake panel, as someone the
+ * table is for (`tableOk`, the three roles; since 2026-10-12 the Attendance
+ * Watch grant opens this tab for its gender charts and is NOT).
+ */
+async function drawGroups(src, res, tableOk = true) {
   const body = { innerHTML: "" };
-  const make = new Function("body", "res", `
-    const document = { getElementById: (id) => (id === "attSubgroupBody" ? body : null) };
+  const wrap = { hidden: false };
+  const make = new Function("body", "res", "wrap", "tableOk", `
+    const document = { getElementById: (id) => (id === "attSubgroupBody" ? body : id === "attSubgroupCard" ? wrap : null) };
+    const attGroupsAllowed = () => tableOk;
     const escapeHtml = (s) => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
     const attendanceSchoolDays = () => ({ known: true, days: 28 });
     const loadAttendanceRows = async () => {};
@@ -425,7 +431,8 @@ async function drawGroups(src, res) {
     ${liftFn(src, "renderAttendanceSubgroups")}
     return renderAttendanceSubgroups;
   `);
-  await make(body, res)(false);
+  await make(body, res, wrap, tableOk)(false);
+  drawGroups.wrap = wrap;
   return body.innerHTML;
 }
 
@@ -1154,14 +1161,15 @@ console.log("\nA TAB FROM BEFORE 10/11 IS TOLD, NOT MISLED (review, 2026-10-11)\
 }
 
 /** This build's loader, lifted, against a fake server: what it sends and what it keeps. */
-async function loaderSends(src, replies) {
+async function loaderSends(src, replies, tableOk = true) {
   const sent = [];
   const win = { WildcatAuth: { getSession: () => ({ idToken: "t" }),
     convexQuery: async (name, args) => { sent.push({ name, args }); return replies.shift(); } } };
-  const make = new Function("window", `let _sgCache = null;
+  const make = new Function("window", "tableOk", `let _sgCache = null;
+    const attGroupsAllowed = () => tableOk;
     ${liftFn(src, "loadAttendanceSubgroups")}
     return { load: loadAttendanceSubgroups, cache: () => _sgCache };`);
-  const app = make(win);
+  const app = make(win, tableOk);
   const kept = [];
   for (let i = 0, n = replies.length; i < n; i++) { await app.load(false, 28); kept.push(app.cache()); }
   return { sent, kept };
@@ -1173,6 +1181,27 @@ async function loaderSends(src, replies) {
       && c.args.schoolDays === 28), JSON.stringify(sent));
   check("...and keeps no 'not yet' answer, so the next draw asks again by itself",
     kept[0] === null && kept[1] && kept[1].forDays === 28);
+}
+{
+  // THE GRANT ON THIS TAB (2026-10-12): it opens Student groups for the
+  // gender charts. The table is neither asked for nor drawn for it.
+  const asGrant = await loaderSends(scriptSrc, [{ allowed: true, rows: [] }], false);
+  check("the grant: the loader sends the server nothing, and keeps nothing",
+    asGrant.sent.length === 0 && asGrant.kept[0] === null, JSON.stringify(asGrant.sent));
+  const pbis = await as("pbis", westbrook());
+  const html = await drawGroups(scriptSrc, pbis, false);
+  check("...and the renderer draws nothing and hides the table's wrapper",
+    html === "" && drawGroups.wrap.hidden === true);
+  const roles = await drawGroups(scriptSrc, pbis, true);
+  check("...while for the roles the wrapper is shown and the table drawn, labelled year to date, any missed period, today's roster",
+    drawGroups.wrap.hidden === false && /By race and ethnicity/.test(roles)
+      && /Year to date/.test(roles) && /any missed period counts/.test(roles) && /students enrolled today/.test(roles));
+  const noGate = breakOnce(scriptSrc, "            if (!attGroupsAllowed()) {\n                return { allowed: false, rows: [], reason: 'The year-to-date table is for administrators and the PBIS team.' };\n            }\n", "", "loader gate");
+  check("TEETH: a loader without the table check asks the server for the grant",
+    (await loaderSends(noGate, [{ allowed: true, rows: [] }], false)).sent.length === 1);
+  const noDraw = breakOnce(scriptSrc, "            if (!attGroupsAllowed()) {\n                if (tableWrap) tableWrap.hidden = true;", "            if (false) {\n                if (tableWrap) tableWrap.hidden = true;", "draw gate");
+  check("TEETH: a renderer without the table check would draw it for the grant",
+    /By race and ethnicity/.test(await drawGroups(noDraw, pbis, false)));
 }
 
 console.log("\nTHE SCREEN\n");
@@ -1200,9 +1229,9 @@ console.log("\nTHE SCREEN\n");
   check("the cache is keyed on the denominator, so correcting holidays re-asks",
     /_sgCache\.forDays === (schoolDays|basis\.days)/.test(scriptSrc),
     "otherwise the old divisor's rates stay on screen");
-  check("the header Refresh reaches this view",
+  check("the header Refresh reaches this view (the group chart and the table both)",
     /function refreshAttendanceView\(\) \{\s*return drawAttendanceView\(true\);/.test(scriptSrc)
-    && /else if \(view === 'subgroup'\) await renderAttendanceSubgroups\(force === true\);/.test(scriptSrc));
+    && /else if \(view === 'subgroup'\) await Promise\.all\(\[renderAttendanceGroupChart\(force === true\), renderAttendanceSubgroups\(force === true\)\]\);/.test(scriptSrc));
   check("every class the panel uses is in the stylesheet",
     ["wc-sg-card", "wc-sg-baseline", "wc-sg-base-n", "wc-sg-axis", "wc-sg-row",
      "wc-sg-figs", "wc-sg-pct", "wc-sg-delta", "wc-sg-fragile", "wc-sg-gap", "wc-sg-fix",

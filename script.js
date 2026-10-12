@@ -6639,6 +6639,8 @@
                             if (typeof _attWinCache !== 'undefined') _attWinCache.clear();
                             // The attendance-rate chart is rebuilt nightly.
                             _arCache = null;
+                            // ...and so are the group lines beside it.
+                            if (typeof dropAttendanceGroupCache === 'function') dropAttendanceGroupCache();
                             if (typeof pullLiveActivity === 'function') pullLiveActivity('idle');
                             
                             // DON'T call updateAllDisplays() - it redraws everything and is disruptive
@@ -18377,6 +18379,8 @@
         var WC_CASH_VIEW_KEY = 'wcCashAnalyticsView';
         /** Attendance Watch's open tab and Week or month period (2026-10-07): the same lifetime, and whose they were. */
         var WC_ATT_VIEW_KEY = 'wcAttendanceView';
+        // The group on the Student groups chart, per browser tab and person (2026-10-12).
+        var WC_ATT_GROUP_KEY = 'wcAttGroup';
 
         function wcRememberTab(tabName) {
             try {
@@ -18391,6 +18395,8 @@
             try { window.sessionStorage.removeItem(WC_CASH_VIEW_KEY); } catch (e) { /* as above */ }
             // And Attendance Watch's tab, for the same reason.
             try { window.sessionStorage.removeItem(WC_ATT_VIEW_KEY); } catch (e) { /* as above */ }
+            // And the group chosen on Student groups.
+            try { window.sessionStorage.removeItem(WC_ATT_GROUP_KEY); } catch (e) { /* as above */ }
         }
 
         /**
@@ -36443,15 +36449,29 @@
         }
 
         /**
-         * Student groups (a race, ethnicity and English Learner breakdown) and
-         * every change on Trends are for admins, superadmins and PBIS. A
-         * per-person Attendance Watch grant reads, never sets, and never sees
-         * Student groups (the server refuses it too, convex/attendanceSubgroups.ts).
+         * THE YEAR-TO-DATE TABLE on Student groups (a race, ethnicity and
+         * English Learner breakdown) and every change on Trends are for
+         * admins, superadmins and PBIS. A per-person Attendance Watch grant
+         * reads, never sets, and never sees the table (the server refuses it
+         * too, convex/attendanceSubgroups.ts). Every other caller that asks
+         * "does this person have Student groups?" means this table.
          */
         function attGroupsAllowed() {
             const D = window.WildcatDiscipline;
             return !!(D && typeof D.canEditInsightSettings === 'function'
                 && D.canEditInsightSettings(currentUser && currentUser.role));
+        }
+
+        /**
+         * THE STUDENT GROUPS TAB ITSELF (2026-10-12): the three roles, or the
+         * per-person Attendance Watch grant -- a real `true`, as the server
+         * reads it -- for the GENDER CHARTS ONLY (owner, 2026-10-11). Which
+         * lines she sees is the server's answer (runChartGroups.groupTypesFor),
+         * never decided here; this only decides whether the tab is drawn.
+         */
+        function attGroupChartsAllowed() {
+            if (attGroupsAllowed()) return true;
+            return !!(currentUser && currentUser.attendanceWatch === true);
         }
 
         /** Remember the tab and the Week or month period, for this browser tab and this person. Names, never. */
@@ -36509,17 +36529,26 @@
                 const el = document.getElementById(id);
                 if (el) el.value = '';
             });
+            // THE GROUP CHART (2026-10-12): its card, answers, chosen group and
+            // any open sheet go with the person leaving.
+            if (typeof forgetAttendanceGroupChart === 'function') forgetAttendanceGroupChart();
         }
 
         function setAttendanceView(view) {
             _attView = attViewKey(view);
-            // "Student groups" is a race/ethnicity breakdown, limited to
-            // admin, superadmin and PBIS by the approval record; a per-person
-            // Attendance Watch grant does not include it (the server refuses
-            // it too, convex/attendanceSubgroups.ts).
-            const groupsOk = attGroupsAllowed();
+            // "Student groups" opens for the three roles AND, since
+            // 2026-10-12, for a per-person Attendance Watch grant -- whose
+            // holder sees the gender charts only (the server lists them) and
+            // never the race and English Learner table, which stays limited
+            // to admin, superadmin and PBIS by the approval record (the server
+            // refuses it too, convex/attendanceSubgroups.ts).
+            const groupsOk = attGroupChartsAllowed();
             if (_attView === 'subgroup' && !groupsOk) _attView = 'watch';
             document.querySelectorAll('#attViewSwitch [data-attview="subgroup"]').forEach(b => { b.hidden = !groupsOk; });
+            // THE TABLE, hidden before anything draws, so the grant holder never
+            // sees its heading flash: renderAttendanceSubgroups says the same.
+            const sgTable = document.getElementById('attSubgroupCard');
+            if (sgTable) sgTable.hidden = !attGroupsAllowed();
             // What actually opened is what is remembered: a grant holder's
             // stored Student groups becomes Year so far here.
             attRememberView();
@@ -36576,7 +36605,7 @@
             if (_attView !== view) return;
             renderAttDataLine();
             if (view === 'perfect') await renderPerfectAttendance(force === true);
-            else if (view === 'subgroup') await renderAttendanceSubgroups(force === true);
+            else if (view === 'subgroup') await Promise.all([renderAttendanceGroupChart(force === true), renderAttendanceSubgroups(force === true)]);
             // The daily chart's data is the school-day calendar, just loaded above.
             else if (view === 'rate') await Promise.all([renderAttendanceRate(force === true), renderAbsenceRunChart(false)]);
             else if (view === 'window') await renderAttendanceWindow(force === true);
@@ -37460,6 +37489,12 @@
         const SG_DEAD_BAND = 1.5;
 
         async function loadAttendanceSubgroups(force, schoolDays) {
+            // NEVER ASKED FOR OUTSIDE THE ROLES (2026-10-12): the Attendance
+            // Watch grant opens this tab for the gender charts, and must not
+            // be sent -- or shown -- the table's refusal either.
+            if (!attGroupsAllowed()) {
+                return { allowed: false, rows: [], reason: 'The year-to-date table is for administrators and the PBIS team.' };
+            }
             if (_sgCache && _sgCache.forDays === schoolDays && !force) return _sgCache.res;
             const auth = window.WildcatAuth;
             const session = auth && auth.getSession && auth.getSession();
@@ -37493,6 +37528,16 @@
         async function renderAttendanceSubgroups(force) {
             const body = document.getElementById('attSubgroupBody');
             if (!body) return;
+            // THE TABLE IS FOR THE ROLES ONLY (2026-10-12). A grant holder has
+            // this tab for the gender charts above it; the race and English
+            // Learner table is neither asked for nor drawn for her.
+            const tableWrap = document.getElementById('attSubgroupCard');
+            if (!attGroupsAllowed()) {
+                if (tableWrap) tableWrap.hidden = true;
+                body.innerHTML = '';
+                return;
+            }
+            if (tableWrap) tableWrap.hidden = false;
 
             // THE TOTALS' COPY TIME FIRST: the server divides PowerSchool's
             // LIVE year totals, and today is in the count exactly when the
@@ -37536,8 +37581,11 @@
             const base = res.baseline || {};
             const pct = v => (v === null || v === undefined) ? '&mdash;' : escapeHtml(String(v)) + '%';
 
-            let html = cashChipsHtml(escapeHtml(attDaysRange(basis) + ' \u00b7 ' + res.schoolDays + ' school days'),
-                'share of students chronically absent', 'admins and the PBIS team only');
+            // SAYS HOW IT COUNTS (2026-10-12): the chart above counts whole
+            // days week by week, leavers included; this counts any missed
+            // period, year to date, for students enrolled today.
+            let html = cashChipsHtml(escapeHtml('Year to date \u00b7 ' + attDaysRange(basis) + ' \u00b7 ' + res.schoolDays + ' school days'),
+                'any missed period counts \u00b7 students enrolled today', 'admins and the PBIS team only');
             // THE SCHOOL'S OWN RATE, FIRST AND BIGGEST.
             html += '<div class="wc-sg-baseline">'
                 + '<div class="wc-sg-base-n">' + pct(base.chronicPct) + '</div>'
@@ -37662,6 +37710,743 @@
             if (about) html += cashFoldHtml('att-sg-about', 'About these numbers', about);
 
             body.innerHTML = html;
+        }
+
+        // =====================================================================
+        // THE WEEKLY ATTENDANCE RATE BY STUDENT GROUP (2026-10-12)
+        //
+        // The card at the top of Student groups: ONE group against the whole
+        // school, week by week, as a run chart. The owner's decisions of
+        // 2026-10-11, on record in docs/field-sourcing-approval.md:
+        //
+        //   WHO SEES WHICH LINE IS THE SERVER'S CALL, never this file's. The
+        //   drop-down lists exactly the groups attendanceGroupRunChart:groupWeeks
+        //   lists for the person signed in -- gender for admins, superadmins,
+        //   PBIS and the Attendance Watch grant; English Learner and the
+        //   classification for the three roles; Black or African American for
+        //   admins and superadmins only; Hispanic never. The grant holder sees
+        //   this card and NOT the year-to-date table under it, which is neither
+        //   asked for nor drawn for her (renderAttendanceSubgroups).
+        //
+        //   RATES ONLY. The server sends one rate per period and a group size
+        //   rounded to the nearest 5. Nothing on this card -- the screen, the
+        //   hover or the paper -- is a count of students or of absences.
+        //
+        //   ONE GROUP AGAINST THE WHOLE SCHOOL, never several lines at once:
+        //   the gap between two lines is not something the run-chart rules
+        //   test, and eight lines on one chart invite reading it. The whole
+        //   school is Trends' own line (WildcatRoster.runGroupRateModel), drawn
+        //   thin and dashed with no median or signal of its own: Trends reads it.
+        //
+        //   A SIGNAL HERE IS WORTH A LOOK, NOT A FINDING. Up to eight lines can
+        //   be checked, and with that many one is likely to show a signal by
+        //   chance. A group under 60 students is never coloured, and says that
+        //   one or two students can move it.
+        //
+        // NOT THE TABLE BELOW IT, and both say so: the table counts any missed
+        // period, year to date, for students enrolled today; this chart counts
+        // whole days, week by week, including students who have since left.
+        // =====================================================================
+        let _grGroup = null;          // the group on screen: an id from the server's list
+        let _grGhost = true;          // the faint "same week last year" line
+        let _grList = null;           // { who, at, res }: the groups this person may see
+        const _grAnswers = new Map(); // one ask -> { at, res }
+        let _grModel = null;          // the model last drawn; the hover reads it
+        let _grShown = null;          // what the card shows, which is what the paper prints
+        let _grSeq = 0;               // a newer draw abandons an older one
+        let _grFocus = null;          // the control to give focus back to after a redraw
+        const GR_KEEP_MS = 30 * 60 * 1000;
+
+        /** Why a week is not on the group's line -- said without saying which pool was small. */
+        const GR_WITHHELD_WORDS = {
+            small: 'on at least one of its school days, this line set against the whole school could have singled out '
+                + 'fewer than 10 students, so the whole week is held back',
+            'few-days': 'fewer than 2 school days, which would be a daily rate',
+            'no-data': 'no group figures for those days yet (they are built overnight)',
+            'not-asked': 'more than 4 weeks merged into one point, which is longer than the chart asks for'
+        };
+
+        /** The group's line: coloured, or -- a group under 60 -- never coloured. */
+        function grLook(chosen) {
+            return { label: (chosen && chosen.label) || 'Group', cls: chosen && chosen.small ? 'wc-gr-small' : 'wc-gr-grp' };
+        }
+
+        /** How many distinct lines this person can check: a line on two menus counts once. */
+        function grLinesChecked(list) {
+            return ((list && list.groups) || []).filter(g => !g.sameAs).length;
+        }
+
+        /** "Black or African American (small group)", "English Learner (the same line as Current English Learner)". */
+        function grOptionLabel(g, groups) {
+            let t = String(g.label || '');
+            if (g.sameAs) {
+                const same = (groups || []).find(x => x.id === g.sameAs);
+                t += ' (the same line as ' + (same ? same.label : 'another group') + ')';
+            }
+            if (g.small) t += ' (small group)';
+            return t;
+        }
+
+        /** "Oct 11, 3:15 AM": when the group lines were built. */
+        function grBuiltAt(iso) {
+            const d = iso ? new Date(iso) : null;
+            if (!d || isNaN(d.getTime())) return '';
+            return d.toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+        }
+
+        /** The screen's misrecord threshold, as a number the server's validator takes, or none. */
+        function grMisrecordAt() {
+            const n = riskSettings && riskSettings.misrecordAt;
+            return (typeof n === 'number' && isFinite(n)) ? n : null;
+        }
+
+        /** The controls: which group, short weeks (Trends' own setting) and last year. */
+        function grControlsHtml(list, chosenId, st) {
+            const groups = (list && list.groups) || [];
+            const types = [];
+            groups.forEach(g => { if (types.indexOf(g.typeLabel) === -1) types.push(g.typeLabel); });
+            const opts = types.map(t => '<optgroup label="' + escapeHtml(t) + '">'
+                + groups.filter(g => g.typeLabel === t).map(g => '<option value="' + escapeHtml(g.id) + '"'
+                    + (g.id === chosenId ? ' selected' : '') + '>' + escapeHtml(grOptionLabel(g, groups)) + '</option>').join('')
+                + '</optgroup>').join('');
+            const pills = [['merge', 'Merged'], ['separate', 'Kept separate'], ['drop', 'Left off']].map(pw =>
+                '<button type="button" class="analytics-tab' + (st.policy === pw[0] ? ' active' : '') + '" data-grpolicy="' + pw[0] + '"'
+                + ' aria-pressed="' + (st.policy === pw[0] ? 'true' : 'false') + '" onclick="setAttendanceGroupPolicy(\'' + pw[0] + '\')">'
+                + escapeHtml(pw[1]) + '</button>').join('');
+            return '<div class="wc-gr-controls">'
+                + '<label class="wc-att-grade-wrap wc-gr-pick" for="attGroupSelect"><span class="wc-att-grade-label">Group</span>'
+                + '<select id="attGroupSelect" class="wc-att-grade" onchange="setAttendanceGroup(this.value)">' + opts + '</select></label>'
+                + '<div class="wc-att-pills wc-gr-policy" role="group" aria-label="Short weeks: the same setting as Trends">'
+                + '<span class="wc-gr-pill-label">Short weeks</span>' + pills + '</div>'
+                + '<label class="wc-ar-toggle"><input type="checkbox" id="attGroupGhost"' + (st.ghost ? ' checked' : '')
+                + ' onchange="toggleAttendanceGroupGhost()"><span class="wc-ar-swatch wc-ar-ghost-key"></span>Same week last year</label>'
+                + '</div>';
+        }
+
+        /**
+         * The gap to the rest of the school, over this year's weeks on the
+         * chart, in one sentence. A small group says whether the gap is bigger
+         * than its weeks usually wobble -- measured on its own weeks
+         * (runGapSpread), so absences bunched in a few students count.
+         */
+        function grGapSentence(model, chosen) {
+            const vs = model && model.vsRest;
+            if (!vs || !vs.periods || !isFinite(Number(vs.points))) return '';
+            const pts = Math.abs(Number(vs.points));
+            const shown = Number(pts.toFixed(1));
+            let s = 'Over the ' + vs.periods + ' week' + (vs.periods === 1 ? '' : 's') + ' of ' + arYearLabel(vs.yearid)
+                + ' on the chart it averaged ' + (shown === 0 ? 'the same as'
+                    : shown.toFixed(1) + ' points ' + (Number(vs.points) > 0 ? 'above' : 'below')) + ' the rest of the school';
+            if (chosen && chosen.small && shown !== 0) {
+                const sp = model.gapSpread;
+                s += !sp ? ', too few weeks yet to tell that from chance'
+                    : sp.withinChance ? ', within chance for a group this size'
+                    : ', more than its weeks usually vary, though a group this size can move with one or two students';
+            }
+            return s + '.';
+        }
+
+        /**
+         * THE CARD'S ONE-LINE ANSWER. It LEADS WITH THE GROUP'S RUN-CHART
+         * STATUS -- a signal, or none -- and only then the gap to the rest of
+         * the school, averaged over this year's weeks: a one-week gap is not
+         * something any rule tests, and the rest of the school (not the whole,
+         * which contains the group) is the fair comparison.
+         */
+        function grAnswerText(model, chosen) {
+            if (!model || !chosen || !model.series || !model.series[0]) return '';
+            const a = model.series[0].analysis || {};
+            const label = chosen.label;
+            const shift = (a.shifts || [])[0];
+            const trend = (a.trends || [])[0];
+            let lead;
+            if (shift) lead = label + ': ' + shift.length + ' weeks in a row ' + shift.side + ' its median. Worth a look, not a finding.';
+            else if (trend) lead = label + ': ' + trend.length + ' weeks in a row going ' + trend.direction + '. Worth a look, not a finding.';
+            else if (a.runsVerdict === 'too few' || a.runsVerdict === 'too many') {
+                lead = label + ': ' + a.runs + ' runs, where ' + a.runsLimits.low + ' to ' + a.runsLimits.high
+                    + ' would be expected. Worth a look, not a finding.';
+            } else if (a.median === null || a.median === undefined) lead = label + ': no finished week to judge yet.';
+            else lead = label + ': no signal. Ordinary variation, not a change.';
+            const gap = grGapSentence(model, chosen);
+            return gap ? lead + ' ' + gap : lead;
+        }
+
+        /** The countdown to this year's own normal, or what the group's median is once the whole school's is frozen. */
+        function grMedianNote(model) {
+            const s = model.series[0];
+            if (model.wholeBaseline) {
+                const b = model.wholeBaseline;
+                return s.baseline
+                    ? 'The whole school’s weekly median is frozen (' + b.from + ' to ' + b.to + '). This group’s middle line is '
+                      + 'its OWN median over those same weeks, ' + arFmt(s.baseline.median, 'weeklyRate') + ' from ' + s.baseline.points
+                      + ' week' + (s.baseline.points === 1 ? '' : 's') + '. It is recalculated every time the chart is drawn, not frozen, '
+                      + 'so it can move if those weeks are rebuilt or the short-week setting changes.'
+                    : 'The whole school’s weekly median is frozen (' + b.from + ' to ' + b.to + '), but this group has no week '
+                      + 'on the chart in that stretch, so its middle line is read on ' + arYearLabel(model.newestYear) + ' only.';
+            }
+            const n = model.thisYear;
+            if (model.newestYear === null || n >= 10) return '';
+            const left = 10 - n;
+            const thisYear = model.axis.filter(p => p.yearid === model.newestYear);
+            let when = '';
+            const last = thisYear.length ? thisYear[thisYear.length - 1].to : null;
+            const d = new Date(String(last || model.newestFrom || '') + 'T12:00:00');
+            if (last && !isNaN(d.getTime())) {
+                d.setDate(d.getDate() + 7 * left);
+                when = d.toLocaleDateString(undefined, { month: 'long', day: 'numeric' });
+            }
+            return arYearLabel(model.newestYear) + ' has ' + (n ? n : 'no') + ' finished week' + (n === 1 ? '' : 's')
+                + (n ? '' : ' yet') + '. Until it has 10 (about ' + left + ' more' + (when ? ', around ' + when : '')
+                + '), the group’s middle line is provisional: the median of this year’s weeks so far, recalculated as weeks arrive.';
+        }
+
+        /**
+         * THE CARD, PURE: the model (WildcatRoster.runGroupRateModel), the
+         * server's list and the screen's choices in; markup, the one-line
+         * answer and the reading (which the paper repeats) out. A test runs it
+         * with no DOM and no network.
+         */
+        function renderAttendanceGroupBody(model, ctx) {
+            const list = (ctx && ctx.list) || {};
+            const chosen = ctx.chosen;
+            const look = grLook(chosen);
+            let html = grControlsHtml(list, chosen.id, { policy: ctx.policy, ghost: ctx.ghost });
+            const done = (extra, answer, reading) => ({ html: html + extra + grFoldsHtml(model, ctx), model: model,
+                                                        answer: answer || '', reading: reading || [] });
+            if (ctx.notice) return done('<p class="wc-att-basis-note">' + escapeHtml(ctx.notice) + '</p>');
+            if (!model) return done('<p class="wc-att-basis-note">Nothing to chart yet.</p>');
+            model.look = look;
+            const s = model.series[0];
+            const a = s.analysis;
+            const axis = model.axis;
+            if (axis.length < 2) {
+                return done('<p class="wc-att-basis-note">' + escapeHtml(axis.length
+                    ? 'Only one finished week so far. The chart fills in as weeks finish.'
+                    : 'Nothing to chart yet. The history is built overnight from PowerSchool; it fills in by itself.') + '</p>');
+            }
+            // A LINE THAT IS ALMOST ALL HELD BACK IS SAID IN WORDS, never drawn
+            // as an empty chart: an empty chart reads as a broken one, or as a
+            // group nobody was absent from.
+            if (s.points.length < 2 && model.withheld.some(w => w.why === 'small')) {
+                const words = chosen.label + ' cannot be drawn: on most school days, this line set against the whole school '
+                    + 'could single out a handful of students, so the server holds those weeks back. Nothing is wrong with '
+                    + 'the data, and nothing needs doing; the line appears by itself once the weeks can be shown.';
+                return done('<div class="wc-gr-explain"><p>' + escapeHtml(words) + '</p></div>', chosen.label + ': not shown for most weeks.', [words]);
+            }
+            // MOST OF THIS YEAR HELD BACK, though a few weeks can be drawn: said
+            // first, in words, so the gaps are not read as a broken chart.
+            const heldNow = model.withheld.filter(w => w.yearid === model.newestYear && w.why === 'small').length;
+            if (model.thisYear && heldNow * 2 > model.thisYear) {
+                html += '<div class="wc-gr-explain"><p>' + escapeHtml('Most of this year’s weeks of ' + chosen.label
+                    + ' cannot be shown: on those days, this line set against the whole school could single out a handful of '
+                    + 'students, so the server holds them back. Nothing is wrong with the data, and nothing needs doing.') + '</p></div>';
+            }
+            html += arPlotHtml(model, { ghost: !!ctx.ghostDrawn }, {
+                info: () => look,
+                refs: [{ label: 'Whole school', cls: 'wc-ar-all', points: model.reference.points }],
+                breakGaps: true,
+                plotCls: 'wc-gr-plot' + (chosen.small ? ' wc-gr-plain' : ''),
+                aria: chosen.label + ': weekly attendance rate against the whole school'
+            });
+
+            // --- the legend -------------------------------------------------
+            const how = a.median === null ? 'no finished week this year yet'
+                : s.baseline ? 'its own median over the whole school’s frozen weeks, recalculated'
+                : a.status === 'provisional' ? 'median so far (not frozen)' : 'median so far, from fewer than 10 weeks';
+            html += '<ul class="wc-ar-legend">'
+                + '<li><span class="wc-ar-swatch ' + look.cls + '"></span><strong>' + escapeHtml(chosen.label) + '</strong> '
+                + escapeHtml('about ' + chosen.size + ' students on a typical school day' + (chosen.small ? ', a small group' : '')
+                    + '; ' + (a.median === null ? how : how + ' ' + arFmt(a.median, 'weeklyRate'))) + '</li>'
+                + '<li><span class="wc-ar-swatch wc-gr-refkey wc-ar-all"></span><strong>Whole school</strong> '
+                + escapeHtml('the same line as Trends, drawn for reference; its median and signals are read there') + '</li>'
+                + '<li class="wc-ar-legend-key">' + escapeHtml('Flat line in the group\u2019s colour: its median. '
+                    + 'Haloed points: part of a signal. Ring: far from the rest. '
+                    + 'Hollow: a short week. A break in the line: a week not shown (see below). Numbers at the top: dates marked on Trends.'
+                    + (ctx.ghostDrawn ? ' Dotted line: the same week last year, for comparison; no warning is read from it.' : ''))
+                + '</li></ul>';
+
+            // --- what the chart says ----------------------------------------
+            const reading = [];
+            const checked = grLinesChecked(list);
+            const worth = 'Worth a look, not a finding: ' + checked + ' line' + (checked === 1 ? '' : 's')
+                + ' can be checked here, and with that many one is likely to show a signal by chance. Check the calendar, and '
+                + 'whether the whole school moved the same way on Trends, before reading anything into it.'
+                + (chosen.small ? ' A group this size can move with one or two students.' : '');
+            const span = (sp) => arPeriodLabel(s.points[sp.from], 'weeklyRate', false) + ' to ' + arPeriodLabel(s.points[sp.to], 'weeklyRate', false);
+            const items = [];
+            (a.shifts || []).forEach(sp => items.push(sp.length + ' weeks in a row ' + sp.side + ' its median (' + span(sp) + ').'));
+            (a.trends || []).forEach(sp => items.push(sp.length + ' weeks in a row going ' + sp.direction + ' (' + span(sp) + ').'));
+            if (a.runsVerdict === 'too few' || a.runsVerdict === 'too many') {
+                items.push(a.runs + ' runs, where ' + a.runsLimits.low + ' to ' + a.runsLimits.high + ' would be expected from '
+                    + a.usefulObservations + ' weeks.');
+            }
+            (a.astronomical || []).forEach(i => items.push(arPeriodLabel(s.points[i], 'weeklyRate', false) + ' ('
+                + arFmt(s.points[i].value, 'weeklyRate') + ') is far from the rest. Ask what happened that week before believing it.'));
+            html += '<h4 class="wc-ar-h">What the chart says</h4><div class="wc-ar-read">';
+            const note = (t) => { reading.push(t); html += '<p class="wc-att-basis-note">' + escapeHtml(t) + '</p>'; };
+            if (!a.frozen && a.notTested) note('Read on ' + arYearLabel(model.newestYear) + ' only: this year is becoming its own normal. Last year is drawn for comparison and not tested.');
+            if (items.length) {
+                reading.push(...items, worth);
+                html += '<ul class="wc-rc-signals">' + items.map(t => '<li class="wc-rc-signal wc-gr-look"><span class="wc-rc-rule">'
+                    + escapeHtml(t) + '</span><span class="wc-rc-why">' + escapeHtml(worth) + '</span></li>').join('') + '</ul>';
+            } else {
+                const none = 'No signal: ordinary variation, not a change. ' + (a.runsVerdict === 'not enough data'
+                    ? 'Fewer than 10 weeks off the median, too few for the runs test yet.'
+                    : a.runs + ' runs, as ' + a.usefulObservations + ' weeks would be expected to produce.');
+                reading.push(none);
+                html += '<p class="wc-rc-none">' + escapeHtml(none) + '</p>';
+            }
+            const gap = grGapSentence(model, chosen);
+            if (gap) note(gap.charAt(0).toUpperCase() + gap.slice(1));
+            const vs = ctx.ghostDrawn ? s.vsLastYear : null;
+            if (vs) {
+                const shown = Number(Math.abs(vs.avgDiff).toFixed(1));
+                const words = 'Against the same weeks last year: better in ' + vs.better + ' of ' + vs.n
+                    + (vs.worse ? ', worse in ' + vs.worse : '') + (vs.same ? ', equal in ' + vs.same : '') + ' ('
+                    + (shown === 0 ? 'no different on average'
+                        : shown.toFixed(1) + ' points ' + (vs.avgDiff > 0 ? 'higher' : 'lower') + ' on average, which is '
+                          + (vs.avgDiff > 0 ? 'better' : 'worse')) + ').';
+                reading.push(words);
+                html += '<p class="wc-ar-vs">' + escapeHtml(words) + '</p>';
+            }
+            // THE WEEKS NOT SHOWN, by reason, this year and last.
+            const held = {};
+            model.withheld.forEach(w => { held[w.why] = (held[w.why] || 0) + 1; });
+            Object.keys(held).forEach(k => {
+                const n = held[k];
+                note(n + ' week' + (n === 1 ? ' is' : 's are') + ' not on this line: ' + (GR_WITHHELD_WORDS[k] || GR_WITHHELD_WORDS['no-data']) + '.');
+            });
+            if (chosen.small) {
+                note('A small group: about ' + chosen.size + ' students on a typical school day. Its line is never coloured, '
+                    + 'because a group this size can move with one or two students.');
+            }
+            note(checked + ' line' + (checked === 1 ? '' : 's') + ' can be checked here. With that many, a signal on one of them '
+                + 'by chance alone is likely, so a group’s signal is worth a look, not a finding.');
+            const med = grMedianNote(model);
+            if (med) {
+                reading.push(med);
+                html += '<p class="wc-ar-countdown">' + escapeHtml(med) + '</p>';
+            }
+            html += '</div>';
+            return done('', grAnswerText(model, chosen), reading);
+        }
+
+        /** The two folds under the card: how it is counted, and the groups not charted. */
+        function grFoldsHtml(model, ctx) {
+            const list = (ctx && ctx.list) || {};
+            const foot = [
+                'Weekly attendance rate: 1 minus whole days absent, divided by the student-days the group was enrolled that week. '
+                    + 'A day missing only some periods counts as attended. The year-to-date table counts any missed period instead, '
+                    + 'so the two can disagree.',
+                'It includes students who have since left, for the weeks they were enrolled; the table counts students enrolled today.',
+                'The whole school is Trends’ own line, value for value. The short-week setting here is Trends’ setting too.',
+                'A group is charted only when it has at least ' + ((list.floors && list.floors.chart) || 30) + ' students on a typical '
+                    + 'school day this year, and a week is shown only when every school day in it has at least '
+                    + ((list.floors && list.floors.day) || 10) + ' in the group and nothing set against the whole school singles out '
+                    + 'fewer than ' + ((list.floors && list.floors.day) || 10) + '. Group sizes are rounded to the nearest '
+                    + ((list.floors && list.floors.sizeRoundedTo) || 5) + '. No counts are shown, only rates.'
+            ];
+            if ((list.groups || []).some(g => g.type === 'el' || g.type === 'ela')) {
+                foot.push('English Learner and language classification use each student’s status on each date, from PowerSchool’s '
+                    + 'history: a student reclassified in the spring moves group that week, which can move a line.');
+            }
+            if (model && model.pendingWeeks) foot.push('The newest short week waits for the week after it to finish, then joins it.');
+            if (ctx && ctx.skipped) foot.push(ctx.skipped + ' stretch' + (ctx.skipped === 1 ? ' was' : 'es were') + ' too long to ask for.');
+            foot.push('The week in progress joins the chart once it is over. Updated nightly'
+                + (list.asOf ? '; the group lines were last built ' + grBuiltAt(list.asOf) : '') + '.');
+            let out = cashFoldHtml('att-gr-how', 'How this chart is counted',
+                '<p class="wc-att-basis-note">' + escapeHtml(foot.join(' ')) + '</p>');
+            const gaps = list.unavailable || [];
+            if (gaps.length) {
+                out += cashFoldHtml('att-gr-gaps', 'Groups not charted, and why', '<div class="wc-sg-gaps">' + gaps.map(u =>
+                    '<div class="wc-sg-gap"><strong>' + escapeHtml(u.group) + '</strong><div class="wc-sub">'
+                    + escapeHtml(u.reason) + '</div></div>').join('') + '</div>');
+            }
+            return out;
+        }
+
+        /** The group card's readout for one week: rates and the gap, never a count. */
+        function grTipParts(m, i) {
+            const s = m.series[0];
+            const look = m.look || { label: 'Group', cls: 'wc-gr-grp' };
+            const pt = s ? s.points.find(q => q.x === i) : null;
+            const ref = m.reference.points.find(q => q.x === i) || null;
+            const held = (m.withheld || []).find(w => w.x === i) || null;
+            const a = s ? s.analysis : {};
+            let sub = '';
+            if (pt) {
+                const bits = [];
+                if (pt.rest !== null) {
+                    const d = Number((pt.value - pt.rest).toFixed(1));
+                    bits.push(d === 0 ? 'the same as the rest of the school' : Math.abs(d).toFixed(1) + ' points '
+                        + (d > 0 ? 'above' : 'below') + ' the rest of the school (' + arFmt(pt.rest, 'weeklyRate') + ')');
+                }
+                if (a.median !== null && a.median !== undefined) {
+                    bits.push(pt.value > a.median ? 'above its median' : pt.value < a.median ? 'below its median' : 'on its median');
+                }
+                const gi = s.points.indexOf(pt);
+                const g = _grGhost && gi >= 0 && s.lastYear ? s.lastYear[gi] : null;
+                if (g) bits.push('same week last year ' + arFmt(g.value, 'weeklyRate'));
+                sub = bits.join(', ');
+            } else if (held) {
+                sub = 'Not shown: ' + (GR_WITHHELD_WORDS[held.why] || GR_WITHHELD_WORDS['no-data']);
+            }
+            const rows = '<tr><th><span class="wc-ar-swatch ' + look.cls + '"></span>' + escapeHtml(look.label) + '</th><td>'
+                + escapeHtml(pt ? arFmt(pt.value, 'weeklyRate') : '—') + '</td></tr>'
+                + (sub ? '<tr class="wc-ar-tip-sub"><td colspan="2">' + escapeHtml(sub) + '</td></tr>' : '')
+                + '<tr><th><span class="wc-ar-swatch wc-gr-refkey wc-ar-all"></span>Whole school</th><td>'
+                + escapeHtml(ref ? arFmt(ref.value, 'weeklyRate') : '—') + '</td></tr>';
+            const extra = [];
+            if (ref) {
+                extra.push(ref.schoolDays + ' school day' + (ref.schoolDays === 1 ? '' : 's') + ', ' + ref.from + ' to ' + ref.to);
+                if (ref.merged && ref.parts && ref.parts.length > 1) {
+                    extra.push('Includes the short week of ' + ref.parts.filter(pp => pp.flag).map(pp => pp.week).join(', ') + ', merged in');
+                }
+                if (ref.flag) extra.push('Flagged: ' + (ref.flag === 'short' ? 'fewer' : 'more') + ' student-days than usual by more than 25%');
+            }
+            (m.notes || []).filter(nt => nt.x === i).forEach(nt => extra.push('Marked: ' + nt.label + ' (' + nt.date + ')'));
+            return { rows: rows, extra: extra };
+        }
+
+        /** A failure to load, said in words. Never "refresh the page". */
+        function grFailure(e) {
+            const msg = (e && e.message) || String(e);
+            if (/\b401\b|unauthor/i.test(msg)) {
+                return { allowed: false, failed: true, reason: 'Your sign-in expired. Sign in again to load the group charts.' };
+            }
+            if (/Could not find|not found|no such function/i.test(msg)) {
+                return { allowed: false, failed: true, reason: 'The group charts are not switched on yet. They arrive with an update; nothing needs doing here.' };
+            }
+            return { allowed: false, failed: true, reason: 'The group charts could not be loaded: ' + msg };
+        }
+
+        /** The groups this person may see. A "not yet" answer is never kept: the next draw asks again. */
+        async function grLoadList(force) {
+            const who = String((currentUser && currentUser.id) || '');
+            if (_grList && _grList.who === who && !force && Date.now() - _grList.at < GR_KEEP_MS) return _grList.res;
+            const auth = window.WildcatAuth;
+            const session = auth && auth.getSession && auth.getSession();
+            if (!auth || !session) return { allowed: false, failed: true, reason: 'The group charts come from the SIS, which needs a Microsoft sign-in.' };
+            try {
+                const res = await auth.convexQuery('attendanceGroupRunChart:groupWeeks', {}, session.idToken);
+                if (res && res.allowed === true && !res.notYet) _grList = { who: who, at: Date.now(), res: res };
+                return res;
+            } catch (e) { return grFailure(e); }
+        }
+
+        /** One group's rates for the periods named. Kept for half an hour, like the Trends rows they line up with. */
+        async function grAsk(group, periods, misrecordAt, force) {
+            const who = String((currentUser && currentUser.id) || '');
+            const args = { group: group, periods: periods };
+            if (misrecordAt !== null && misrecordAt !== undefined) args.misrecordAt = misrecordAt;
+            const key = who + '|' + JSON.stringify(args);
+            const held = _grAnswers.get(key);
+            if (held && !force && Date.now() - held.at < GR_KEEP_MS) return held.res;
+            const auth = window.WildcatAuth;
+            const session = auth && auth.getSession && auth.getSession();
+            if (!auth || !session) return { allowed: false, failed: true, reason: 'The group charts come from the SIS, which needs a Microsoft sign-in.' };
+            try {
+                const res = await auth.convexQuery('attendanceGroupRunChart:groupWeeks', args, session.idToken);
+                if (res && res.allowed === true && !res.notYet && !res.invalid && !res.refused) {
+                    if (_grAnswers.size >= 24) _grAnswers.delete(_grAnswers.keys().next().value);
+                    _grAnswers.set(key, { at: Date.now(), res: res });
+                }
+                return res;
+            } catch (e) { return grFailure(e); }
+        }
+
+        /** The answer for anyone who may not see the card, or before anything loads. */
+        function grSay(host, text) {
+            host.innerHTML = '<p class="wc-att-basis-note">' + escapeHtml(text) + '</p>';
+        }
+
+        /**
+         * Draw the card. The Trends rows decide the weeks; the server's list
+         * decides the groups; the server's answer is the group's line.
+         */
+        async function renderAttendanceGroupChart(force) {
+            const wrap = document.getElementById('attGroupCard');
+            const host = document.getElementById('attGroupBody');
+            const ans = document.getElementById('attGroupAnswer');
+            if (!host) return;
+            const seq = ++_grSeq;
+            if (!attGroupChartsAllowed()) {
+                if (wrap) wrap.hidden = true;
+                host.innerHTML = '';
+                if (ans) ans.textContent = '';
+                _grModel = null; _grShown = null;
+                return;
+            }
+            if (wrap) wrap.hidden = false;
+            const R = window.WildcatRoster;
+            if (!R || typeof R.runGroupRateModel !== 'function') {
+                grSay(host, 'The chart rules did not load yet. They arrive with the next update.');
+                return;
+            }
+            if (!_grModel || force === true) host.innerHTML = '<p class="wc-att-basis-note">Loading the group lines&hellip;</p>';
+            // 1. THE TRENDS ROWS: the whole-school line and the weeks, from the
+            //    copy Trends draws (half an hour at most, as there).
+            let res = _arCache;
+            if (!res || force === true || Date.now() - _arCacheAt > GR_KEEP_MS) res = await loadAttendanceRate(true);
+            if (seq !== _grSeq) return;
+            if (!res || res.allowed === false) {
+                if (ans) ans.textContent = '';
+                grSay(host, (res && res.reason) || 'The attendance rate is not available to your access level.');
+                return;
+            }
+            // 2. THE GROUPS THIS PERSON MAY SEE, as the server lists them.
+            const list = await grLoadList(force === true);
+            if (seq !== _grSeq) return;
+            if (!list || list.allowed !== true || list.notYet) {
+                if (ans) ans.textContent = '';
+                _grModel = null; _grShown = null;
+                host.innerHTML = '<p class="wc-att-basis-note">' + escapeHtml((list && (list.notYet || list.reason))
+                    || 'The group charts are not available to your access level.') + '</p>'
+                    + (list && list.notYet ? grFoldsHtml(null, { list: list }) : '');
+                return;
+            }
+            const groups = list.groups || [];
+            if (!groups.length) {
+                if (ans) ans.textContent = '';
+                _grModel = null; _grShown = null;
+                host.innerHTML = '<p class="wc-att-basis-note">No group can be charted for you yet.</p>' + grFoldsHtml(null, { list: list });
+                return;
+            }
+            if (!groups.some(g => g.id === _grGroup)) {
+                const kept = grRememberedGroup();
+                _grGroup = groups.some(g => g.id === kept) ? kept : groups[0].id;
+            }
+            const chosen = groups.find(g => g.id === _grGroup);
+            // 3. THE WEEKS, decided on the whole-school days exactly as Trends
+            //    decides them, and the group's rate for each.
+            const realToday = wcIsoDay(new Date());
+            const opts = { policy: _arPolicy, settings: riskSettings, today: arAsOf(res, realToday) };
+            const ask = R.runGroupAsk(res, opts);
+            const mr = grMisrecordAt();
+            let answer = null, ghost = null;
+            if (ask.periods.length) {
+                answer = await grAsk(chosen.id, ask.periods, mr, force === true);
+                if (seq !== _grSeq) return;
+                if (answer && answer.allowed === true && !answer.invalid && !answer.refused && _grGhost && ask.ghost.length) {
+                    ghost = await grAsk(chosen.id, ask.ghost, mr, force === true);
+                    if (seq !== _grSeq) return;
+                    // No comparison rather than a wrong one.
+                    if (!ghost || ghost.allowed !== true || ghost.invalid || ghost.refused) ghost = null;
+                }
+            }
+            const ctx = { list: list, chosen: chosen, policy: _arPolicy, ghost: _grGhost, ghostDrawn: !!ghost, skipped: ask.skipped };
+            if (answer && (answer.allowed !== true || answer.refused || answer.invalid || answer.notYet)) {
+                ctx.notice = answer.refused || answer.invalid || answer.notYet || answer.reason || 'This group could not be loaded.';
+            }
+            const model = ctx.notice ? null : R.runGroupRateModel(res, answer, Object.assign({ group: chosen.id, ghost: ghost }, opts));
+            const out = renderAttendanceGroupBody(model, ctx);
+            _grModel = out.model;
+            _grShown = out.model ? { model: out.model, chosen: chosen, list: list, answer: out.answer, reading: out.reading,
+                                     ghost: !!ghost, policy: _arPolicy } : null;
+            host.innerHTML = out.html;
+            if (ans) ans.textContent = out.answer;
+            wireAttendanceRateHover('attGroupBody', () => _grModel, grTipParts);
+            // ON A PHONE THE PLOT SCROLLS INSIDE ITS CARD: open it on this
+            // year's weeks, the ones being read, not on last August.
+            const plot = host.querySelector('.wc-ar-plot');
+            if (plot && plot.scrollWidth > plot.clientWidth) plot.scrollLeft = plot.scrollWidth;
+            // FOCUS STAYS ON THE CONTROL THAT WAS USED: the redraw replaces it.
+            const f = _grFocus;
+            _grFocus = null;
+            const el = f === 'select' ? document.getElementById('attGroupSelect')
+                : f === 'ghost' ? document.getElementById('attGroupGhost')
+                : f ? host.querySelector('[data-grpolicy="' + f + '"]') : null;
+            if (el && typeof el.focus === 'function') el.focus();
+        }
+
+        /** Remember the group for this browser tab and this person (names, never). Not in teacher view. */
+        function grRememberGroup(id) {
+            if (typeof isPreviewingTeacher === 'function' && isPreviewingTeacher()) return;
+            try {
+                window.sessionStorage.setItem(WC_ATT_GROUP_KEY, JSON.stringify({
+                    who: String((currentUser && currentUser.id) || ''), group: String(id || '') }));
+            } catch (e) { /* private mode: the first group next time */ }
+        }
+
+        /** The group this person last had in this browser tab. Never trusted: the server's list decides. */
+        function grRememberedGroup() {
+            let saved = null;
+            try { saved = JSON.parse(window.sessionStorage.getItem(WC_ATT_GROUP_KEY) || 'null'); } catch (e) { saved = null; }
+            if (!saved || typeof saved !== 'object') return '';
+            if (String(saved.who || '') !== String((currentUser && currentUser.id) || '')) return '';
+            return String(saved.group || '');
+        }
+
+        function setAttendanceGroup(id) {
+            _grGroup = String(id || '');
+            grRememberGroup(_grGroup);
+            _grFocus = 'select';
+            return renderAttendanceGroupChart(false);
+        }
+
+        /** Short weeks: TRENDS' OWN SETTING, so the two charts never group weeks differently. */
+        function setAttendanceGroupPolicy(p) {
+            _arPolicy = (p === 'separate' || p === 'drop') ? p : 'merge';
+            _grFocus = _arPolicy;
+            return renderAttendanceGroupChart(false);
+        }
+
+        function toggleAttendanceGroupGhost() {
+            _grGhost = !_grGhost;
+            _grFocus = 'ghost';
+            return renderAttendanceGroupChart(false);
+        }
+
+        /** The idle drop: the lines are rebuilt nightly, so a tab left open asks again. */
+        function dropAttendanceGroupCache() {
+            _grList = null;
+            _grAnswers.clear();
+        }
+
+        /**
+         * A DIFFERENT PERSON ON THIS PAGE (wipeAttendanceViews): the card,
+         * the answers, the choice and any open sheet go. The remembered group
+         * stays in this browser tab under its owner's id, and sign-out
+         * (wcForgetTab) removes it.
+         */
+        function forgetAttendanceGroupChart() {
+            _grSeq++;
+            dropAttendanceGroupCache();
+            _grGroup = null;
+            _grGhost = true;
+            _grModel = null;
+            _grShown = null;
+            _grFocus = null;
+            const host = document.getElementById('attGroupBody');
+            if (host) host.innerHTML = '';
+            const ans = document.getElementById('attGroupAnswer');
+            if (ans) ans.textContent = '';
+            closeGroupChartSheet();
+        }
+
+        // ---- The group chart on paper (#wcPrintSheet, as Perfect attendance) ----
+        //
+        // IT PRINTS WHAT THE CARD SHOWS (_grShown): the same group, weeks,
+        // short-week setting and lines, never a fresh read. Rates only, as on
+        // screen, and readable in greyscale: the group solid, the whole school
+        // dashed, last year dotted. Printing is approved for the same people
+        // who see each line (owner, 2026-10-11).
+        let _grPrintDone = null;
+
+        /** The sheet's content, PURE, so a test can read exactly what goes on paper. */
+        function groupChartSheetHtml(shown, printedAt) {
+            const m = shown.model;
+            const c = shown.chosen;
+            const axis = m.axis;
+            const range = axis.length ? axis[0].from + ' to ' + axis[axis.length - 1].to : '';
+            const sub = [escapeHtml(range), 'whole days only, including students who have left', 'rates only, no counts']
+                .concat(shown.list && shown.list.asOf ? ['group lines built ' + escapeHtml(grBuiltAt(shown.list.asOf))] : [])
+                .concat(['printed ' + escapeHtml(printedAt)]);
+            const look = grLook(c);
+            const plot = arPlotHtml(m, { ghost: !!shown.ghost }, {
+                info: () => look,
+                refs: [{ label: 'Whole school', cls: 'wc-ar-all', points: m.reference.points }],
+                breakGaps: true,
+                plotCls: 'wc-gr-plot wc-gr-print' + (c.small ? ' wc-gr-plain' : ''),
+                aria: c.label + ': weekly attendance rate against the whole school'
+            });
+            return '<div class="print-toolbar" data-gr-sheet>'
+                + '<div class="print-toolbar-row"><strong>' + escapeHtml('Weekly attendance rate: ' + c.label) + '</strong>'
+                + '<button type="button" class="btn" onclick="printGroupChartSheet()"><svg class="wc-icon" aria-hidden="true" focusable="false"><use href="#wci-printer"></use></svg> Print or save as PDF</button>'
+                + '<button type="button" class="btn btn-secondary" onclick="closeGroupChartSheet()">Close</button></div>'
+                + '<p class="receipt-meta">The chart on screen. To get a PDF: press Print, then choose “Save as PDF” as the destination.</p>'
+                + '</div><div class="print-pages"><section class="print-page wc-gr-sheet">'
+                + '<h2>' + escapeHtml('Weekly attendance rate — ' + c.label + ' against the whole school') + '</h2>'
+                + '<p class="print-sub">' + sub.join(' · ') + '</p>'
+                + plot
+                + '<p class="print-sub">' + escapeHtml('Solid line: ' + c.label + '. Dashed line: the whole school (Trends’ line). '
+                    + (shown.ghost ? 'Dotted line: the same week last year. ' : '') + 'Short weeks: '
+                    + (AR_POLICY_WORDS[shown.policy] || AR_POLICY_WORDS.merge) + '.') + '</p>'
+                + '<p class="wc-gr-print-answer"><strong>' + escapeHtml(shown.answer) + '</strong></p>'
+                + '<ul class="wc-gr-print-read">' + (shown.reading || []).map(t => '<li>' + escapeHtml(t) + '</li>').join('') + '</ul>'
+                + '<p class="print-sub">' + escapeHtml('Groups under ' + (((shown.list || {}).floors || {}).chart || 30)
+                    + ' students on a typical school day are not charted, and a week is held back when it could single out fewer than '
+                    + (((shown.list || {}).floors || {}).day || 10) + ' students. No counts are printed: rates only.') + '</p>'
+                + '</section></div>';
+        }
+
+        /** The sheet, while it is still this chart's. */
+        function groupChartSheetOpen() {
+            const sheet = document.getElementById('wcPrintSheet');
+            return sheet && sheet.getAttribute('data-sheet') === 'groups' && sheet.querySelector('[data-gr-sheet]') ? sheet : null;
+        }
+
+        function openGroupChartSheet() {
+            const shown = _grShown;
+            if (!shown || !shown.model) {
+                showAlert('ℹ️ There is no group chart to print yet. Wait for the chart to appear, then try again.');
+                return;
+            }
+            // REPLACED, NOT REUSED: an open purchase list, perfect attendance or
+            // Reflection Room sheet goes, with any print it left half-finished.
+            if (typeof closePerfectAttendanceSheet === 'function') closePerfectAttendanceSheet();
+            if (typeof closeReflectionSheet === 'function') closeReflectionSheet();
+            closeGroupChartSheet();
+            const prior = document.getElementById('wcPrintSheet');
+            if (prior) prior.remove();
+            document.body.classList.remove('wc-printing');
+            const sheet = document.createElement('div');
+            sheet.id = 'wcPrintSheet';
+            sheet.className = 'print-sheet';
+            sheet.setAttribute('role', 'dialog');
+            sheet.setAttribute('aria-label', 'Weekly attendance rate by student group');
+            sheet.setAttribute('data-sheet', 'groups');
+            const printedAt = new Date().toLocaleString([], { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' });
+            sheet.innerHTML = groupChartSheetHtml(shown, printedAt);
+            document.body.appendChild(sheet);
+            // Ctrl+P while the sheet is open prints the sheet, as the button does.
+            window.addEventListener('beforeprint', groupChartBeforePrint);
+        }
+
+        function groupChartBeforePrint() {
+            if (_grPrintDone) return;
+            if (!groupChartSheetOpen()) { window.removeEventListener('beforeprint', groupChartBeforePrint); return; }
+            beginGroupChartPrint();
+        }
+
+        function printGroupChartSheet() {
+            if (!groupChartSheetOpen()) return;
+            beginGroupChartPrint();
+            try { window.print(); }
+            catch (e) { console.warn('[group chart] print failed:', e && e.message); endGroupChartPrint(); }
+        }
+
+        /** The title names the PDF for the length of the print, and is always put back. */
+        function beginGroupChartPrint() {
+            endGroupChartPrint();
+            const titleWas = document.title;
+            const shown = _grShown;
+            let timer = null;
+            const done = function () {
+                if (_grPrintDone !== done) return;
+                _grPrintDone = null;
+                window.removeEventListener('afterprint', done);
+                clearTimeout(timer);
+                document.body.classList.remove('wc-printing');
+                document.title = titleWas;
+            };
+            _grPrintDone = done;
+            document.title = 'Weekly attendance rate - ' + ((shown && shown.chosen && shown.chosen.label) || 'student group');
+            document.body.classList.add('wc-printing');
+            window.addEventListener('afterprint', done);
+            timer = setTimeout(done, 60000);
+        }
+
+        function endGroupChartPrint() {
+            if (_grPrintDone) _grPrintDone();
+        }
+
+        function closeGroupChartSheet() {
+            endGroupChartPrint();
+            window.removeEventListener('beforeprint', groupChartBeforePrint);
+            const sheet = document.getElementById('wcPrintSheet');
+            if (sheet && sheet.getAttribute('data-sheet') === 'groups') sheet.remove();
+            if (!document.getElementById('wcPrintSheet')) document.body.classList.remove('wc-printing');
         }
 
         // ========================================
@@ -37866,62 +38651,26 @@
         }
 
         /**
-         * The whole panel. PURE: the server's answer, the rules module and the
-         * screen's choices in; markup and the model out. A test runs it with no
-         * DOM and no network.
+         * THE PLOT ITSELF: scale, gridlines, school years, marked dates, each
+         * line with its median and signals, date labels and the hover columns.
+         * Shared by Trends and the Student groups card (2026-10-12), so both
+         * draw a run chart the same way. PURE: model and settings in, markup out.
+         *
+         * `look` (all optional; Trends passes none and draws exactly as before):
+         *   info(key)  the line's { label, cls } -- arSeriesInfo for Trends
+         *   refs       [{ label, cls, points }] reference lines: thin, dashed,
+         *              no median, no signal (the group card's whole school)
+         *   breakGaps  break a line where a point is missing (a withheld week)
+         *   plotCls    an extra class on the plot (the group card's styling)
+         *   aria       the chart's accessible name
          */
-        function renderAttendanceRateBody(res, R, st) {
-            if (!res || res.allowed === false) {
-                return { html: '<p class="wc-att-basis-note">' +
-                    escapeHtml((res && res.reason) || 'Not available to your access level.') + '</p>', model: null };
-            }
-            const measure = st.measure;
-            const shownKeys = AR_SERIES.filter(s => st.shown[s.key]).map(s => s.key);
-            const base = { measure: measure, policy: st.policy, series: shownKeys, settings: st.settings, today: st.today };
-            const first = R.runRateModel(res, Object.assign({}, base, { candidate: null }));
-            const cand = st.cand && st.cand.from && st.cand.to ? st.cand : arDefaultRange(first.axis, first.newestYear);
-            const model = R.runRateModel(res, Object.assign({}, base, { candidate: cand }));
-            model.candidateRange = cand;
+        function arPlotHtml(model, st, look) {
+            const lk = look || {};
+            const infoOf = lk.info || arSeriesInfo;
+            const refs = lk.refs || [];
+            const measure = model.measure;
             const meta = model.meta;
             const axis = model.axis;
-
-            // --- the controls ---------------------------------------------
-            let html = '<div class="wc-ar-controls">'
-                + '<div class="wc-ar-lines" role="group" aria-label="Which lines to show">'
-                + AR_SERIES.map(s => '<label class="wc-ar-toggle"><input type="checkbox"'
-                    + (st.shown[s.key] ? ' checked' : '')
-                    + ' onchange="toggleAttendanceRateSeries(\'' + s.key + '\')">'
-                    + '<span class="wc-ar-swatch ' + s.cls + '"></span>' + escapeHtml(s.label) + '</label>').join('')
-                + '</div>';
-            const hasGhost = model.series.some(s => (s.lastYear || []).some(Boolean));
-            if (hasGhost) {
-                html += '<label class="wc-ar-toggle"><input type="checkbox"' + (st.ghost ? ' checked' : '')
-                    + ' onchange="toggleAttendanceRateGhost()"><span class="wc-ar-swatch wc-ar-ghost-key"></span>'
-                    + escapeHtml('Same ' + meta.period + ' last year') + '</label>';
-            }
-            if (measure === 'weeklyRate') {
-                html += '<label class="wc-ar-policy">Short weeks '
-                    + '<select onchange="setAttendanceRatePolicy(this.value)" aria-label="What to do with short weeks">'
-                    + ['merge', 'separate', 'drop'].map(p => '<option value="' + p + '"' + (st.policy === p ? ' selected' : '') + '>'
-                        + escapeHtml(p === 'merge' ? 'Merge into the next week (recommended)'
-                            : p === 'separate' ? 'Keep separate, flagged' : 'Leave off the chart') + '</option>').join('')
-                    + '</select></label>';
-            } else {
-                html += '<label class="wc-ar-policy">Short months '
-                    + '<select onchange="setAttendanceRateMonthPolicy(this.value)" aria-label="What to do with short months">'
-                    + '<option value="keep"' + (st.policy !== 'drop' ? ' selected' : '') + '>Keep, flagged (recommended)</option>'
-                    + '<option value="drop"' + (st.policy === 'drop' ? ' selected' : '') + '>Leave off the chart</option>'
-                    + '</select></label>';
-            }
-            html += '</div>';
-
-            if (axis.length < 2) {
-                html += '<p class="wc-att-basis-note">' + escapeHtml(axis.length
-                    ? 'Only one finished ' + meta.period + ' so far. The chart fills in as ' + meta.period + 's finish.'
-                    : 'Nothing to chart yet. The history is built overnight from PowerSchool; check back tomorrow morning.')
-                    + '</p>';
-                return { html: html, model: model };
-            }
 
             // --- the scale ------------------------------------------------
             // THE AXIS FOLLOWS THE DATA for the two percentages, and the ticks
@@ -37936,6 +38685,7 @@
                 if (s.analysis.median !== null) vals.push(Number(s.analysis.median));
                 if (st.ghost) (s.lastYear || []).forEach(g => { if (g) vals.push(Number(g.value)); });
             });
+            refs.forEach(r => r.points.forEach(p => vals.push(Number(p.value))));
             let lo = Math.min.apply(null, vals), hi = Math.max.apply(null, vals);
             const unitPad = measure === 'monthlyAvgAbsent' ? 0.1 : 1;
             const pad = Math.max(unitPad, (hi - lo) * 0.12);
@@ -37995,9 +38745,20 @@
                     + '<text x="' + f1(nx) + '" y="' + (T - 8.5) + '" class="wc-ar-note-num">' + (k + 1) + '</text>';
             });
 
+            // REFERENCE LINES (the Student groups card's whole school): thin and
+            // dashed, with no median and no signal -- the rules read them on
+            // Trends, not here. Broken over the summer like every line.
+            refs.forEach(r => {
+                let rd = '';
+                r.points.forEach((p, i) => {
+                    const prev = r.points[i - 1];
+                    rd += (!prev || prev.yearid !== p.yearid ? 'M' : 'L') + f1(x(p.x)) + ' ' + f1(y(p.value)) + ' ';
+                });
+                if (rd) svg += '<path d="' + rd.trim() + '" class="wc-ar-refline ' + r.cls + '"/>';
+            });
             // each line: its median, its path, its points
             model.series.forEach(s => {
-                const info = arSeriesInfo(s.series);
+                const info = infoOf(s.series);
                 const a = s.analysis;
                 if (a.median !== null) {
                     const my = f1(y(a.median));
@@ -38038,7 +38799,9 @@
                 let d = '';
                 s.points.forEach((p, i) => {
                     const prev = s.points[i - 1];
-                    const jump = !prev || prev.yearid !== p.yearid;
+                    // A WITHHELD WEEK IS A GAP (lk.breakGaps, the group card): the
+                    // line is not drawn across a week the server held back.
+                    const jump = !prev || prev.yearid !== p.yearid || (lk.breakGaps && prev.x !== p.x - 1);
                     d += (jump ? 'M' : 'L') + f1(x(p.x)) + ' ' + f1(y(p.value)) + ' ';
                 });
                 svg += '<path d="' + d.trim() + '" class="wc-ar-line ' + info.cls + '"/>';
@@ -38085,13 +38848,78 @@
                     + ' aria-label="' + escapeHtml(arPeriodLabel(p, measure, false) + ': '
                         + model.series.map(s => {
                             const pt = s.points.find(q => q.x === i);
-                            return arSeriesInfo(s.series).label + ' ' + (pt ? arFmt(pt.value, measure) : 'no value');
-                        }).join(', ')) + '"/>';
+                            return infoOf(s.series).label + ' ' + (pt ? arFmt(pt.value, measure) : 'no value');
+                        }).concat(refs.map(r => {
+                            const pt = r.points.find(q => q.x === i);
+                            return r.label + ' ' + (pt ? arFmt(pt.value, measure) : 'no value');
+                        })).join(', ')) + '"/>';
             });
 
-            html += '<div class="wc-rc-plot wc-ar-plot"><svg viewBox="0 0 ' + W + ' ' + H + '" class="wc-rc-svg" role="img" aria-label="'
-                + escapeHtml(meta.label + ' run chart') + '">' + svg + '</svg>'
+            return '<div class="wc-rc-plot wc-ar-plot' + (lk.plotCls ? ' ' + lk.plotCls : '') + '"><svg viewBox="0 0 ' + W + ' ' + H
+                + '" class="wc-rc-svg" role="img" aria-label="'
+                + escapeHtml(lk.aria || (meta.label + ' run chart')) + '">' + svg + '</svg>'
                 + '<div class="wc-rc-tip" role="status" aria-live="polite" hidden></div></div>';
+        }
+
+        /**
+         * The whole panel. PURE: the server's answer, the rules module and the
+         * screen's choices in; markup and the model out. A test runs it with no
+         * DOM and no network.
+         */
+        function renderAttendanceRateBody(res, R, st) {
+            if (!res || res.allowed === false) {
+                return { html: '<p class="wc-att-basis-note">' +
+                    escapeHtml((res && res.reason) || 'Not available to your access level.') + '</p>', model: null };
+            }
+            const measure = st.measure;
+            const shownKeys = AR_SERIES.filter(s => st.shown[s.key]).map(s => s.key);
+            const base = { measure: measure, policy: st.policy, series: shownKeys, settings: st.settings, today: st.today };
+            const first = R.runRateModel(res, Object.assign({}, base, { candidate: null }));
+            const cand = st.cand && st.cand.from && st.cand.to ? st.cand : arDefaultRange(first.axis, first.newestYear);
+            const model = R.runRateModel(res, Object.assign({}, base, { candidate: cand }));
+            model.candidateRange = cand;
+            const meta = model.meta;
+            const axis = model.axis;
+
+            // --- the controls ---------------------------------------------
+            let html = '<div class="wc-ar-controls">'
+                + '<div class="wc-ar-lines" role="group" aria-label="Which lines to show">'
+                + AR_SERIES.map(s => '<label class="wc-ar-toggle"><input type="checkbox"'
+                    + (st.shown[s.key] ? ' checked' : '')
+                    + ' onchange="toggleAttendanceRateSeries(\'' + s.key + '\')">'
+                    + '<span class="wc-ar-swatch ' + s.cls + '"></span>' + escapeHtml(s.label) + '</label>').join('')
+                + '</div>';
+            const hasGhost = model.series.some(s => (s.lastYear || []).some(Boolean));
+            if (hasGhost) {
+                html += '<label class="wc-ar-toggle"><input type="checkbox"' + (st.ghost ? ' checked' : '')
+                    + ' onchange="toggleAttendanceRateGhost()"><span class="wc-ar-swatch wc-ar-ghost-key"></span>'
+                    + escapeHtml('Same ' + meta.period + ' last year') + '</label>';
+            }
+            if (measure === 'weeklyRate') {
+                html += '<label class="wc-ar-policy">Short weeks '
+                    + '<select onchange="setAttendanceRatePolicy(this.value)" aria-label="What to do with short weeks">'
+                    + ['merge', 'separate', 'drop'].map(p => '<option value="' + p + '"' + (st.policy === p ? ' selected' : '') + '>'
+                        + escapeHtml(p === 'merge' ? 'Merge into the next week (recommended)'
+                            : p === 'separate' ? 'Keep separate, flagged' : 'Leave off the chart') + '</option>').join('')
+                    + '</select></label>';
+            } else {
+                html += '<label class="wc-ar-policy">Short months '
+                    + '<select onchange="setAttendanceRateMonthPolicy(this.value)" aria-label="What to do with short months">'
+                    + '<option value="keep"' + (st.policy !== 'drop' ? ' selected' : '') + '>Keep, flagged (recommended)</option>'
+                    + '<option value="drop"' + (st.policy === 'drop' ? ' selected' : '') + '>Leave off the chart</option>'
+                    + '</select></label>';
+            }
+            html += '</div>';
+
+            if (axis.length < 2) {
+                html += '<p class="wc-att-basis-note">' + escapeHtml(axis.length
+                    ? 'Only one finished ' + meta.period + ' so far. The chart fills in as ' + meta.period + 's finish.'
+                    : 'Nothing to chart yet. The history is built overnight from PowerSchool; check back tomorrow morning.')
+                    + '</p>';
+                return { html: html, model: model };
+            }
+
+            html += arPlotHtml(model, st, null);
 
             // --- the legend, which carries each median ---------------------
             html += '<ul class="wc-ar-legend">' + model.series.map(s => {
@@ -38368,59 +39196,31 @@
          * under the pointer. ONE DELEGATED LISTENER ON THE HOST, attached once,
          * for the reason wireRunChartHover gives: the host survives every
          * re-render and the chart inside it does not.
+         *
+         * SHARED WITH THE STUDENT GROUPS CARD (2026-10-12): `hostId`, the
+         * model it reads (`getModel`) and what one period says (`tipFor`).
+         * Called with none of them, it is Trends' readout exactly as before.
          */
-        function wireAttendanceRateHover() {
-            const host = document.getElementById('attRateBody');
+        function wireAttendanceRateHover(hostId, getModel, tipFor) {
+            const host = document.getElementById(hostId || 'attRateBody');
             if (!host || host.getAttribute('data-hover-wired') === '1') return;
             host.setAttribute('data-hover-wired', '1');
+            const modelOf = typeof getModel === 'function' ? getModel : () => _arModel;
+            const partsOf = typeof tipFor === 'function' ? tipFor : arTipParts;
             const tipOf = () => host.querySelector('.wc-rc-tip');
             const hide = () => { const t = tipOf(); if (t) { t.hidden = true; t.innerHTML = ''; } };
             const show = (col) => {
                 const tip = tipOf();
                 const plot = host.querySelector('.wc-ar-plot');
-                const m = _arModel;
+                const m = modelOf();
                 if (!tip || !plot || !col || !m) return;
                 const i = Number(col.getAttribute('data-ar-i'));
                 const p0 = m.axis[i];
                 if (!p0) return;
-                const measure = m.measure;
-                const rows = m.series.map(s => {
-                    const pt = s.points.find(q => q.x === i);
-                    const a = s.analysis;
-                    let side = '';
-                    if (pt && a.median !== null) {
-                        side = pt.value > a.median ? 'above' : pt.value < a.median ? 'below' : 'on';
-                    }
-                    const detail = !pt ? '' : measure === 'weeklyRate'
-                        ? (pt.full + ' whole days out of ' + pt.memberDays + ' student-days')
-                        : measure === 'monthlyChronic'
-                            ? (pt.chronic + ' of ' + pt.students + ' students')
-                            : (pt.full + ' whole days, ' + pt.students + ' students');
-                    const gi = pt ? s.points.indexOf(pt) : -1;
-                    const g = _arGhost && gi >= 0 && s.lastYear ? s.lastYear[gi] : null;
-                    return '<tr><th><span class="wc-ar-swatch ' + arSeriesInfo(s.series).cls + '"></span>'
-                        + escapeHtml(arSeriesInfo(s.series).label) + '</th><td>'
-                        + escapeHtml(pt ? arFmt(pt.value, measure) : '—') + '</td></tr>'
-                        + (pt ? '<tr class="wc-ar-tip-sub"><td colspan="2">' + escapeHtml(detail
-                            + (side ? ', ' + (side === 'on' ? 'on' : side) + ' the median' : '')
-                            + (g ? '. Same ' + m.meta.period + ' last year: ' + arFmt(g.value, measure) : '')) + '</td></tr>' : '');
-                }).join('');
-                const ref = (m.series[0] && m.series[0].points.find(q => q.x === i)) || null;
-                const extra = [];
-                if (ref && measure === 'weeklyRate') {
-                    extra.push(ref.schoolDays + ' school day' + (ref.schoolDays === 1 ? '' : 's') + ', ' + ref.from + ' to ' + ref.to);
-                    if (ref.merged && ref.parts && ref.parts.length > 1) {
-                        extra.push('Includes the short week of ' + ref.parts.filter(pp => pp.flag).map(pp => pp.week).join(', ')
-                            + ', merged in');
-                    }
-                }
-                if (ref && ref.flag) extra.push('Flagged: ' + (ref.flag === 'short' ? 'fewer' : 'more')
-                    + ' student-days than usual by more than 25%');
-                if (ref && ref.estimated && m.series.some(s => s.series !== 'all')) extra.push('Grade bands estimated');
-                const notes = m.notes.filter(nt => nt.x === i);
-                notes.forEach(nt => extra.push('Marked: ' + nt.label + ' (' + nt.date + ')'));
-                tip.innerHTML = '<div class="wc-rc-tip-when">' + escapeHtml(arPeriodLabel(p0, measure, false)) + '</div>'
-                    + '<table class="wc-rc-tip-rows">' + rows + '</table>'
+                const parts = partsOf(m, i);
+                const extra = parts.extra || [];
+                tip.innerHTML = '<div class="wc-rc-tip-when">' + escapeHtml(arPeriodLabel(p0, m.measure, false)) + '</div>'
+                    + '<table class="wc-rc-tip-rows">' + parts.rows + '</table>'
                     + (extra.length ? '<div class="wc-rc-tip-side">' + extra.map(escapeHtml).join('<br>') + '</div>' : '');
                 tip.hidden = false;
                 const hr = col.getBoundingClientRect();
@@ -38444,6 +39244,47 @@
             host.addEventListener('focusin', (e) => { const c = colOf(e); if (c) show(c); });
             host.addEventListener('focusout', (e) => { if (colOf(e)) hide(); });
             host.addEventListener('keydown', (e) => { if (e && e.key === 'Escape') hide(); });
+        }
+
+        /** Trends' readout for one period: each line's value, its counts, its median side, last year. */
+        function arTipParts(m, i) {
+            const measure = m.measure;
+            const rows = m.series.map(s => {
+                const pt = s.points.find(q => q.x === i);
+                const a = s.analysis;
+                let side = '';
+                if (pt && a.median !== null) {
+                    side = pt.value > a.median ? 'above' : pt.value < a.median ? 'below' : 'on';
+                }
+                const detail = !pt ? '' : measure === 'weeklyRate'
+                    ? (pt.full + ' whole days out of ' + pt.memberDays + ' student-days')
+                    : measure === 'monthlyChronic'
+                        ? (pt.chronic + ' of ' + pt.students + ' students')
+                        : (pt.full + ' whole days, ' + pt.students + ' students');
+                const gi = pt ? s.points.indexOf(pt) : -1;
+                const g = _arGhost && gi >= 0 && s.lastYear ? s.lastYear[gi] : null;
+                return '<tr><th><span class="wc-ar-swatch ' + arSeriesInfo(s.series).cls + '"></span>'
+                    + escapeHtml(arSeriesInfo(s.series).label) + '</th><td>'
+                    + escapeHtml(pt ? arFmt(pt.value, measure) : '—') + '</td></tr>'
+                    + (pt ? '<tr class="wc-ar-tip-sub"><td colspan="2">' + escapeHtml(detail
+                        + (side ? ', ' + (side === 'on' ? 'on' : side) + ' the median' : '')
+                        + (g ? '. Same ' + m.meta.period + ' last year: ' + arFmt(g.value, measure) : '')) + '</td></tr>' : '');
+            }).join('');
+            const ref = (m.series[0] && m.series[0].points.find(q => q.x === i)) || null;
+            const extra = [];
+            if (ref && measure === 'weeklyRate') {
+                extra.push(ref.schoolDays + ' school day' + (ref.schoolDays === 1 ? '' : 's') + ', ' + ref.from + ' to ' + ref.to);
+                if (ref.merged && ref.parts && ref.parts.length > 1) {
+                    extra.push('Includes the short week of ' + ref.parts.filter(pp => pp.flag).map(pp => pp.week).join(', ')
+                        + ', merged in');
+                }
+            }
+            if (ref && ref.flag) extra.push('Flagged: ' + (ref.flag === 'short' ? 'fewer' : 'more')
+                + ' student-days than usual by more than 25%');
+            if (ref && ref.estimated && m.series.some(s => s.series !== 'all')) extra.push('Grade bands estimated');
+            const notes = m.notes.filter(nt => nt.x === i);
+            notes.forEach(nt => extra.push('Marked: ' + nt.label + ' (' + nt.date + ')'));
+            return { rows: rows, extra: extra };
         }
 
         async function renderAttendanceRate(force) {
