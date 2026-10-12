@@ -416,3 +416,81 @@ The developer also keeps a calendar reminder for the first week of January.
   everyone carries (it does not count toward the carry limit).
 - **If the app is down:** no detentions are served that day. Everything moves
   to the next list by itself.
+
+## Automatic perfect-day award (Wildcat Cash for perfect attendance)
+
+Added 2026-10-12 (server half; the student card line and the admin card ship
+with the site). Each school morning the server reads the last ten school days
+from PowerSchool, finds every student who had a **perfect day** (no absence,
+excused ones included, no unexcused tardy, no ditching, in any block, Promise
+Time and Power-Up included; an excused tardy and a field trip do not break
+it), records it, and every Monday pays one Wildcat Cash movement per student
+for last week's perfect days ("Perfect attendance -- N days", by "Wildcat Hub
+(attendance)"). It is **switched off** until somebody turns it on, and a
+missing settings row means off.
+
+### What runs, and when
+
+| | |
+|---|---|
+| Cron | `perfect day award`, at :42 past 14, 15, 16 and 17 UTC (`convex/crons.ts`) |
+| What it calls | `perfectDay:tick`, which books `perfectDayRead:run` |
+| Local times | Decided on the Los Angeles clock: only on a weekday between 06:30 and 11:00 (06:42-09:42 in winter, 07:42-10:42 in summer) |
+| Later firings | Run again only when a PowerSchool read failed. A day with no attendance at all is no school, not a failure |
+| Payday | The first good run on or after Monday pays everything pending from before that Monday. On a Monday it waits until 09:30 for a failed read of last week to be retried, then pays what is settled |
+| While off | The tick reads one settings row and stops |
+
+### Switching it on
+
+```
+# Shadow: decides and records, pays nobody, shows students nothing
+npx convex run --prod perfectDay:configure '{"mode":"shadow","actorName":"Your Name"}'
+
+# A named pilot, with controls who must never be paid
+npx convex run --prod perfectDay:configure '{"mode":"pilot","pilotAdd":["<student number>"],"controls":["<student number>"],"actorName":"Your Name"}'
+
+# The whole school
+npx convex run --prod perfectDay:configure '{"mode":"live","actorName":"Your Name"}'
+
+# The kill switch: instant, no deploy; the next batch stops
+npx convex run --prod perfectDay:configure '{"mode":"off","actorName":"Your Name"}'
+
+# The amount per perfect day (whole dollars, 1-1000); days already decided keep theirs
+npx convex run --prod perfectDay:configure '{"amount":150,"actorName":"Your Name"}'
+```
+
+**No back-pay, ever.** Switching on from off counts from that day; a day is
+stamped payable or not when it is first decided (shadow days, days outside
+the pilot and days of a control never become payable); moving from pilot to
+live pays the rest of the school only from that day; and payday checks the
+scope again. Counting from an earlier date needs `countFromDate` AND
+`"backPay": true`. Days earned before a pause are counted on the status, not
+paid. The one summary audit entry per payday stays off (`auditSummary`) until
+the site that knows the `perfect_day_paid` action has reached the open tabs.
+
+### Status and the admin's tools
+
+```
+npx convex run --prod perfectDay:status '{}'        # last runs, each date's verdict (counts), held students, paid-then-broken, next payday total, controls
+npx convex run --prod perfectDay:ledgerCheck '{}'   # every attendance ledger row has its payment record (this week and last)
+npx convex run --prod perfectDay:runNow '{"actorName":"Your Name"}'
+npx convex run --prod perfectDay:decideAnyway '{"date":"2026-10-30","reason":"...","actorName":"Your Name"}'   # a date held as too perfect / a block missing
+npx convex run --prod perfectDay:markNoSchool '{"date":"2026-10-30","reason":"...","actorName":"Your Name"}'   # refused while days are decided for it
+npx convex run --prod perfectDay:resolveHeld '{"studentNumber":"...","date":"...","decision":"pay","reason":"...","actorName":"Your Name"}'
+npx convex run --prod perfectDay:removeDays '{"studentNumber":"...","dates":["..."],"reason":"...","actorName":"Your Name"}'
+npx convex run --prod perfectDay:correctPayout '{"txnId":"txn_...","removeDates":["..."],"reason":"...","actorName":"Your Name"}'
+```
+
+- **Held dates** (a read that would not hold still, far fewer students marked
+  than usual, a block far below its usual level, or the Perfect Attendance
+  screen disagreeing about more than 1% of the school) are tried again every
+  run and expire unpaid once they leave the ten-school-day lookback.
+- **Held students** (the screen disagrees about one student) are held alone;
+  the rest of the school is decided.
+- **A paid day that later breaks** is never taken back automatically. It is on
+  the status's paid-then-broken list; `correctPayout` reverses the week and
+  pays the days that stand, in one step. The Reverse button also works on the
+  weekly row; `correctPayout` after it re-pays the good days.
+- **No Hub record, or two**: the days stay pending and are counted, never paid
+  to a guess and never dropped.
+- Every admin act is in `perfectDayAudit`; runs in `perfectDayRuns`.
