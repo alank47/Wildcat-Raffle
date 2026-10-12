@@ -61,7 +61,8 @@
 //      day (and names that number first); undo paths; a shadow row is never
 //      the room's; Here without Attendance done; and a tab still on the
 //      screen from before (Not here boxes), run for real against this
-//      server, is shown the list but refused every tick.
+//      server, is shown the list but refused every tick. A tap and its quick
+//      undo reach the server in the order tapped.
 //  28. Attendance done moves exactly the students it named: a detention put
 //      back on the list after the press is PowerSchool's, on the server and
 //      on this build's screen.
@@ -2134,6 +2135,32 @@ try {
       /3 did not come and move to their next school day's Reflection Room: Cruz, Cal; Diaz, Dee; Ellis, Eve\./.test(html())
         && (html().match(/Did not come: moves to the next day/g) || []).length === 3 && !/data-rr-here=/.test(html())
         && /Undo Attendance done/.test(html()), html().slice(0, 600));
+
+    // A TAP AND ITS QUICK UNDO (review, 2026-10-12). The network holds the
+    // mistaken tap for C; the undo, sent at once, overtook it, and the tap
+    // then landed: C checked Here -- served -- with nothing said.
+    const q = await checkinWorld();
+    clock.set(la(TUE, "12:35"));
+    let gate = null;
+    const arrived = [];
+    const race = screenWorld(read("./script.js"), {
+      query: (args, path) => q.as("granted").run(path.replace(":", "."), args),
+      mutation: async (args, path) => {
+        if (path === "reflectionRoom:markHere" && args.here === true && !gate) await new Promise((resolve) => { gate = resolve; });
+        if (path === "reflectionRoom:markHere") arrived.push(args.here);
+        return q.as("granted").run(path.replace(":", "."), args);
+      },
+    }, STUDENTS);
+    await race.app.loadReflectionList();
+    const tapC = race.app.markReflectionHere(q.unitOf("C")._id, true);
+    const untapC = race.app.markReflectionHere(q.unitOf("C")._id, false);
+    for (let i = 0; i < 5; i++) await new Promise((resolve) => setImmediate(resolve));
+    const sentWhileHeld = race.calls.filter((c) => c.path === "reflectionRoom:markHere").length;
+    gate();
+    await Promise.all([tapC, untapC]);
+    check("this build's screen: a quick undo waits for the tap before it, so the server takes them in the order tapped -- C ends not checked, and the screen says so",
+      sentWhileHeld === 1 && J(arrived) === J([true, false]) && !q.unitOf("C").roomHere && race.alerts.length === 0
+        && /0 of 5 here/.test(race.fixed.rrList.innerHTML), J({ sentWhileHeld, arrived, roomHere: q.unitOf("C").roomHere, alerts: race.alerts }));
 
     let oldSrc = null;
     try {

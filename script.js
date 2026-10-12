@@ -42641,6 +42641,15 @@
          */
         const _rrHereLocal = new Map();
         /**
+         * ONE TAP AT A TIME FOR EACH STUDENT (review, 2026-10-12): unitId ->
+         * the server call of the last tap still on its way. A tap is sent only
+         * once the one before it for the same student has been answered. Sent
+         * side by side, a mistaken tap and its quick undo could reach the
+         * server the other way round and leave the student checked Here --
+         * served -- with nothing said.
+         */
+        const _rrHereChain = new Map();
+        /**
          * A list printed from the browser's own menu draws from the answer on
          * screen; older than this, every page says STALE.
          */
@@ -43786,14 +43795,20 @@
          * HERE (owner, 2026-10-12): check (or uncheck) one student as they
          * arrive. The box and the count change at once; the server checks who
          * is asking and whether attendance is still open, and a refusal is
-         * said in words and the box goes back.
+         * said in words and the box goes back. Taps for one student reach the
+         * server in the order they were made (_rrHereChain).
          */
         async function markReflectionHere(unitId, here) {
             const auth = window.WildcatAuth;
             const session = auth && auth.getSession && auth.getSession();
             if (!session) { showAlert('ℹ️ You are signed out. Sign in again and retry.'); renderReflectionRoom(); return null; }
             const id = String(unitId);
-            const call = auth.convexMutation('reflectionRoom:markHere', { unitId: id, here: here === true }, session.idToken);
+            const send = () => auth.convexMutation('reflectionRoom:markHere', { unitId: id, here: here === true }, session.idToken);
+            const before = _rrHereChain.get(id);
+            const call = before ? before.then(send, send) : send();
+            _rrHereChain.set(id, call);
+            const settled = () => { if (_rrHereChain.get(id) === call) _rrHereChain.delete(id); };
+            call.then(settled, settled);
             const local = { here: here === true, call: call, settledAt: null };
             _rrHereLocal.set(id, local);
             renderReflectionRoom();
