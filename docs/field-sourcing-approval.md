@@ -240,6 +240,66 @@ aggregate returns `loaded: false` until it does.
 
 ---
 
+## Attendance by student group (race, English Learner, gender)
+
+### Added 2026-10-11: the weekly attendance run charts by group
+
+**Decided 2026-10-11 by Alan K (app owner).** Recorded 2026-10-12, before the
+charts ship, in the words the decision was given in:
+
+> "Attendance run charts by group: EL/classification and gender aggregates for
+> admin/superadmin/PBIS; race (Black) line for admin/superadmin only; gender
+> only for the Attendance Watch grant; floor 30; no individual figures;
+> printing allowed for the same roles."
+
+**The decision it informs:** whether attendance is moving differently for a
+group of students than for the school, week by week — the equity question the
+year-to-date table on the same tab answers once a year, asked of a run chart so
+a change shows when it happens.
+
+**What was granted, precisely:**
+
+| Line | Roles that see it |
+|---|---|
+| Female, Male | `admin`, `superadmin`, `pbis`, and the per-person Attendance Watch grant (gender **only**) |
+| Current English Learner, Not currently an English Learner | `admin`, `superadmin`, `pbis` |
+| English Only, Reclassified (RFEP), Initially fluent (IFEP), English Learner | `admin`, `superadmin`, `pbis` |
+| Black or African American | `admin`, `superadmin` **only** — PBIS gets no race line |
+
+- **Never charted: Hispanic or Latino.** About nine in ten students here, so
+  its line is the whole school's, and drawn beside the others it would hand
+  back the few students in the smallest groups.
+- **Floor 30:** a line is offered only when its typical school day this year
+  has 30 or more students (this drops IFEP at 28). Inside a week every school
+  day must have 10 or more, and a server-side residual test withholds any week
+  in which the lines shown, added to or taken from the whole school, could
+  describe 1 to 9 students.
+- **No individual figures.** The server sends a rate per week and a group size
+  rounded to the nearest 5 — never a member count, student-days, absence count,
+  date of membership or id. Gender is a Standard field, not a restricted one;
+  it is recorded here because the grant's scope is part of the decision.
+- **Printing** (print or save as PDF) is allowed for the same roles, of the
+  same lines, with the same withholding.
+- **English Learner lines use each student's status on each date**, read from
+  PowerSchool's history table (`S_CA_STU_ELA_C`), never today's status applied
+  backwards. Probed 2026-10-12, counts only: readable, every current student's
+  rows dated, and the newest status agrees with today's `S_CA_STU_X` for 607 of
+  607 current students.
+
+**What was NOT granted:** no individual student's race, ethnicity or English
+Learner status to anyone new. `restrictedPolicy.ts` is untouched:
+`ALLOWED_BY_ROLE` still gives `elaStatus` to no role, and `pbis` still holds no
+restricted field. The Attendance Watch grant gains gender lines and nothing
+else.
+
+**Also on record, so nobody reads this as new:** the year-to-date chronic
+absence table on the same tab has shown English Learner, classification and
+race aggregates to `admin`, `superadmin` and `pbis` since 2026-09-22, at the
+owner's request that day (`convex/attendanceSubgroups.ts`). This entry is the
+first written approval to name attendance as a purpose.
+
+---
+
 ## IEP (manifest 12) and Section 504 (manifest 13)
 
 **NOT approved. Not requested. Not available.**
@@ -252,5 +312,11 @@ can be revisited. See `docs/field-sourcing.md`.
 
 ## English Learner (manifest 14)
 
-**NOT approved.** No decision has been named that it informs. Default deny
-stands.
+**An individual student's status: NOT approved.** No decision has been named
+that it informs. Default deny stands: `ALLOWED_BY_ROLE` gives `elaStatus` to no
+role.
+
+**Aggregates for attendance: approved 2026-10-11** for `admin`, `superadmin`
+and `pbis` — see "Attendance by student group" above. That is the whole of it:
+academic outcomes by English Learner status are still refused (the
+course-roster refusal under the academics amendment stands).
