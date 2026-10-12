@@ -437,7 +437,7 @@ missing settings row means off.
 | What it calls | `perfectDay:tick`, which books `perfectDayRead:run` |
 | Local times | Decided on the Los Angeles clock: only on a weekday between 06:30 and 11:00 (06:42-09:42 in winter, 07:42-10:42 in summer) |
 | Later firings | Run again only when a PowerSchool read failed. A day with no attendance at all is no school, not a failure |
-| Payday | The first good run on or after Monday pays everything pending from before that Monday. On a Monday it waits until 09:30 for a failed read of last week to be retried, then pays what is settled |
+| Payday | The first run on or after Monday pays everything pending from before that Monday. On a Monday it waits until 09:30 for a failed read of last week to be retried, then pays what is settled. Paying needs nothing from PowerSchool: if PowerSchool is down, payday still happens at the 09:42 run (and the run tries the read again next hour) |
 | While off | The tick reads one settings row and stops |
 
 ### Switching it on
@@ -449,10 +449,12 @@ npx convex run --prod perfectDay:configure '{"mode":"shadow","actorName":"Your N
 # A named pilot, with controls who must never be paid
 npx convex run --prod perfectDay:configure '{"mode":"pilot","pilotAdd":["<student number>"],"controls":["<student number>"],"actorName":"Your Name"}'
 
-# The whole school
+# The whole school (the pilot's controls are cleared: controls belong to the pilot)
 npx convex run --prod perfectDay:configure '{"mode":"live","actorName":"Your Name"}'
 
-# The kill switch: instant, no deploy; the next batch stops
+# The kill switch: instant, no deploy; the next batch stops. Days already
+# decided as pending are NOT lost: they wait, and are paid on the first payday
+# after it is switched back on. To cancel them instead, use forfeitPending.
 npx convex run --prod perfectDay:configure '{"mode":"off","actorName":"Your Name"}'
 
 # The amount per perfect day (whole dollars, 1-1000); days already decided keep theirs
@@ -461,11 +463,40 @@ npx convex run --prod perfectDay:configure '{"amount":150,"actorName":"Your Name
 
 **No back-pay, ever.** Switching on from off counts from that day; a day is
 stamped payable or not when it is first decided (shadow days, days outside
-the pilot and days of a control never become payable); moving from pilot to
-live pays the rest of the school only from that day; and payday checks the
-scope again. Counting from an earlier date needs `countFromDate` AND
-`"backPay": true`. Days earned before a pause are counted on the status, not
-paid. The one summary audit entry per payday stays off (`auditSummary`) until
+the pilot and days of a control never become payable); and moving from pilot
+to live pays the rest of the school only from that day. Counting from an
+earlier date needs `countFromDate` AND `"backPay": true`.
+
+**And no switch takes back what was earned.** A day stamped payable (shown to
+the student as pending) is paid on the next payday that money moves, whatever
+the switch did since: off and on again, live to pilot, or a student taken out
+of the pilot. Payday does not ask today's start date again. While off, the
+status counts those days as waiting ("off"); a control's days wait until the
+controls are cleared. What a pause does lose is any school day not yet
+decided when it went off: the run decides each day the next morning, so
+switching off before Monday's run means Friday is never decided. After a false
+alarm the same morning, switch back on with `"countFromDate":"<that Friday>"`
+and `"backPay": true` to decide it. To cancel pending days on purpose (the job
+decided them wrongly), forfeit them before switching back on:
+
+```
+# Counts only; add "apply":true to forfeit (pending and held days in the range become removed, never paid)
+npx convex run --prod perfectDay:forfeitPending '{"from":"2026-10-19","to":"2026-10-23","reason":"...","actorName":"Your Name"}'
+```
+
+**Before going live: the $5,000 browser cap.** Any single cash movement a
+browser saves is refused above $5,000 (`MAX_CASH_DELTA`; the cap fix is
+parked). At $100 a day a student with perfect attendance passes $5,000 in
+about ten school weeks, and from then on, for those students, the staff
+site's RESET ALL CASH (one movement of the whole balance) and staff-desk
+store purchases over $5,000 are refused as "capped". Use the server instead:
+`legacyPurge:zeroAllStudentCash` for a reset (a dry run first; `apply: true`
+to clear; it files no year-end archive and takes no backup, so take those
+first), and the student's own store purchase (`studentStore:purchase`, or
+`studentStore:purchaseFor` from the command line) for a large item; neither
+has the cap.
+
+The one summary audit entry per payday stays off (`auditSummary`) until
 the site that knows the `perfect_day_paid` action has reached the open tabs:
 an older tab would show it on every teacher's home feed. The site stamped
 `20261012c` knows it. Open tabs update themselves when idle, so switch it on
@@ -486,12 +517,20 @@ npx convex run --prod perfectDay:markNoSchool '{"date":"2026-10-30","reason":"..
 npx convex run --prod perfectDay:resolveHeld '{"studentNumber":"...","date":"...","decision":"pay","reason":"...","actorName":"Your Name"}'
 npx convex run --prod perfectDay:removeDays '{"studentNumber":"...","dates":["..."],"reason":"...","actorName":"Your Name"}'
 npx convex run --prod perfectDay:correctPayout '{"txnId":"txn_...","removeDates":["..."],"reason":"...","actorName":"Your Name"}'
+npx convex run --prod perfectDay:forfeitPending '{"from":"...","to":"...","reason":"...","actorName":"Your Name"}'   # counts; "apply":true forfeits
 ```
 
 - **Held dates** (a read that would not hold still, far fewer students marked
   than usual, a block far below its usual level, or the Perfect Attendance
   screen disagreeing about more than 1% of the school) are tried again every
-  run and expire unpaid once they leave the ten-school-day lookback.
+  run and expire unpaid once they leave the ten-school-day lookback. A block
+  counts as expected only if it met on most days of the same weekday pattern,
+  so a day when all ten blocks met does not make a normal day look short.
+- **A date already decided whose re-read is held** stays decided, with the
+  re-read's reason: its days stand, but nothing is paid over what the read
+  shows. A pending day for a student the read shows absent or tardy becomes
+  broken, one the screen disputes is held, and a paid one goes on the
+  paid-then-broken list.
 - **Held students** (the screen disagrees about one student) are held alone;
   the rest of the school is decided.
 - **A paid day that later breaks** is never taken back automatically. It is on

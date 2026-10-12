@@ -816,6 +816,17 @@ console.log("\nK. A DATE ALREADY DECIDED WHOSE RE-READ IS HELD IS NEVER PAID OVE
     J({ d: w.dateRec("2026-10-22")?.state, rows: ["S5", "S6"].map((k) => w.reg(k, "2026-10-22")?.status) }));
 }
 
+// ===========================================================================
+console.log("\nL. THE RUNBOOK SAYS WHAT THE SWITCH AND THE CASH CAP DO\n");
+{
+  const book = read("./docs/runbook.md");
+  check("the runbook's kill switch says pending days are not lost, and how to cancel them on purpose",
+    /# The kill switch[^\n]*\n# decided as pending are NOT lost[\s\S]{0,200}forfeitPending/.test(book) && /perfectDay:forfeitPending/.test(book));
+  check("...its live command says the controls are cleared", /# The whole school \(the pilot's controls are cleared/.test(book));
+  check("the runbook warns, before going live, that the browser refuses cash movements over $5,000, and names the server's ways round it",
+    /Before going live: the \$5,000 browser cap[\s\S]{0,900}RESET ALL CASH[\s\S]{0,400}zeroAllStudentCash[\s\S]{0,300}studentStore:purchase/.test(book));
+}
+
 } finally {
   loaded.cleanup();
   crashy.cleanup();
