@@ -274,6 +274,25 @@ a change shows when it happens.
   day must have 10 or more, and a server-side residual test withholds any week
   in which the lines shown, added to or taken from the whole school, could
   describe 1 to 9 students.
+- **Floor 30 also covers what can be worked out (as built 2026-10-12, after
+  review).** Dropping the IFEP line alone did not drop IFEP: Current English
+  Learner, Not EL, English Only and RFEP, beside the whole school on Trends,
+  subtract to the IFEP students plus the few pending assessment — on most days
+  this year, exactly the IFEP students. So no sum or difference of the lines a
+  person is shown and the whole school may describe a group of fewer than 30
+  students on a typical day of that year (each year judged on its own sizes).
+  When it would, lines are withheld one at a time — the smallest line whose
+  going settles it — and listed on screen as not charted, with the reason.
+  With this year's measured figures (IFEP 28, nobody pending on most days)
+  that withholds **Reclassified (RFEP)** for PBIS and administrators alike;
+  English Only, Current English Learner and Not EL stay. **For the owner to
+  confirm or change:** keep RFEP and withhold English Only instead, or chart
+  English Only and RFEP as one "fluent English" line.
+- **The smallest thing served is one finished week** of at least 2 school days
+  (as built 2026-10-12, after review). A week is served only once no nightly
+  build can add a day to it, and a week of one school day is withheld in every
+  period containing it, so no two answers can be subtracted to a single day's
+  rate.
 - **No individual figures.** The server sends a rate per week and a group size
   rounded to the nearest 5 — never a member count, student-days, absence count,
   date of membership or id. Gender is a Standard field, not a restricted one;
