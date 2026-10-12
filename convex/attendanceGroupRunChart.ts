@@ -5,7 +5,7 @@ import { GROUP_NONE } from "./runChartDays";
 import {
   AXES, GROUP_AXES, SERIES, TYPE_LABELS, FAMILY_AXES, NEVER_CHARTED, groupTypesFor,
   CHART_FLOOR, DAY_FLOOR, SMALL_CHART_GROUP, SIZE_ROUND, roundSize, checkPeriods, evaluatePeriods,
-  addDaysIso, laDayOf, typicalRows, linesForYear, currentAxes, keptDates, rowReadThrough, mondayOfIso,
+  addDaysIso, laDayOf, typicalRows, linesForYear, currentAxes, keptDates, rowReadThrough, mondayOfIso, stuckWeeks,
   type GroupType, type StoredGroupDay,
 } from "./runChartGroups";
 
@@ -57,7 +57,8 @@ const RANGE_ROW_CAP = 6000;
  * And a week that could already have been served keeps its stored rows on
  * every axis built (runChartGroups.keptDates): a served week's value never
  * changes, so no two mornings subtract to the night's corrections. Kept rows
- * are marked read through their Friday (keptThrough).
+ * are marked read through their Friday (keptThrough), and kept weeks whose
+ * school days have since changed are listed on the status row (stuckWeeks).
  *
  * REFUSES rows that do not add up: every axis must hold every school day once,
  * each group once, and add up to the whole school exactly (the band build's
@@ -83,6 +84,7 @@ export const replaceGroupMonth = internalMutation({
       throw new Error("English Learner and the classification share rows, so they are written together or not at all.");
     }
     let written = 0, keptDays = 0;
+    let stuck: string[] | null = null;
     if (axes.length) {
       if (!a.schoolDays.length) throw new Error("Refusing to replace a month of group rows with no school days.");
       const days = new Set(a.schoolDays);
@@ -140,6 +142,7 @@ export const replaceGroupMonth = internalMutation({
         written++;
       }
       keptDays = new Set([...kept.values()].flatMap((s) => [...s])).size;
+      stuck = [...new Set(axes.flatMap((axis) => stuckWeeks(old.filter((r) => r.axis === axis), a.schoolDays, kept.get(axis)!)))].sort();
     }
     const status = await ctx.db.query("attendanceRunGroupMonths")
       .withIndex("by_yearid_month", (q) => q.eq("yearid", a.yearid).eq("month", a.month)).take(5);
@@ -149,10 +152,41 @@ export const replaceGroupMonth = internalMutation({
     const skipped = (prev?.skipped ?? []).filter((s) => !touched.has(s.axis))
       .concat(a.skipped.map((s) => ({ axis: s.axis, reason: String(s.reason).slice(0, 300), at: a.syncedAt })));
     const rateVar = a.rateVar !== undefined && Number.isFinite(a.rateVar) && a.rateVar >= 0 ? { rateVar: a.rateVar } : {};
+    // The kept weeks whose school days have since changed: "no-data" for
+    // good, listed so an administrator can see why (dates only).
+    const stuckField = stuck ? { stuckWeeks: stuck } : {};
     for (const extra of status.slice(1)) await ctx.db.delete(extra._id);
-    if (prev) await ctx.db.patch(prev._id, { built, skipped, updatedAt: a.syncedAt, ...rateVar });
-    else await ctx.db.insert("attendanceRunGroupMonths", { yearid: a.yearid, month: a.month, built, skipped, updatedAt: a.syncedAt, ...rateVar });
-    return { written, keptDays, axes, skipped: a.skipped.map((s) => s.axis) };
+    if (prev) await ctx.db.patch(prev._id, { built, skipped, updatedAt: a.syncedAt, ...rateVar, ...stuckField });
+    else await ctx.db.insert("attendanceRunGroupMonths", { yearid: a.yearid, month: a.month, built, skipped, updatedAt: a.syncedAt, ...rateVar, ...stuckField });
+    return { written, keptDays, stuckWeeks: stuck ?? [], axes, skipped: a.skipped.map((s) => s.axis) };
+  },
+});
+
+/**
+ * TO REBUILD A MONTH'S SERVED WEEKS ON PURPOSE (a bug in the group build, or
+ * a week its status row lists in stuckWeeks): delete the month's group rows,
+ * every axis, AND its status row. With the rows gone no week is kept; with
+ * the status row gone the nightly mend sees the month as unbuilt and
+ * rebuilds it, groups only, if it is this school year's. Any other year's
+ * month, or at once, by hand:
+ *   npx convex run attendanceGroupRunChart:resetGroupMonth '{"yearid":36,"month":"2026-09"}'
+ *   npx convex run attendanceRunChart:buildMonth '{"yearid":36,"month":"2026-09","groupsOnly":true}'
+ * The rebuilt weeks are served with that night's figures: a deliberate act,
+ * never a default (runChartGroups.keptDates says why).
+ */
+export const resetGroupMonth = internalMutation({
+  args: { yearid: v.number(), month: v.string() },
+  handler: async (ctx, a) => {
+    if (!/^\d{4}-\d{2}$/.test(a.month)) throw new Error("month must be YYYY-MM");
+    const rows = await ctx.db.query("attendanceRunGroupDays")
+      .withIndex("by_yearid_date", (q) => q.eq("yearid", a.yearid).gte("date", a.month + "-01").lte("date", a.month + "-31"))
+      .take(MONTH_ROW_CAP + 1);
+    if (rows.length > MONTH_ROW_CAP) throw new Error("More stored group rows in the month than a month can hold; nothing was deleted.");
+    const status = await ctx.db.query("attendanceRunGroupMonths")
+      .withIndex("by_yearid_month", (q) => q.eq("yearid", a.yearid).eq("month", a.month)).take(5);
+    for (const r of rows) await ctx.db.delete(r._id);
+    for (const s of status) await ctx.db.delete(s._id);
+    return { yearid: a.yearid, month: a.month, deletedRows: rows.length, deletedStatus: status.length };
   },
 });
 

@@ -1398,6 +1398,68 @@ suite.midnight = async (src) => {
 }
 
 // ===========================================================================
+console.log("\nA WEEK WITHHELD FOR GOOD IS LISTED, AND THE MONTH CAN BE REBUILT ON PURPOSE (review, 2026-10-12, third round)\n");
+// ===========================================================================
+suite.stuckRecorded = async (Mx) => {
+  // A whole week served Saturday; from Sunday its Friday has no records.
+  const tables = octFresh();
+  for (let k = 1; k <= 5; k++) await nightly(Mx, tables, addDays(W5, k));
+  const sat = tables.attendanceRunGroupMonths[0]?.stuckWeeks;
+  const sun = await nightly(Mx, tables, addDays(W5, 6), undefined, { drop: [FRI5] });
+  const st = tables.attendanceRunGroupMonths[0]?.stuckWeeks;
+  const p = (await ask(Mx, PBIS, { group: "el:el", periods: [[W5]] }, tables)).res.periods[0];
+  return { ok: Array.isArray(sat) && sat.length === 0 && JSON.stringify(st) === JSON.stringify([W5])
+    && JSON.stringify(sun.stuckWeeks) === JSON.stringify([W5]) && p.withheld === "no-data", sat, st, p };
+};
+suite.resetRemedy = async (Mx) => {
+  // September built with every axis and on record as complete; one of its
+  // weeks stuck. The remedy: reset the month, and the nightly mend rebuilds it.
+  const t = world();
+  const at = "2026-10-07T10:15:00.000Z";
+  const complete = (month) => ({ _id: "s" + month, yearid: 36, month, built: Mx.groups.AXES.map((axis) => ({ axis, syncedAt: at })),
+    skipped: [], updatedAt: at, stuckWeeks: month === "2026-09" ? ["2026-09-21"] : [] });
+  t.attendanceRunGroupMonths = [complete("2026-08"), complete("2026-09")];
+  t.attendanceRunGroupDays = t.attendanceRunGroupDays.map((r, i) => ({ _id: "g" + i, ...r }));
+  const db = fakeDb(t);
+  const sep = (r) => r.yearid === 36 && r.date.startsWith("2026-09");
+  const sepRows = world().attendanceRunGroupDays.filter(sep);
+  const others = t.attendanceRunGroupDays.length - sepRows.length;
+  const reset = await Mx.query.resetGroupMonth.handler({ db }, { yearid: 36, month: "2026-09" });
+  const leftSep = t.attendanceRunGroupDays.filter(sep).length, leftOthers = t.attendanceRunGroupDays.length;
+  const status = await Mx.query.groupMonthsStatus.handler({ db }, { yearid: 36 });
+  const night = await runAction("refreshCurrent", {}, { Mx, queries: {
+    "attendanceRunChartData.monthsPresent": () => ["2026-08", "2026-09", "2026-10"],
+    "attendanceGroupRunChart.groupMonthsStatus": () => status,
+  } });
+  const mended = night.scheduled.filter((x) => x.args.groupsOnly).map((x) => x.args.month);
+  // The mend's build: September afresh, nothing kept.
+  const days = sepRows.map(({ yearid, syncedAt, ...r }) => r);
+  const schoolDays = [...new Set(days.map((r) => r.date))].sort();
+  const whole = schoolDays.map((d) => {
+    const gr = days.filter((r) => r.date === d && r.axis === "gender");
+    return { date: d, members: gr.reduce((n, r) => n + r.members, 0), absentDays: gr.reduce((n, r) => n + r.absentDays, 0) };
+  });
+  const w = await Mx.query.replaceGroupMonth.handler({ db }, { yearid: 36, month: "2026-09", syncedAt: "2026-10-13T10:15:00.000Z",
+    axes: Mx.groups.AXES, schoolDays, whole, days, skipped: [] });
+  return { ok: reset.deletedRows === sepRows.length && reset.deletedStatus === 1 && leftSep === 0 && leftOthers === others
+    && status.map((s) => s.month).join(",") === "2026-08" && mended.join(",") === "2026-09"
+    && w.written === sepRows.length && w.keptDays === 0 && t.attendanceRunGroupMonths.find((m) => m.month === "2026-09")?.stuckWeeks?.length === 0,
+    reset, mended, written: w.written };
+};
+{
+  const sr = await suite.stuckRecorded(M);
+  check("a finished week whose school days change after it could be served stays withheld, and the month's status row "
+    + "lists it (stuckWeeks, dates only)", sr.ok, JSON.stringify(sr));
+  let rr;
+  try { rr = await suite.resetRemedy(M); } catch (e) { rr = { ok: false, error: String(e && e.message) }; }
+  check("resetGroupMonth deletes a month's group rows AND its status row (nothing else), so the nightly mend rebuilds it "
+    + "afresh: deleting the rows alone left the month listed as built for good", rr.ok, JSON.stringify(rr));
+  check("...and the fix-up text says so where it is read: reset the month, not just delete its rows",
+    [SRC.groups, SRC.action].every((s) => /resetGroupMonth/.test(s) && !/the next build writes them afresh/.test(s)
+      && !/To rebuild served\s+\*?\s*weeks on purpose, delete the month's group rows first\./.test(s)));
+}
+
+// ===========================================================================
 console.log("\nTHE FLOOR OF 30 HOLDS FOR WHAT CAN BE WORKED OUT, NOT ONLY FOR WHAT IS DRAWN (review, 2026-10-12)\n");
 // ===========================================================================
 // As measured this year: nobody pending assessment on most days, IFEP 28.
@@ -1730,6 +1792,10 @@ console.log("\nTEETH: EACH RULE, BROKEN ON PURPOSE, IS CAUGHT\n");
     "        for (const r of byDate.get(d)?.values() ?? []) if (rowReadThrough(r) < friday) open = true;\n", ""), suite.skippedThenLate);
   await caught("the build stamped after its reads", M, async () => suite.midnight(actionMut(
     "    const syncedAt = startedAt.toISOString();\n", "    const syncedAt = new Date().toISOString();\n")));
+  await caught("a stuck week not listed on the month's status row", mutate("query",
+    "const stuckField = stuck ? { stuckWeeks: stuck } : {};", "const stuckField = {};"), suite.stuckRecorded);
+  await caught("a reset that leaves the status row (the mend never comes back)", mutate("query",
+    "    for (const s of status) await ctx.db.delete(s._id);\n", ""), suite.resetRemedy);
   await caught("a stale row left behind", mutate("query", "for (const r of old) if (axes.includes(r.axis) && !kept.get(r.axis)!.has(r.date)) await ctx.db.delete(r._id);",
     "for (const r of old.slice(1)) if (axes.includes(r.axis) && !kept.get(r.axis)!.has(r.date)) await ctx.db.delete(r._id);"), suite.replaceClean);
 }

@@ -822,6 +822,11 @@ export default defineSchema({
     skipped: v.array(v.object({ axis: v.string(), reason: v.string(), at: v.string() })),
     updatedAt: v.string(),
     rateVar: v.optional(v.number()),
+    // The Mondays of kept weeks whose school days changed in PowerSchool
+    // after they could be served: "no-data" for every line, for good, until
+    // an administrator rebuilds the month (attendanceGroupRunChart:
+    // resetGroupMonth). Dates only.
+    stuckWeeks: v.optional(v.array(v.string())),
   }).index("by_yearid_month", ["yearid", "month"]),
 
   /** Per month per band: the measures a daily total cannot give (see runChartDays.ts). */

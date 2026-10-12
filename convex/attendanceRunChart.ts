@@ -42,7 +42,11 @@ import {
  * corrections. Those corrections still reach the band rows (Trends), so on
  * such a week the group lines can sit a little off Trends' line -- accepted
  * (docs/field-sourcing-approval.md, 2026-10-11 entry). To rebuild served
- * weeks on purpose, delete the month's group rows first.
+ * weeks on purpose, run attendanceGroupRunChart:resetGroupMonth for the
+ * month (its group rows AND its status row), then let the nightly mend
+ * rebuild it -- this year's months only -- or run buildMonth with
+ * groupsOnly: true by hand. Deleting the rows alone leaves the status row
+ * saying every axis is built, and the mend never comes back to the month.
  */
 function laToday(at: Date = new Date()): string {
   return new Intl.DateTimeFormat("en-CA", { timeZone: "America/Los_Angeles", year: "numeric", month: "2-digit", day: "2-digit" })

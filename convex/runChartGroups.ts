@@ -721,7 +721,7 @@ export function evaluatePeriods(args: {
 // arriving later would have the week rewritten -- and served again, with
 // every correction since. So the build that keeps such rows marks them
 // (keptThrough), and the week is never rewritten after; the day that
-// arrives leaves it "no-data" instead. Only weekdays
+// arrives leaves it "no-data" instead (stuckWeeks, below). Only weekdays
 // count: a record dated a Saturday or Sunday is no school day of the chart
 // (evaluatePeriods reads Monday to Friday), so it never reopens a week. And
 // the query serves a week only from rows read through its Friday, so a week
@@ -737,8 +737,19 @@ export function evaluatePeriods(args: {
 // school's corrections: no line holds the corrected student differently from
 // before, so it says nothing about any group.
 //
-// To rebuild served weeks on purpose (a bug in the group build), delete that
-// month's group rows first; the next build writes them afresh.
+// A WEEK CAN THEREFORE BE WITHHELD FOR GOOD: one whose school days change in
+// PowerSchool after it could be served (a day added on or before what its
+// rows read, or a day's records removed) keeps its rows and is "no-data" for
+// every line from then on. The build lists such weeks on the month's status
+// row (stuckWeeks); nothing rebuilds them by itself.
+//
+// To rebuild served weeks on purpose (a bug in the group build, or a stuck
+// week), run attendanceGroupRunChart:resetGroupMonth for the month: it
+// deletes the month's group rows AND its status row, so no week is kept and
+// the nightly mend rebuilds this year's month (groups only); for any other
+// year, or at once, run attendanceRunChart:buildMonth with groupsOnly: true
+// by hand. Deleting the rows alone is not enough: the status row still lists
+// every axis as built, so the mend never comes back to the month.
 
 /** The Monday of a date's week. */
 export function mondayOfIso(iso: string): string {
@@ -789,6 +800,22 @@ export function keptDates(stored: Array<{ date: string; syncedAt?: string; keptT
     for (const d of w.days) kept.add(d);
   }
   return kept;
+}
+
+/**
+ * The kept weeks (their Mondays) whose stored weekdays are not this build's
+ * school days for that week: withheld as "no-data" from now on, for good.
+ * Dates only.
+ */
+export function stuckWeeks(stored: Array<{ date: string }>, schoolDays: string[], kept: Set<string>): string[] {
+  const days = (dates: Iterable<string>, monday: string) =>
+    [...new Set([...dates].filter((d) => isWeekday(d) && mondayOfIso(d) === monday))].sort().join(",");
+  const mondays = new Set([...kept].map(mondayOfIso));
+  const stuck: string[] = [];
+  for (const m of [...mondays].sort()) {
+    if (days(stored.map((r) => r.date), m) !== days(schoolDays, m)) stuck.push(m);
+  }
+  return stuck;
 }
 
 // ===========================================================================
