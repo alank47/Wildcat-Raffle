@@ -85,8 +85,11 @@ console.log("\nTHE SWITCH: NO BACK-PAY, EVER (review H2)\n");
   const paused = R.planConfigure(live, { mode: "off" }, "2026-10-21").next;
   const resumed = R.planConfigure(paused, { mode: "live" }, "2026-10-26");
   check("off then on again counts from the day it came back on", resumed.ok && resumed.next.countFromDate === "2026-10-26" && resumed.next.liveFrom === "2026-10-26");
-  check("...so a day earned before the pause is out of scope after it",
+  check("...so a day not yet decided when it was paused is never decided as payable after it",
     R.scopeOf(resumed.next, "30001", "2026-10-20").payable === false && R.scopeOf(resumed.next, "30001", "2026-10-20").why === "before-start");
+  check("BUT A DAY STAMPED PAYABLE BEFORE THE PAUSE STILL IS: it waits while off and is paid once on again",
+    R.payNowWhy(paused, "30001", { payable: true }) === "off" && R.payNowWhy(resumed.next, "30001", { payable: true }) === null
+    && R.payNowWhy(resumed.next, "30001", { payable: false }) === "unpayable");
 
   const shadow = R.planConfigure(OFF, { mode: "shadow", pilotAdd: ["30001"] }, "2026-10-12").next;
   check("in shadow nothing is payable", R.scopeOf(shadow, "30001", "2026-10-13").payable === false && R.scopeOf(shadow, "30001", "2026-10-13").why === "shadow");
@@ -96,12 +99,23 @@ console.log("\nTHE SWITCH: NO BACK-PAY, EVER (review H2)\n");
   check("...a shadow-era day of a pilot student is not payable", R.scopeOf(pilot.next, "30001", "2026-10-16").why === "before-start");
   check("...a student outside the pilot is not payable", R.scopeOf(pilot.next, "30009", "2026-10-20").why === "outside-pilot");
   check("...a control is never payable", R.scopeOf(pilot.next, "30004", "2026-10-20").why === "control");
-  const wide = R.planConfigure(pilot.next, { mode: "live" }, "2026-10-26").next;
+  const widePlan = R.planConfigure(pilot.next, { mode: "live" }, "2026-10-26");
+  const wide = widePlan.next;
   check("pilot to live: the rest of the school from the switch day only",
     wide.liveFrom === "2026-10-26" && R.scopeOf(wide, "30009", "2026-10-23").payable === false && R.scopeOf(wide, "30009", "2026-10-26").payable === true);
   check("...the pilot students keep their own start", R.scopeOf(wide, "30001", "2026-10-20").payable === true);
+  check("pilot to live clears the controls, and says so",
+    widePlan.ok && J(wide.controls) === "[]" && widePlan.notes.some((n) => /control is cleared/.test(n)), J(widePlan));
+  check("...so a former control is paid from the switch day like everyone else, and never for a day before it",
+    R.scopeOf(wide, "30004", "2026-10-26").payable === true && R.scopeOf(wide, "30004", "2026-10-23").why === "before-start");
+  check("naming controls while live is refused; an empty list is fine",
+    R.planConfigure(wide, { controls: ["30004"] }, "2026-10-27").ok === false
+    && R.planConfigure(pilot.next, { mode: "live", controls: ["30004"] }, "2026-10-26").ok === false
+    && R.planConfigure(pilot.next, { mode: "live", controls: [] }, "2026-10-26").ok === true);
   const back2pilot = R.planConfigure(wide, { mode: "pilot" }, "2026-10-28").next;
   check("live back to pilot: nobody outside the pilot is payable", back2pilot.liveFrom === null && R.scopeOf(back2pilot, "30009", "2026-10-27").payable === false);
+  check("...but a day they earned while live, stamped payable, is still paid (no switch takes back what was earned)",
+    R.payNowWhy(back2pilot, "30009", { payable: true }) === null);
   check("a pilot with nobody in it is refused", R.planConfigure(OFF, { mode: "pilot" }, "2026-10-19").ok === false);
   check("a control cannot be a pilot student", R.planConfigure(OFF, { mode: "pilot", pilotAdd: ["1"], controls: ["1"] }, "2026-10-19").ok === false);
   check("the amount must be a whole number from 1 to 1000",
@@ -190,6 +204,22 @@ const judge = (o = {}) => R.judgeDay({ date: D, read: { ok: true, rows: dayRows(
   const unplaced = judge({ read: { ok: true, rows: [...dayRows(D), ...STU.slice(100, 105).map((s) => ({ id: rid++, studentid: s.psId, att_date: D, periodid: 0, attendance_codeid: 2 }))] } });
   check("more than 1% of rows outside a period: not believed", unplaced.state === "held" && /not in a known period/.test(unplaced.reason));
 
+  // A STACK DAY (all ten blocks met, as on Thu 9/3 and Tue 9/8) beside one ordinary day of the same
+  // pattern: blocks that never meet on that pattern must not look "not entered yet" on a normal day.
+  const DS = (date, rc) => ({ date, rows: Object.values(rc).reduce((a, n) => a + n, 0), rowCounts: rc, studentsWithMarks: 60, unplaceable: 0, unmatched: 0 });
+  const NORMAL = { 1: 60, 10: 30 };
+  const STACK = Object.fromEntries(Array.from({ length: 10 }, (_, i) => [String(i + 1), 50]));
+  const THU = "2026-10-22";
+  const refWith = (mon, thu) => [DS("2026-10-15", thu), DS("2026-10-16", NORMAL), DS("2026-10-19", mon), DS("2026-10-20", NORMAL), DS("2026-10-21", NORMAL)];
+  const judgeThu = (reference) => R.judgeDay({ date: THU, read: { ok: true, rows: dayRows(THU) }, codes: CODEBOOK, students: STU, cc: CC, reference,
+    screen: { ...screenOf(), asOf: "2026-10-23" }, decideAnyway: false });
+  const stackOnce = judgeThu(refWith(NORMAL, STACK));
+  check("A STACK DAY IN A TWO-DAY SAME-PATTERN REFERENCE HOLDS NOTHING: a block that ran on only one of them is not expected",
+    stackOnce.state === "school" && stackOnce.perfect.length === 140, stackOnce.reason);
+  const stackTwice = judgeThu(refWith(STACK, STACK));
+  check("...while a block that ran on every same-pattern day, and not today, still holds the day",
+    stackTwice.state === "held" && /Block 2 has 0 marks against a usual 50/.test(stackTwice.reason), stackTwice.reason);
+
   const one = judge({ screen: screenOf({ [STU[150].sn]: [D] }) });
   check("ONE DISAGREEMENT HOLDS ONE STUDENT, NOT THE SCHOOL",
     one.state === "school" && one.held.length === 1 && one.held[0].sn === STU[150].sn && one.perfect.length === 139, J({ s: one.state, h: one.held.length }));
@@ -197,6 +227,11 @@ const judge = (o = {}) => R.judgeDay({ date: D, read: { ok: true, rows: dayRows(
   check("...two out of 200 (1%) still hold only those two", two.state === "school" && two.held.length === 2);
   const many = judge({ screen: screenOf(Object.fromEntries(STU.slice(100, 110).map((s) => [s.sn, [D]]))) });
   check("a disagreement about more than 1% of the enrolled holds the date", many.state === "held" && /disagree about 10/.test(many.reason), many.reason);
+  check("A HELD DATE STILL SAYS WHO IS DISPUTED AND WHO HAS A BREAKING MARK, and makes nobody perfect",
+    many.perfect.length === 0 && many.held.length === 10 && many.broken.length === 60 && many.broken.every((b) => b.why === "marked"),
+    J({ p: many.perfect.length, h: many.held.length, b: many.broken.length }));
+  check("...a read held as too perfect lists the marks it does show",
+    tooPerfect.perfect.length === 0 && tooPerfect.broken.length === 22 && tooPerfect.broken.every((b) => b.why === "marked"), String(tooPerfect.broken.length));
   const k = judge({ read: { ok: true, rows: [...dayRows(D), { id: rid++, studentid: STU[120].psId, att_date: D, periodid: 852, attendance_codeid: 4, ccid: `${STU[120].psId}-2` }] } });
   check("K is the known difference: the award breaks the day, the screen does not, and nothing is held",
     k.state === "school" && k.held.length === 0 && k.counts.screen.knownDitching === 1 && k.broken.some((b) => b.sn === STU[120].sn && b.why === "ditching"));
@@ -250,6 +285,18 @@ console.log("\nTHE REGISTER: STAMPED ONCE, SETTLED UNTIL PAID\n");
   check("a removed day is final: never pending again", p9.patches.length === 0 && p9.inserts.length === 0);
   const p10 = R.planDateRows({ date: D, now: NOW, runId: "r10", settings: live, existing: rows, judgement: { ...J1, perfect: [{ sn: "2" }], held: [{ sn: "1", why: "screen-disagrees" }] } });
   check("a pending day the screen now disagrees about is held", p10.patches.some((p) => p.id === "id0" && p.patch.status === "held"));
+  const mixed = [
+    { ...rows[0], studentNumber: "1", _id: "m1" }, { ...rows[0], studentNumber: "2", _id: "m2" },
+    { ...rows[0], studentNumber: "3", _id: "m3", status: "paid", paidTxnId: "txn_1" }, { ...rows[0], studentNumber: "4", _id: "m4", status: "broken", why: "marked" },
+  ];
+  const p11 = R.planDateRows({ date: D, now: NOW, runId: "r11", settings: live, existing: mixed, onlyNotPayable: true,
+    judgement: { perfect: [{ sn: "4", div: "ms" }, { sn: "6", div: "ms" }], held: [{ sn: "2", why: "screen-disagrees" }, { sn: "5", why: "screen-disagrees" }],
+      broken: [{ sn: "1", why: "marked" }, { sn: "3", why: "marked" }], checked: true } });
+  const patchOf = (id) => p11.patches.find((x) => x.id === id)?.patch ?? null;
+  check("A HELD RE-READ OF A DECIDED DATE ONLY STOPS PAY: pending and absent is broken, pending and disputed is held, paid and absent is flagged",
+    patchOf("m1")?.status === "broken" && patchOf("m2")?.status === "held" && patchOf("m3")?.afterPayBroken === true && !("status" in (patchOf("m3") ?? {})), J(p11.patches));
+  check("...and nothing becomes pending or is inserted from a read that was not believed",
+    patchOf("m4") === null && p11.inserts.length === 0, J({ m4: patchOf("m4"), ins: p11.inserts.length }));
 }
 
 // ---------------------------------------------------------------- payday
@@ -264,11 +311,19 @@ console.log("\nPAYDAY\n");
 
   const live = R.planConfigure(R.settingsOrDefault(null), { mode: "live" }, "2026-10-19").next;
   const row = (date, o = {}) => ({ studentNumber: "1", date, status: "pending", payable: true, amount: 100, decidedAt: "", updatedAt: "", runId: "r", _id: date, ...o });
-  const plan = R.planPayout({ sn: "1", rows: [row("2026-10-19"), row("2026-10-20", { amount: 150 }), row("2026-10-26"), row("2026-10-16"), row("2026-10-21", { status: "paid" })],
+  const plan = R.planPayout({ sn: "1", rows: [row("2026-10-19"), row("2026-10-20", { amount: 150 }), row("2026-10-26"), row("2026-10-21", { status: "paid" })],
     settings: live, before: "2026-10-26", zeroPointDate: null, cutoffDate: null });
   check("payday pays pending days before this week, at their stamped amounts", plan.parts.length === 1 && J(plan.parts[0].dates) === J(["2026-10-19", "2026-10-20"]) && plan.parts[0].amount === 250);
-  check("...not a day before the start (counted, not paid)", plan.skipped.some((s) => s.date === "2026-10-16" && s.why === "before-start"));
   check("...not a day of this week, not a paid day", !plan.parts[0].dates.includes("2026-10-26") && !plan.parts[0].dates.includes("2026-10-21"));
+  // Off on 10/14, on again 10/19: countFromDate moved to 10/19. 10/12-10/13 were decided while live, stamped payable, shown.
+  const resumed = R.planConfigure(R.planConfigure(R.planConfigure(R.settingsOrDefault(null), { mode: "live" }, "2026-10-12").next, { mode: "off" }, "2026-10-14").next, { mode: "live" }, "2026-10-19").next;
+  const kept = R.planPayout({ sn: "1", rows: [row("2026-10-12"), row("2026-10-13"), row("2026-10-19")], settings: resumed, before: "2026-10-26", zeroPointDate: null, cutoffDate: null });
+  check("A DAY EARNED BEFORE A PAUSE IS PAID: today's start date fenced the deciding, it is not asked again at payday",
+    resumed.countFromDate === "2026-10-19" && kept.parts.length === 1 && J(kept.parts[0].dates) === J(["2026-10-12", "2026-10-13", "2026-10-19"]) && kept.skipped.length === 0, J(kept));
+  const never = R.planPayout({ sn: "1", rows: [row("2026-10-19", { payable: false })], settings: live, before: "2026-10-26", zeroPointDate: null, cutoffDate: null });
+  check("...a day stamped unpayable when decided is never paid", never.parts.length === 0 && never.skipped[0].why === "unpayable");
+  const offPlan = R.planPayout({ sn: "1", rows: [row("2026-10-19")], settings: R.planConfigure(live, { mode: "off" }, "2026-10-22").next, before: "2026-10-26", zeroPointDate: null, cutoffDate: null });
+  check("...and nothing is paid while no money moves (it waits, counted)", offPlan.parts.length === 0 && offPlan.skipped[0].why === "off");
   const reset = R.planPayout({ sn: "1", rows: [row("2026-10-19"), row("2026-10-20")], settings: live, before: "2026-10-26", zeroPointDate: "2026-10-19", cutoffDate: null });
   check("a day on or before a cash reset is dropped, not paid", reset.parts[0].dates.length === 1 && reset.skipped[0].why === "before-reset");
   const big = R.planPayout({ sn: "1", rows: Array.from({ length: 8 }, (_, i) => row(R.addDays("2026-10-19", i), { amount: 1000 })), settings: live, before: "2026-11-02", zeroPointDate: null, cutoffDate: null });
@@ -294,6 +349,11 @@ console.log("\nPAYDAY\n");
   const rows = [row("2026-10-20"), row("2026-10-21", { status: "held" }), row("2026-10-22", { status: "unpayable", payable: false })];
   check("a pilot student sees only the days that will be paid, and when", J(R.pendingForStudent({ settings: pilot, sn: "1", rows })) === J({ days: ["2026-10-20"], amount: 100, payday: "2026-10-26" }));
   check("a student outside the pilot sees nothing promised", R.pendingForStudent({ settings: pilot, sn: "2", rows }) === null);
+  const moved = R.planConfigure(pilot, { pilotRemove: ["1"], pilotAdd: ["9"] }, "2026-10-21").next;
+  check("a student taken out of the pilot still sees, and is paid, the days already earned in it",
+    J(R.pendingForStudent({ settings: moved, sn: "1", rows })) === J({ days: ["2026-10-20"], amount: 100, payday: "2026-10-26" })
+    && R.planPayout({ sn: "1", rows, settings: moved, before: "2026-10-26", zeroPointDate: null, cutoffDate: null }).parts[0]?.dates.length === 1);
+  check("a control is promised nothing, though a day was stamped payable before", R.pendingForStudent({ settings: { ...pilot, controls: ["1"] }, sn: "1", rows }) === null);
   check("in shadow nobody sees anything promised", R.pendingForStudent({ settings: R.planConfigure(R.settingsOrDefault(null), { mode: "shadow" }, "2026-10-19").next, sn: "1", rows }) === null);
 }
 

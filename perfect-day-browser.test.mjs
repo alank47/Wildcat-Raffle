@@ -522,8 +522,9 @@ const TUE = new Date(2026, 9, 13, 8, 0);      // Tuesday 10/13, the morning 10/1
     [undefined, {}, { days: [] }, { days: "2026-10-12" }, { days: [null, "Monday"] }, "x"].every((x) => pendingFn(x, TUE) === null));
   check("an unreadable amount is a dash, never $0",
     pendingFn({ days: ["2026-10-12"], amount: null, payday: "2026-10-19" }, TUE).amountText === "—");
-  check("the server sends only days that will be paid (pendingForStudent: payable, in scope, pending)",
-    /status === "pending" && r\.payable && scopeOf\(settings, sn, r\.date\)\.payable/.test(pdRules));
+  check("the server sends only days that will be paid (pendingForStudent asks payday's own rule, payNowWhy)",
+    /status === "pending" && payNowWhy\(settings, sn, r\) === null/.test(pdRules)
+    && /const wait = payNowWhy\(input\.settings, input\.sn, r\);/.test(pdRules));
 }
 
 // The wallet card, built as student-rewards-card.test.mjs builds it, with the helper beside it.

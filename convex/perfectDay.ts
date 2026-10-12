@@ -43,7 +43,8 @@ import { requireAdmin } from "./identity";
  * THE COMMAND LINE (deploy key only):
  *   npx convex run perfectDay:configure '{"mode":"shadow","actorName":"..."}'
  *   npx convex run perfectDay:configure '{"mode":"pilot","pilotAdd":["..."],"controls":["..."],"actorName":"..."}'
- *   npx convex run perfectDay:configure '{"mode":"off","actorName":"..."}'      <- the kill switch
+ *   npx convex run perfectDay:configure '{"mode":"off","actorName":"..."}'      <- the kill switch (pending days wait, they are not lost)
+ *   npx convex run perfectDay:forfeitPending '{"from":"...","to":"...","reason":"...","actorName":"..."}'   <- counts; add "apply":true to forfeit
  *   npx convex run perfectDay:status
  *   npx convex run perfectDay:correctPayout '{"txnId":"txn_...","removeDates":["2026-10-14"],"reason":"...","actorName":"..."}'
  */
@@ -219,6 +220,16 @@ const personArg = v.object({ sn: v.string(), div: v.optional(v.union(v.string(),
  * date record. A date before the start is never written. A date PowerSchool
  * now shows as no school, after perfect days were decided for it, is HELD
  * for an admin rather than quietly undone.
+ *
+ * A DATE ALREADY DECIDED WHOSE RE-READ IS HELD (too perfect, a block missing,
+ * rows out of place, the screen disputing more than 1%) is not paid over
+ * (2026-10-12 review): what the read shows that makes a day NOT payable still
+ * applies (a disputed student's pending day is held, a pending day the read
+ * shows broken is broken, a paid one is flagged), and nothing new becomes
+ * payable. Its record stays "decided", with the re-read's reason, because its
+ * days stand: a date-level "held" would later expire as "not paid" over days
+ * that were paid. A read that FAILED (retryable) knows nothing and changes no
+ * day.
  */
 export const applyDate = internalMutation({
   args: {
@@ -237,13 +248,14 @@ export const applyDate = internalMutation({
     const existing = await ctx.db.query("perfectDays").withIndex("by_date", (q) => q.eq("date", a.date)).collect();
     let state: "school" | "no-school" | "held" = a.state;
     let reason = a.reason;
+    const recheckHeld = a.state === "held" && !a.retryable && existing.length > 0;
     if (state === "no-school" && existing.length) {
       state = "held";
       reason = `PowerSchool or the calendar now says no school on ${a.date}, but ${existing.length} perfect days were already decided for it. `
         + "Those stand as decided until an admin takes them out (perfectDay:removeDays, or correctPayout for a paid one).";
     }
     let register: Record<string, number> | null = null;
-    if (state === "school") {
+    if (state === "school" || recheckHeld) {
       const plan = R.planDateRows({
         date: a.date, now, runId: a.runId, settings, existing: existing as unknown as R.RegRow[],
         judgement: {
@@ -252,19 +264,31 @@ export const applyDate = internalMutation({
           broken: a.broken.map((b) => ({ sn: b.sn, why: b.why ?? "marked" })),
           checked: a.checked,
         },
+        onlyNotPayable: recheckHeld,
       });
       for (const ins of plan.inserts) await ctx.db.insert("perfectDays", ins as any);
       for (const p of plan.patches) await ctx.db.patch(p.id, p.patch as any);
       register = plan.counts;
     }
     const rec = await ctx.db.query("perfectDayDates").withIndex("by_date", (q) => q.eq("date", a.date)).first();
+    if (recheckHeld) {
+      // The date's earlier counts stand: this read was not believed, so its figures are not shown as the day's.
+      const note = {
+        state: "school" as const, retryable: false, runId: a.runId, updatedAt: now,
+        reason: `Decided on an earlier run. This run's re-read was held (${a.reason}), so only what makes a day NOT payable was applied.`,
+        counts: { ...((rec?.counts as Record<string, any>) ?? {}), recheck: { at: now, reason: a.reason, register } },
+      };
+      if (rec) await ctx.db.patch(rec._id, note);
+      else await ctx.db.insert("perfectDayDates", { date: a.date, firstDecidedAt: now, rowCounts: a.rowCounts ?? {}, ...note });
+      return { ok: true as const, state: "school" as const, recheckHeld: true, register };
+    }
     const fields = {
       state, reason, retryable: a.retryable, runId: a.runId, updatedAt: now,
       counts: { ...(a.counts ?? {}), ...(register ? { register } : {}) }, rowCounts: a.rowCounts ?? {},
     };
     if (rec) await ctx.db.patch(rec._id, fields);
     else await ctx.db.insert("perfectDayDates", { date: a.date, firstDecidedAt: now, ...fields });
-    return { ok: true as const, state, register };
+    return { ok: true as const, state, recheckHeld: false, register };
   },
 });
 
@@ -353,8 +377,8 @@ const countersOf = (student: any): Record<string, number> => {
 
 /**
  * PAY UP TO FIFTY STUDENTS. Per student, in this one transaction: their
- * pending days before this week, re-checked against today's scope
- * (perfectDayRules.planPayout); one movement (split only past $5,000); the
+ * pending days before this week that were stamped payable when decided, not
+ * a control (perfectDayRules.planPayout); one movement (split only past $5,000); the
  * register rows marked paid. ONCE PER STUDENT-WEEK: a movement already
  * recorded for (student, payWeek) means a day that became pending since then
  * waits for next week. A student number with no Hub record, or with two, is
@@ -600,6 +624,37 @@ export const resolveHeld = internalMutation({
   },
 });
 
+/**
+ * FORFEIT PENDING DAYS, ON PURPOSE. The switch never takes back a pending day:
+ * switched off and on again, it is paid on the next payday it is on for. When
+ * the days themselves are wrong (the job decided badly, and was switched off
+ * for that), an admin forfeits them here: every pending or held day from
+ * `from` to `to` becomes removed, never paid automatically again. Without
+ * apply: true it only counts what it would do. At most 4,000 days a call
+ * (`more` says run it again). Recorded in perfectDayAudit, counts only.
+ */
+export const forfeitPending = internalMutation({
+  args: { from: v.string(), to: v.string(), reason: v.string(), actorName: v.string(), apply: v.optional(v.boolean()) },
+  handler: async (ctx, a) => {
+    if (!R.isDay(a.from) || !R.isDay(a.to) || a.from > a.to) return { ok: false as const, reason: "from and to must be YYYY-MM-DD dates, from first." };
+    const reason = a.reason.trim();
+    if (reason.length < 3) return { ok: false as const, reason: "Say why." };
+    const CAP = 4000;
+    const rows: any[] = [];
+    for (const status of ["pending", "held"] as const) {
+      if (rows.length >= CAP) break;
+      rows.push(...await ctx.db.query("perfectDays")
+        .withIndex("by_status_date", (q) => q.eq("status", status).gte("date", a.from).lte("date", a.to)).take(CAP - rows.length));
+    }
+    const counted = { days: rows.length, students: new Set(rows.map((r) => r.studentNumber)).size, dates: [...new Set(rows.map((r) => r.date))].sort() };
+    if (a.apply !== true) return { ok: true as const, applied: false, wouldForfeit: counted };
+    const now = new Date().toISOString();
+    for (const r of rows) await ctx.db.patch(r._id, { status: "removed", why: `admin: forfeited: ${reason}`, updatedAt: now, runId: "admin" });
+    await audit(ctx, a.actorName, "forfeitPending", { from: a.from, to: a.to, days: counted.days, students: counted.students, reason });
+    return { ok: true as const, applied: true, forfeited: counted, more: rows.length >= CAP };
+  },
+});
+
 /** Take unpaid days out for good (pending, held, unpayable or broken). A paid day needs correctPayout. */
 export const removeDays = internalMutation({
   args: { studentNumber: v.string(), dates: v.array(v.string()), reason: v.string(), actorName: v.string() },
@@ -689,8 +744,9 @@ export const correctPayout = internalMutation({
 
 /**
  * WHAT A STUDENT SEES: their perfect days that will be paid, and the Monday
- * they arrive. Null when no money moves for them (off, shadow, outside the
- * pilot, a control): nothing is promised that will not come.
+ * they arrive -- exactly what payday pays. Null when no money moves for them
+ * (off, shadow, a control, or outside the pilot with nothing earned still to
+ * come): nothing is promised that will not come.
  */
 export async function perfectDaysForStudent(ctx: QueryCtx, studentNumber: string) {
   const settings = await loadSettings(ctx);
@@ -782,7 +838,7 @@ export async function statusFor(ctx: QueryCtx, nDates = 10) {
     paidThenBroken.push({ studentNumber: r.studentNumber, date: r.date, txnId: txn, why: r.afterPayWhy ?? null });
   }
 
-  // THE NEXT PAYDAY: every pending day before its week that today's scope would pay.
+  // THE NEXT PAYDAY: every pending day before its week that payday would pay (the same rule, payNowWhy).
   const thisWeek = today ? R.weekStartOf(today) : null;
   const nextPayWeek = thisWeek ? (state.lastPayWeek && state.lastPayWeek >= thisWeek ? R.addDays(thisWeek, 7) : thisWeek) : null;
   const pending = nextPayWeek
@@ -791,9 +847,9 @@ export async function statusFor(ctx: QueryCtx, nDates = 10) {
   let payDays = 0, payTotal = 0;
   const notPaid: Record<string, number> = {};
   for (const r of pending) {
-    const sc = R.scopeOf(settings, r.studentNumber, r.date);
-    if (r.payable && sc.payable) { willPay.add(r.studentNumber); payDays++; payTotal += r.amount; }
-    else notPaid[sc.why ?? "unpayable"] = (notPaid[sc.why ?? "unpayable"] ?? 0) + 1;
+    const wait = R.payNowWhy(settings, r.studentNumber, r);
+    if (!wait) { willPay.add(r.studentNumber); payDays++; payTotal += r.amount; }
+    else notPaid[wait] = (notPaid[wait] ?? 0) + 1;
   }
 
   // THE CONTROLS: none of them may ever have been paid.

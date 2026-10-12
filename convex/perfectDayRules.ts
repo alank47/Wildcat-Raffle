@@ -17,12 +17,20 @@
  * somebody decides otherwise. $100 a day by default; the amount is a server
  * setting checked here.
  *
- * NO BACK-PAY, EVER (review H2). Nothing before `countFromDate` is decided or
- * paid; every switch from off to on moves it to the day of the switch; a day
- * is stamped payable or not WHEN IT IS FIRST DECIDED and that stamp is final;
- * and the payer checks the scope again on the day it pays. Shadow days, days
- * outside the pilot and days from before a pause are never paid by any later
- * switch.
+ * NO BACK-PAY, EVER (review H2). Nothing before `countFromDate` is decided;
+ * every switch from off to on moves it to the day of the switch; and a day is
+ * stamped payable or not WHEN IT IS FIRST DECIDED, and that stamp is final.
+ * Shadow days, days outside the pilot, days of a control and days of a pause
+ * are stamped unpayable or never decided, so no later switch pays them.
+ *
+ * AND NO SWITCH TAKES BACK WHAT WAS EARNED (2026-10-12 review). A day stamped
+ * payable was earned and shown to the student as pending. Payday does NOT
+ * re-apply today's start dates to it: a pause (off, then on again), a move
+ * from live to pilot, or a pilot student taken out of the pilot never forfeits
+ * it. It waits while no money moves (off, shadow) or while the student is a
+ * control, and is paid on the next payday after. Cancelling pending days is a
+ * decision of its own (perfectDay:forfeitPending, removeDays), never a side
+ * effect of the switch.
  *
  * NAMES NEVER APPEAR HERE. Student numbers and counts only.
  */
@@ -157,7 +165,7 @@ export type Settings = {
   liveFrom: string | null;
   /** Pilot students, each payable from the day money started for them. */
   pilot: PilotEntry[];
-  /** Students who must NOT be paid (the pilot's controls). Never paid, whatever the mode. */
+  /** Students who must NOT be paid (the pilot's controls). Part of the pilot: cleared when the whole school goes live. */
   controls: string[];
   lookbackSchoolDays: number;
   /** One summary appAuditLog entry per payday. OFF until the browser registers the action (review M6). */
@@ -221,9 +229,16 @@ export type ConfigureInput = {
  *   off/shadow -> pilot/live: every pilot student's start moves up to today:
  *                           days decided in shadow were stamped unpayable and
  *                           stay so, and no pilot day before today is paid
- *   -> live:                liveFrom = today; the pilot keeps its own starts
- *   live -> pilot/shadow:   liveFrom cleared; nobody outside the pilot is
- *                           paid, and their pending days are counted, not paid
+ *   -> live:                liveFrom = today; the pilot keeps its own starts;
+ *                           the controls are cleared (they belong to the
+ *                           pilot: a control left in place would have every
+ *                           live day stamped unpayable for good, while the
+ *                           admin card read "none paid"). Naming controls
+ *                           while live is refused.
+ *   live -> pilot/shadow:   liveFrom cleared; nobody outside the pilot is paid
+ *                           for a day decided from then on. Days already
+ *                           stamped payable stay so and are paid when due
+ *                           (no switch takes back what was earned)
  *   amount:                 only days decided after the change use it
  */
 export function planConfigure(prev: Settings, input: ConfigureInput, today: string):
@@ -268,7 +283,13 @@ export function planConfigure(prev: Settings, input: ConfigureInput, today: stri
   }
 
   const controls = input.controls !== undefined ? [...new Set(input.controls.map(cleanSn).filter(Boolean))] : next.controls;
-  next.controls = controls;
+  if (newMode === "live" && input.controls !== undefined && controls.length) {
+    return { ok: false, reason: "Controls belong to a pilot: the whole school has none. Leave controls out, or pass controls: []." };
+  }
+  if (newMode === "live" && controls.length) {
+    notes.push(`The ${controls.length} control${controls.length === 1 ? " is" : "s are"} cleared: controls belong to the pilot, and the whole school is paid from today.`);
+  }
+  next.controls = newMode === "live" ? [] : controls;
   const remove = new Set((input.pilotRemove ?? []).map(cleanSn));
   next.pilot = next.pilot.filter((e) => !remove.has(e.sn));
   const floor = back ? (input.countFromDate as string) : today;
@@ -318,6 +339,27 @@ export function scopeOf(s: Settings, sn: string, date: string): { payable: boole
   if (!from) return { payable: false, why: s.mode === "pilot" ? "outside-pilot" : "not-in-scope" };
   if (date < from) return { payable: false, why: "before-start" };
   return { payable: true, why: null };
+}
+
+/**
+ * CAN THIS DECIDED DAY BE PAID NOW? Null for yes, else why it waits.
+ *
+ * scopeOf above is asked ONCE, when a day is first decided, and its answer is
+ * stamped on the day (`payable`). That stamp is the whole fence against
+ * back-pay: a day decided while off, in shadow, outside the pilot, before the
+ * start or for a control was stamped unpayable and stays so. Payday and the
+ * student's pending line ask only this, and NEVER today's start dates again:
+ * re-checking them would forfeit days a student earned and was shown, every
+ * time the switch went off and on or the pilot widened or narrowed.
+ *
+ * A stamped day waits, and is not lost, while no money moves (off, shadow)
+ * or while the student is a control.
+ */
+export function payNowWhy(s: Settings, sn: string, row: { payable: boolean }): string | null {
+  if (!row.payable) return "unpayable";
+  if (!paying(s.mode)) return s.mode;
+  if (s.controls.includes(sn)) return "control";
+  return null;
 }
 
 // ===========================================================================
@@ -589,6 +631,9 @@ export type DayJudgement = {
   rowCounts: Record<string, number>;
 };
 
+/** Broken by what the read shows (a mark) or by the students table: true of a held read too. */
+const MARK_BROKEN = new Set(["marked", "ditching", "unknown-code", "not-enrolled"]);
+
 const emptyJudgement = (date: string, state: DayJudgement["state"], reason: string, retryable: boolean,
   extra: Partial<DayJudgement> = {}): DayJudgement => ({
   date, state, reason, retryable, checked: false, perfect: [], held: [], broken: [], counts: {}, rowCounts: {}, ...extra,
@@ -602,9 +647,12 @@ const emptyJudgement = (date: string, state: DayJudgement["state"], reason: stri
  *      fewer students marked than usual ("too perfect"), or a block far below
  *      its usual level for the same weekday pattern (late bulk entry) --
  *      unless an admin said "decide anyway" for the date;
- *   4. every student is judged;
+ *   4. every student is judged (a held read too);
  *   5. the screen checks each perfect student; a disagreement holds THAT
  *      STUDENT, and only a disagreement about more than 1% holds the date.
+ * A HELD date makes nobody perfect, but still lists the students the screen
+ * disputes and those with a breaking mark: for a date decided on an earlier
+ * run, those pending days must stop (applyDate).
  */
 export function judgeDay(input: {
   date: string;
@@ -632,29 +680,39 @@ export function judgeDay(input: {
       false, { rowCounts: stats.rowCounts, counts: { rows: stats.rows } });
   }
 
+  // CAN THE READ BE BELIEVED AS COMPLETE? If not, the date is held: nothing
+  // becomes payable from it. Every student is still judged below, because a
+  // breaking mark the read DOES show is real however incomplete the rest is,
+  // and a day already pending must not be paid over it (2026-10-12 review).
+  let hold: { reason: string; counts: Record<string, any> } | null = null;
   if (!input.decideAnyway) {
-    if (stats.unplaceable > UNPLACEABLE_MAX * stats.rows) {
-      return emptyJudgement(date, "held", `${stats.unplaceable} of ${stats.rows} rows are not in a known period, so the read is not believed.`,
-        false, { rowCounts: stats.rowCounts, counts: { rows: stats.rows, unplaceable: stats.unplaceable } });
-    }
     const ref = input.reference.filter((r) => r.date !== date && hasEvidence(r.rowCounts));
-    if (ref.length >= MIN_REFERENCE_DAYS) {
-      const usual = median(ref.map((r) => r.studentsWithMarks));
-      if (stats.studentsWithMarks < TOO_PERFECT_RATIO * usual) {
-        return emptyJudgement(date, "held",
-          `Only ${stats.studentsWithMarks} students have any mark, against a usual ${usual}: a day that looks too perfect is held, not paid.`,
-          false, { rowCounts: stats.rowCounts, counts: { rows: stats.rows, studentsWithMarks: stats.studentsWithMarks, usual } });
-      }
-    }
-    const same = ref.filter((r) => patternOf(r.date) === patternOf(date));
-    if (same.length) {
-      for (let slot = 1; slot <= 10; slot++) {
-        const usual = median(same.map((r) => r.rowCounts[String(slot)] ?? 0));
+    const usualMarked = ref.length >= MIN_REFERENCE_DAYS ? median(ref.map((r) => r.studentsWithMarks)) : null;
+    if (stats.unplaceable > UNPLACEABLE_MAX * stats.rows) {
+      hold = { reason: `${stats.unplaceable} of ${stats.rows} rows are not in a known period, so the read is not believed.`, counts: {} };
+    } else if (usualMarked !== null && stats.studentsWithMarks < TOO_PERFECT_RATIO * usualMarked) {
+      hold = {
+        reason: `Only ${stats.studentsWithMarks} students have any mark, against a usual ${usualMarked}: a day that looks too perfect is held, not paid.`,
+        counts: { usual: usualMarked },
+      };
+    } else {
+      // A BLOCK NOT ENTERED YET. Compared with the same weekday pattern, and a
+      // block is EXPECTED only if it ran (had any rows) on more than half of
+      // those days, its usual level taken over the days it ran. So one "stack"
+      // day where all ten blocks met (Thu 9/3, Tue 9/8) cannot make a block
+      // that never meets on this pattern look missing (measured: it held 8/27,
+      // 8/31, 9/10 and more against a usual of half the stack day's count).
+      const same = ref.filter((r) => patternOf(r.date) === patternOf(date));
+      for (let slot = 1; slot <= 10 && !hold; slot++) {
+        const ran = same.map((r) => r.rowCounts[String(slot)] ?? 0).filter((n) => n > 0);
+        if (ran.length * 2 <= same.length) continue;
+        const usual = median(ran);
         const now = stats.rowCounts[String(slot)] ?? 0;
         if (usual >= SLOT_MIN_USUAL && now < SLOT_INCOMPLETE_RATIO * usual) {
-          return emptyJudgement(date, "held",
-            `Block ${slot} has ${now} marks against a usual ${usual} on this kind of day: it looks not entered yet, so the day is held.`,
-            false, { rowCounts: stats.rowCounts, counts: { rows: stats.rows, slot, slotNow: now, slotUsual: usual } });
+          hold = {
+            reason: `Block ${slot} has ${now} marks against a usual ${usual} on this kind of day: it looks not entered yet, so the day is held.`,
+            counts: { slot, slotNow: now, slotUsual: usual },
+          };
         }
       }
     }
@@ -747,13 +805,25 @@ export function judgeDay(input: {
     }
     const enrolledTotal = enrolledCount.ms + enrolledCount.hs + enrolledCount.other;
     const limit = Math.max(1, Math.floor(DISAGREE_DAY_MAX * enrolledTotal));
-    if (held.length > limit && !input.decideAnyway) {
-      return emptyJudgement(date, "held",
-        `PowerSchool and the Perfect Attendance screen disagree about ${held.length} students (more than ${limit}), so something is wrong with one of them. The date is held.`,
-        false, { rowCounts: stats.rowCounts, counts: { ...counts, screen: screenCounts } });
+    if (held.length > limit && !input.decideAnyway && !hold) {
+      hold = {
+        reason: `PowerSchool and the Perfect Attendance screen disagree about ${held.length} students (more than ${limit}), so something is wrong with one of them. The date is held.`,
+        counts: {},
+      };
     }
   }
   counts.screen = screenCounts;
+  if (hold) {
+    // HELD: nothing is perfect from this read. It still says who the screen
+    // disputes and who has a breaking mark, so a day already pending for them
+    // is held or broken, never paid over it (applyDate, planDateRows'
+    // onlyNotPayable). "No class" is left out: it leans on which blocks the
+    // read shows meeting, which is what an incomplete read gets wrong.
+    return {
+      date, state: "held", reason: hold.reason, retryable: false, checked: usable, perfect: [], held,
+      broken: broken.filter((b) => MARK_BROKEN.has(b.why)), counts: { ...counts, ...hold.counts }, rowCounts: stats.rowCounts,
+    };
+  }
   return {
     date, state: "school", reason: usable ? "Decided." : `Decided without the second check (${screenCounts.reason}): nothing new becomes payable until it runs.`,
     retryable: false, checked: usable, perfect: agreed, held, broken, counts, rowCounts: stats.rowCounts,
@@ -785,11 +855,18 @@ export type RegRow = {
  * removed or expired day is final. A change that would make a day payable
  * needs the second check; without it the day is held, while a change that
  * makes a day NOT payable (pending -> broken) always applies.
+ *
+ * ONLY NOT PAYABLE (`onlyNotPayable`): a date decided on an earlier run whose
+ * re-read is HELD as a whole. Nothing is inserted and nothing becomes pending,
+ * but a pending day the screen now disputes is held, one the read shows
+ * broken is broken, and a paid one it shows broken is flagged: the same
+ * direction that "always applies", so a hold never pays over a known break.
  */
 export function planDateRows(input: {
   date: string; now: string; runId: string; settings: Settings; existing: RegRow[];
   judgement: { perfect: Array<{ sn: string; div: string | null }>; held: Array<{ sn: string; why?: string; div?: string | null }>;
     broken: Array<{ sn: string; why: string }>; checked: boolean };
+  onlyNotPayable?: boolean;
 }): { inserts: RegRow[]; patches: Array<{ id: any; patch: Partial<RegRow> }>; counts: Record<string, number> } {
   const { date, now, runId, settings } = input;
   const inserts: RegRow[] = [];
@@ -814,7 +891,7 @@ export function planDateRows(input: {
     ...(why ? { why } : {}), decidedAt: now, ...base,
   });
 
-  for (const p of input.judgement.perfect) {
+  for (const p of input.onlyNotPayable ? [] : input.judgement.perfect) {
     const r = bySn.get(p.sn);
     if (r && (r.status === "removed" || r.status === "expired")) continue;
     if (r && r.status === "paid") {
@@ -844,6 +921,7 @@ export function planDateRows(input: {
     if (r && (r.status === "removed" || r.status === "expired" || r.status === "paid")) continue;
     // An admin already settled this disagreement (perfectDay.resolveHeld): it stays settled.
     if (r && (r.status === "pending" || r.status === "unpayable") && String(r.why ?? "").startsWith("admin:")) continue;
+    if (!r && input.onlyNotPayable) continue;
     if (!r) {
       inserts.push(newRow(h.sn, h.div ?? null, "held", scopeOf(settings, h.sn, date), "screen-disagrees"));
       counts.inserted++;
@@ -876,10 +954,12 @@ export function planDateRows(input: {
 // ===========================================================================
 
 /**
- * Is today a payday? The first run on or after Monday that gets through its
- * reads pays (review L2): a failed Monday does not slip a week. On the Monday
- * itself it waits until 09:30 for a retried read of last week, then pays what
- * is settled; a day settled later is paid the next week.
+ * Is today a payday? The first run on or after Monday pays (review L2): a
+ * failed Monday does not slip a week, and nor does a PowerSchool outage, since
+ * paying reads nothing from it (the run counts a failed read as a retried read
+ * of last week). On the Monday itself it waits until 09:30 for a retried read
+ * of last week, then pays what is settled; a day settled later is paid the
+ * next week.
  */
 export function paydayVerdict(input: {
   today: string; minute: number; mode: Mode; lastPayWeek: string | null; retryableHeldBefore: boolean;
@@ -897,10 +977,11 @@ export type PayoutPart = { part: number; dates: string[]; amount: number; rows: 
 
 /**
  * One student's payday: which pending days are paid, and in how many
- * movements. A day is paid only if it is pending, was stamped payable, is
- * before this week (`before`), and is STILL inside the scope today: the start
- * date, the student's own start, not a control, after the last cash reset and
- * the history cutoff. Everything else is counted with why and left.
+ * movements. A day is paid only if it is pending, was stamped payable when it
+ * was decided, is before this week (`before`), money moves in this mode and
+ * the student is not a control (payNowWhy: today's start dates are NOT asked
+ * again), and it is after the last cash reset and the history cutoff.
+ * Everything else is counted with why and left.
  *
  * Split so no movement passes MAX_CASH_DELTA, which Reverse refuses (L2).
  */
@@ -914,9 +995,8 @@ export function planPayout(input: {
     if (r.studentNumber !== input.sn || r.status !== "pending" || r.date >= input.before) continue;
     if (seen.has(r.date)) { skipped.push({ date: r.date, why: "duplicate", row: r }); continue; }
     seen.add(r.date);
-    if (!r.payable) { skipped.push({ date: r.date, why: "unpayable", row: r }); continue; }
-    const sc = scopeOf(input.settings, input.sn, r.date);
-    if (!sc.payable) { skipped.push({ date: r.date, why: sc.why ?? "out-of-scope", row: r }); continue; }
+    const wait = payNowWhy(input.settings, input.sn, r);
+    if (wait) { skipped.push({ date: r.date, why: wait, row: r }); continue; }
     if (input.zeroPointDate && r.date <= input.zeroPointDate) { skipped.push({ date: r.date, why: "before-reset", row: r }); continue; }
     if (input.cutoffDate && r.date < input.cutoffDate) { skipped.push({ date: r.date, why: "before-cutoff", row: r }); continue; }
     if (!validAmount(r.amount)) { skipped.push({ date: r.date, why: "bad-amount", row: r }); continue; }
@@ -991,17 +1071,19 @@ export function buildPayoutRow(input: {
 export const paydayFor = (date: string): string => addDays(weekStartOf(date), 7);
 
 /**
- * WHAT THE STUDENT SEES: their perfect days that WILL be paid, and when.
- * Null when no money moves for them at all (off, shadow, outside the pilot,
- * a control), so nothing is promised that will not arrive (review H2).
+ * WHAT THE STUDENT SEES: their perfect days that WILL be paid, and when --
+ * exactly the days payday pays (payNowWhy). Null when no money moves for them
+ * at all (off, shadow, a control, or outside the pilot with nothing earned
+ * still to come), so nothing is promised that will not arrive (review H2).
  */
 export function pendingForStudent(input: { settings: Settings; sn: string; rows: RegRow[] }):
   null | { days: string[]; amount: number; payday: string | null } {
   const { settings, sn } = input;
-  if (!paying(settings.mode) || !payableFrom(settings, sn)) return null;
   const days = input.rows
-    .filter((r) => r.studentNumber === sn && r.status === "pending" && r.payable && scopeOf(settings, sn, r.date).payable)
+    .filter((r) => r.studentNumber === sn && r.status === "pending" && payNowWhy(settings, sn, r) === null)
     .sort((a, b) => a.date.localeCompare(b.date));
+  // No day to pay, and none can come (off, shadow, a control, outside the pilot): promise nothing.
+  if (!days.length && !payableFrom(settings, sn)) return null;
   return {
     days: days.map((r) => r.date),
     amount: days.reduce((a, r) => a + r.amount, 0),

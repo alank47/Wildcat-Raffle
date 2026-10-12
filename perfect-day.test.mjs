@@ -343,7 +343,7 @@ console.log("\nA. SHADOW FOR A WEEK, THEN LIVE: SHADOW NEVER PAYS; THE WEEK IS P
 }
 
 // ===========================================================================
-console.log("\nB. LIVE, OFF FOR TWO DAYS, ON AGAIN: A SWITCH OFF AND ON NEVER BACK-PAYS\n");
+console.log("\nB. LIVE, OFF FOR TWO DAYS, ON AGAIN: THE PAUSE IS NEVER BACK-PAID, AND WHAT WAS EARNED IS NOT TAKEN BACK\n");
 {
   const w = await makeWorld();
   for (const d of weekdaysBetween("2026-10-19", "2026-11-06")) w.school(d);
@@ -357,15 +357,23 @@ console.log("\nB. LIVE, OFF FOR TWO DAYS, ON AGAIN: A SWITCH OFF AND ON NEVER BA
   check("switched off, the mornings do nothing", t1.do === "none" && t2.do === "none" && !w.rows("perfectDays").some((r) => r.date >= "2026-10-21"));
   const sneaky = await configure(w, "2026-10-26T13:00:00Z", { mode: "live", countFromDate: "2026-10-19" });
   check("switching back on from an earlier date without backPay is refused", sneaky.ok === false && /backPay/.test(sneaky.reason));
+  const offView = await studentView(w, "S1", "2026-10-23T18:00:00Z");
+  const offStatus = await status(w);
+  check("while off, nothing is promised to the student, and the status counts the earned days as waiting",
+    offView.wildcatCash.perfectDays === null && offStatus.nextPayday.earnedNotPaid.off === 24 && offStatus.nextPayday.students === 0, J(offStatus.nextPayday));
   const back = await configure(w, "2026-10-26T13:05:00Z", { mode: "live" });
   check("switched back on, counting from the day it came back", back.ok && back.settings.countFromDate === "2026-10-26");
+  const onView = await studentView(w, "S1", "2026-10-26T13:10:00Z");
+  check("...and the student is shown again the days earned before the pause, arriving today",
+    J(onView.wildcatCash.perfectDays) === J({ days: ["2026-10-19", "2026-10-20"], amount: 200, payday: "2026-10-26" }), J(onView.wildcatCash.perfectDays));
   await morning(w, "2026-10-26");
-  check("A SWITCH OFF/ON NEVER BACK-PAYS: Monday's payday pays none of the days from before the pause",
-    w.jobLedger().length === 0 && !w.rows("perfectDays").some((r) => r.status === "paid"));
+  check("A SWITCH OFF/ON NEVER BACK-PAYS THE PAUSE: no day from the switch-off on (10/21-10/23) is ever decided",
+    !w.rows("perfectDays").some((r) => r.date >= "2026-10-21" && r.date <= "2026-10-23"));
+  check("NO SWITCH TAKES BACK WHAT WAS EARNED: Monday's payday pays the 10/19-10/20 days decided before the pause",
+    TEST.every((s) => J(paidDates(w, s.key)) === J(["2026-10-19", "2026-10-20"])) && w.jobLedger().length === 12 && w.hub("S1").wildcatCashBalance === 1200,
+    J(paidDates(w, "S1")));
   const st = await status(w);
-  check("...and says so: 24 days earned before the switch went back on, counted, not paid",
-    st.nextPayday.earnedNotPaid["before-start"] === 24 && st.nextPayday.students === 0, J(st.nextPayday));
-  check("...the days of the pause were never decided at all", !w.rows("perfectDays").some((r) => r.date >= "2026-10-21" && r.date <= "2026-10-23"));
+  check("...and nothing is left waiting on the status", st.nextPayday.students === 0 && J(st.nextPayday.earnedNotPaid) === "{}", J(st.nextPayday));
   // THE ADMIN CARD'S QUERY (the browser half): the same answer, admins only.
   const asCaller = async (email) => {
     w.rt.signIn(email ? { issuer: STAFF_ISSUER, email } : null);
@@ -379,13 +387,15 @@ console.log("\nB. LIVE, OFF FOR TWO DAYS, ON AGAIN: A SWITCH OFF AND ON NEVER BA
   check("...and refuses a teacher and a caller who is not signed in, with no figures",
     !asTeacher.ok && /Admins only/.test(asTeacher.why) && !asNobody.ok, J({ asTeacher, asNobody }));
   for (const d of ["2026-10-27", "2026-10-28", "2026-10-29", "2026-10-30", "2026-11-02"]) await morning(w, d);
-  check("the next payday pays only days from the switch-on: 10/26-10/30",
-    TEST.every((s) => J(paidDates(w, s.key)) === J(["2026-10-26", "2026-10-27", "2026-10-28", "2026-10-29", "2026-10-30"])) && w.jobLedger().length === 12);
+  check("the next payday pays the days from the switch-on, 10/26-10/30, and never a day of the pause",
+    TEST.every((s) => J(paidDates(w, s.key)) === J(["2026-10-19", "2026-10-20", "2026-10-26", "2026-10-27", "2026-10-28", "2026-10-29", "2026-10-30"]))
+    && TEST.every((s) => w.payouts(s.key).length === 2) && w.jobLedger().length === 24, J(paidDates(w, "S1")));
   const entries = w.rows("appAuditLog").filter((e) => e.payload?.action === "perfect_day_paid");
-  check("with the summary switched on: ONE audit entry for the payday, counts only, from the system, never per student",
-    entries.length === 1 && entries[0].payload.teacherId === "system:attendance" && !("ticketCount" in entries[0].payload)
-    && entries[0].payload.behavior === "Perfect attendance (automatic)" && entries[0].payload.notes === entries[0].payload.reason
-    && /12 students, 60 perfect days/.test(entries[0].payload.reason) && w.rows("appAuditLog").length === 1, J(entries.map((e) => e.payload.reason)));
+  check("with the summary switched on: ONE audit entry per payday, counts only, from the system, never per student",
+    entries.length === 2 && entries.every((e) => e.payload.teacherId === "system:attendance" && !("ticketCount" in e.payload)
+      && e.payload.behavior === "Perfect attendance (automatic)" && e.payload.notes === e.payload.reason)
+    && /12 students, 24 perfect days/.test(entries[0].payload.reason) && /12 students, 60 perfect days/.test(entries[1].payload.reason)
+    && w.rows("appAuditLog").length === 2, J(entries.map((e) => e.payload.reason)));
 }
 
 // ===========================================================================
@@ -699,6 +709,113 @@ console.log("\nH. THE ADMIN'S TOOLS: NO SCHOOL, REMOVE, SETTLE A HOLD, AND EVERY
   check("every admin act is recorded in the job's own audit table, never the shared audit log",
     ["configure", "markNoSchool", "removeDays", "resolveHeld"].every((x) => acts.includes(x)) && !w.rows("appAuditLog").some((e) => /perfect/i.test(J(e))), J(acts));
 }
+// ===========================================================================
+console.log("\nI. THE KILL SWITCH ON A PAYDAY MORNING: WHAT WAS EARNED AND SHOWN IS STILL PAID\n");
+{
+  const w = await makeWorld();
+  for (const d of weekdaysBetween("2026-10-12", "2026-11-06")) w.school(d);
+  await configure(w, "2026-10-19T13:00:00Z", { mode: "live" });
+  for (const d of ["2026-10-20", "2026-10-21", "2026-10-22", "2026-10-23"]) await morning(w, d);
+  const fri = await studentView(w, "S1", "2026-10-23T22:00:00Z");
+  check("Friday: the student is shown four perfect days, arriving Monday",
+    J(fri.wildcatCash.perfectDays) === J({ days: ["2026-10-19", "2026-10-20", "2026-10-21", "2026-10-22"], amount: 400, payday: "2026-10-26" }), J(fri.wildcatCash.perfectDays));
+  const off = await configure(w, "2026-10-26T13:00:00Z", { mode: "off" });     // Monday 06:00 PT: a false alarm
+  const on = await configure(w, "2026-10-26T13:20:00Z", { mode: "live" });     // 06:20 PT: back on
+  await morning(w, "2026-10-26");
+  check("KILL SWITCH OFF AND ON BEFORE MONDAY'S RUN: last week's pending days are paid",
+    off.ok && on.ok && TEST.every((s) => J(paidDates(w, s.key)) === J(["2026-10-19", "2026-10-20", "2026-10-21", "2026-10-22"]))
+    && w.jobLedger().length === 12 && w.hub("S1").wildcatCashBalance === 1400, J({ s1: paidDates(w, "S1"), bal: w.hub("S1").wildcatCashBalance }));
+  check("...while Friday 10/23, not yet decided when it went off, is never decided: switching on counts from that day",
+    on.settings.countFromDate === "2026-10-26" && !w.rows("perfectDays").some((r) => r.date === "2026-10-23"));
+}
+{
+  // The same, mid-payday: two students a mutation (the test knob), the third batch dies.
+  const w = await makeWorld({ mods: crashy.mods });
+  for (const d of weekdaysBetween("2026-10-12", "2026-11-06")) w.school(d);
+  await configure(w, "2026-10-19T13:00:00Z", { mode: "live" });
+  for (const d of ["2026-10-20", "2026-10-21", "2026-10-22", "2026-10-23"]) await morning(w, d);
+  let calls = 0;
+  globalThis.__killPayBatch = () => (++calls === 3);
+  await morning(w, "2026-10-26");
+  globalThis.__killPayBatch = null;
+  const first = TEST.filter((s) => w.payouts(s.key).length > 0).length;
+  await configure(w, "2026-10-26T15:00:00Z", { mode: "off" });                // 08:00 PT
+  await configure(w, "2026-10-26T15:10:00Z", { mode: "live" });               // 08:10 PT
+  await tick(w, "2026-10-26T15:42:00Z");                                      // 08:42 PT
+  check("AN INTERRUPTED PAYDAY, THEN OFF AND ON: the next run pays the remaining students, each once, the same as the rest",
+    first === 4 && TEST.every((s) => w.payouts(s.key).length === 1 && w.hub(s.key).wildcatCashBalance === 1500) && w.state().lastPayWeek === "2026-10-26",
+    J({ first, bal: TEST.map((s) => w.hub(s.key).wildcatCashBalance) }));
+}
+{
+  // Kill switch for a real fault: the days themselves are wrong. Forfeiting them is its own act.
+  const w = await makeWorld();
+  for (const d of weekdaysBetween("2026-10-12", "2026-11-06")) w.school(d);
+  await configure(w, "2026-10-19T13:00:00Z", { mode: "live" });
+  for (const d of ["2026-10-20", "2026-10-21", "2026-10-22"]) await morning(w, d);
+  clock.set("2026-10-22T18:00:00Z");
+  await configure(w, "2026-10-22T18:00:00Z", { mode: "off" });
+  const dry = await w.rt.run("perfectDay.forfeitPending", { from: "2026-10-20", to: "2026-10-21", reason: "decided from a bad read", actorName: "Ada Admin" });
+  check("forfeitPending counts first and changes nothing without apply",
+    dry.ok && dry.applied === false && dry.wouldForfeit.days === 24 && dry.wouldForfeit.students === 12 && w.reg("S1", "2026-10-20")?.status === "pending", J(dry));
+  const done = await w.rt.run("perfectDay.forfeitPending", { from: "2026-10-20", to: "2026-10-21", reason: "decided from a bad read", actorName: "Ada Admin", apply: true });
+  await configure(w, "2026-10-26T13:00:00Z", { mode: "live" });
+  await morning(w, "2026-10-26");
+  check("...with apply, those days are removed and never paid; the days outside the range still are, and the act is recorded",
+    done.ok && done.forfeited.days === 24 && w.reg("S1", "2026-10-20")?.status === "removed"
+    && TEST.every((s) => J(paidDates(w, s.key)) === J(["2026-10-19"])) && w.rows("perfectDayAudit").some((r) => r.action === "forfeitPending" && r.detail.days === 24),
+    J({ done, s1: paidDates(w, "S1") }));
+}
+
+// ===========================================================================
+console.log("\nJ. POWERSCHOOL DOWN ON PAYDAY: PAYING NEEDS NOTHING FROM IT\n");
+{
+  const w = await makeWorld();
+  for (const d of weekdaysBetween("2026-10-12", "2026-11-06")) w.school(d);
+  await configure(w, "2026-10-19T13:00:00Z", { mode: "live" });
+  for (const d of ["2026-10-20", "2026-10-21", "2026-10-22", "2026-10-23"]) await morning(w, d);
+  w.down = () => true;                                 // every PowerSchool call fails, sign-in included
+  await morning(w, "2026-10-26");                      // 07:42 PT
+  await tick(w, "2026-10-26T15:42:00Z");               // 08:42 PT
+  check("PowerSchool down on Monday: the run waits until 09:30 for a read of last week, as for any failed read",
+    w.jobLedger().length === 0 && w.lastRun()?.ok === false && /PowerSchool/.test(w.lastRun()?.reason ?? "") && w.lastRun()?.summary?.payday?.due === false,
+    J({ run: w.lastRun()?.reason, pay: w.lastRun()?.summary?.payday }));
+  await tick(w, "2026-10-26T16:42:00Z");               // 09:42 PT
+  check("POWERSCHOOL DOWN DOES NOT HOLD BACK LAST WEEK'S PAY: at 09:42 every settled day is paid",
+    TEST.every((s) => J(paidDates(w, s.key)) === J(["2026-10-19", "2026-10-20", "2026-10-21", "2026-10-22"])) && w.state().lastPayWeek === "2026-10-26",
+    J({ s1: paidDates(w, "S1"), st: w.state() }));
+  check("...and the run is still not done, so the next tick reads again", w.lastRun()?.ok === false && w.state().lastDoneDate !== "2026-10-26");
+  w.down = null;
+  await morning(w, "2026-10-27");
+  check("...once PowerSchool answers, Friday 10/23 is decided, to be paid next week",
+    TEST.every((s) => w.reg(s.key, "2026-10-23")?.status === "pending") && w.payouts("S1").length === 1);
+}
+
+// ===========================================================================
+console.log("\nK. A DATE ALREADY DECIDED WHOSE RE-READ IS HELD IS NEVER PAID OVER\n");
+{
+  const w = await makeWorld();
+  for (const d of weekdaysBetween("2026-10-12", "2026-11-13")) w.school(d);
+  await configure(w, "2026-10-16T15:00:00Z", { mode: "live", lookbackSchoolDays: 3 });
+  for (const d of ["2026-10-19", "2026-10-20", "2026-10-21", "2026-10-22", "2026-10-23"]) await morning(w, d);
+  check("Thursday 10/22 decided on Friday: S1, S5 and S6 pending", ["S1", "S5", "S6"].every((k) => w.reg(k, "2026-10-22")?.status === "pending"));
+  w.mark("S1", "2026-10-22", 10, "A");                          // a late Promise Time PM absence for Thursday
+  w.screenExtra = { S5: ["2026-10-22"], S6: ["2026-10-22"] };   // the screen disputes two students: more than 1% of 37
+  await morning(w, "2026-10-26");                               // the re-read is held as a whole, then payday
+  check("A HELD RE-READ NEVER PAYS OVER A KNOWN BREAK: S1's pending 10/22, absent in the same read, is broken, not paid",
+    w.reg("S1", "2026-10-22")?.status === "broken" && !paidDates(w, "S1").includes("2026-10-22") && paidDates(w, "S1").includes("2026-10-21"),
+    J({ s1: w.reg("S1", "2026-10-22")?.status, paid: paidDates(w, "S1") }));
+  check("...the students the screen disputes are held, not paid",
+    ["S5", "S6"].every((k) => w.reg(k, "2026-10-22")?.status === "held" && !paidDates(w, k).includes("2026-10-22")), J(["S5", "S6"].map((k) => w.reg(k, "2026-10-22")?.status)));
+  check("...while the date's other days stand, and are paid: it stays decided, with the re-read's reason",
+    w.dateRec("2026-10-22")?.state === "school" && /re-read was held/.test(w.dateRec("2026-10-22")?.reason ?? "") && paidDates(w, "S2").includes("2026-10-22")
+    && w.lastRun()?.summary?.recheckHeld?.includes("2026-10-22"), J(w.dateRec("2026-10-22")));
+  for (const d of ["2026-10-27", "2026-10-28", "2026-10-29"]) await morning(w, d);
+  const st = await status(w);
+  check("...once it leaves the lookback the disputed days expire unpaid, and the date is not called \"expired, not paid\" over the days it paid",
+    ["S5", "S6"].every((k) => w.reg(k, "2026-10-22")?.status === "expired") && w.dateRec("2026-10-22")?.state === "school" && st.paidThenBroken.count === 0,
+    J({ d: w.dateRec("2026-10-22")?.state, rows: ["S5", "S6"].map((k) => w.reg(k, "2026-10-22")?.status) }));
+}
+
 } finally {
   loaded.cleanup();
   crashy.cleanup();

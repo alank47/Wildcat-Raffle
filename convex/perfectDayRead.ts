@@ -62,23 +62,79 @@ async function atMost<T, U>(n: number, items: T[], fn: (x: T) => Promise<U>): Pr
 
 type RunArgs = { runId: string; today: string; minute: number; startedAt: string; tz: string };
 type Body = { ok: boolean; done: boolean; reason?: string };
+type Context = { settings: R.Settings; lastPayWeek: string | null; marks: Record<string, R.Marked>; adminNoSchool: string[]; decideAnyway: string[] };
+type Result = { date: string; state: string; retryable: boolean; recheckHeld: boolean };
 
+/**
+ * THE RUN. Read and decide (steps 1-4), then payday (5) and the ledger check
+ * (6). PAYDAY NEEDS NOTHING FROM POWERSCHOOL: the days it pays were settled
+ * on earlier runs. So when the read fails (PowerSchool down, its sign-in
+ * refused), payday still happens, waiting on a Monday until 09:30 as for any
+ * read of last week that failed, and paying what is already pending. A week's
+ * outage no longer holds back last week's money (2026-10-12 review). The run
+ * still ends not done, so the next tick reads again.
+ */
 async function body(ctx: ActionCtx, a: RunArgs, summary: Record<string, any>): Promise<Body> {
+  const c: Context = await ctx.runQuery(internal.perfectDay.runContext, { today: a.today });
+  const settings: R.Settings = c.settings;
+  if (settings.mode === "off") return { ok: true, done: true, reason: "Switched off." };
+
+  let read: { ok: true; results: Result[] } | { ok: false; reason: string };
+  try {
+    read = await readAndDecide(ctx, a, c, summary);
+  } catch (e: any) {
+    if (e instanceof Stopped) throw e;
+    read = { ok: false, reason: String(e?.message || e).slice(0, 300) };
+  }
+  const results = read.ok ? read.results : [];
+  if (!read.ok) summary.readFailed = read.reason;
+
+  // 5. PAYDAY: the first run on or after Monday, whether or not the read got through.
+  const payWeek = R.weekStartOf(a.today);
+  const retryableHeldBefore = !read.ok || results.some((r) => r.retryable && r.date < payWeek);
+  const pv = R.paydayVerdict({ today: a.today, minute: a.minute, mode: settings.mode, lastPayWeek: c.lastPayWeek, retryableHeldBefore });
+  summary.payday = { due: pv.due, payWeek: pv.payWeek, why: pv.why };
+  if (pv.due) {
+    const plan: any = await ctx.runQuery(internal.perfectDay.payPlan, { before: pv.payWeek });
+    const pay = { students: 0, movements: 0, days: 0, amount: 0, alreadyPaidThisWeek: 0, noHubRecord: 0, ambiguous: 0, dropped: 0, skipped: {} as Record<string, number>, batches: 0 };
+    for (let i = 0; i < plan.students.length; i += R.PAY_BATCH) {
+      const r: any = await ctx.runMutation(internal.perfectDay.payBatch, {
+        runId: a.runId, payWeek: pv.payWeek, students: plan.students.slice(i, i + R.PAY_BATCH), tz: a.tz,
+      });
+      if (r?.stopped) throw new Stopped(`Payday stopped: ${r.reason}`);
+      pay.batches++;
+      for (const k of ["students", "movements", "days", "amount", "alreadyPaidThisWeek", "noHubRecord", "ambiguous", "dropped"] as const) pay[k] += Number(r[k]) || 0;
+      for (const [k, n] of Object.entries(r.skipped ?? {})) pay.skipped[k] = (pay.skipped[k] ?? 0) + Number(n);
+    }
+    summary.pay = pay;
+    const fin: any = await ctx.runMutation(internal.perfectDay.finishPayday, { runId: a.runId, payWeek: pv.payWeek, summary: pay });
+    if (fin?.stopped) throw new Stopped(String(fin.reason));
+  }
+
+  // 6. EVERY ATTENDANCE ROW HAS ITS PAYMENT (review M2).
+  summary.ledgerCheck = await ctx.runQuery(internal.perfectDay.ledgerCheck, {});
+
+  if (!read.ok) return { ok: false, done: false, reason: read.reason };
+  const waiting = !pv.due && pv.why.startsWith("Waiting");
+  return { ok: true, done: !results.some((r) => r.retryable) && !waiting };
+}
+
+/** Steps 1-4: PowerSchool read, every date judged and written, old holds expired. Throws, or says why not, when the read fails. */
+async function readAndDecide(ctx: ActionCtx, a: RunArgs, c: Context, summary: Record<string, any>):
+  Promise<{ ok: true; results: Result[] } | { ok: false; reason: string }> {
+  const settings = c.settings;
   const deadline = Date.parse(a.startedAt) + R.READ_BUDGET_MS;
   const host = process.env.PS_HOST, id = process.env.PS_CLIENT_ID, secret = process.env.PS_CLIENT_SECRET;
   const schoolid = process.env.PS_SCHOOL_ID, yearid = process.env.PS_YEAR_ID, termid = process.env.PS_TERM_ID;
   if (!host || !id || !secret || !schoolid || !yearid || !termid) {
-    return { ok: false, done: false, reason: "PowerSchool settings are not all present in this deployment." };
+    return { ok: false, reason: "PowerSchool settings are not all present in this deployment." };
   }
-  const c = await ctx.runQuery(internal.perfectDay.runContext, { today: a.today });
-  const settings: R.Settings = c.settings;
-  if (settings.mode === "off") return { ok: true, done: true, reason: "Switched off." };
   const decidable = (d: string) => !!settings.countFromDate && d >= settings.countFromDate;
 
   const tok = await token(host, id, secret);
   const codes = R.codeBookOf(await pagedRows(host, tok, "attendance_code", `schoolid==${schoolid};yearid==${yearid}`,
     "id,att_code,description,presence_status_cd", deadline));
-  if (!codes.ok) return { ok: false, done: false, reason: codes.reason };
+  if (!codes.ok) return { ok: false, reason: codes.reason };
 
   // 1. THE CALENDAR: which dates are worth reading, by one count each.
   const cal = R.calendarCandidates({ today: a.today, reachDays: R.CALENDAR_REACH_DAYS, marks: c.marks, adminNoSchool: c.adminNoSchool });
@@ -92,13 +148,13 @@ async function body(ctx: ActionCtx, a: RunArgs, summary: Record<string, any>): P
   const windowStart = window[0] ?? R.addDays(a.today, -R.CALENDAR_REACH_DAYS);
   summary.window = { from: window[0] ?? null, to: window[window.length - 1] ?? null, days: window.length };
 
-  const results: Array<{ date: string; state: string; retryable: boolean }> = [];
+  const results: Result[] = [];
   const apply = async (args: Record<string, any>) => {
     const r: any = await ctx.runMutation(internal.perfectDay.applyDate, {
       checked: false, perfect: [], held: [], broken: [], counts: {}, rowCounts: {}, retryable: false, ...args,
     } as any);
     if (r?.stopped) throw new Stopped(String(r.reason));
-    if (!r?.skipped) results.push({ date: args.date, state: r.state, retryable: args.retryable === true && r.state === "held" });
+    if (!r?.skipped) results.push({ date: args.date, state: r.state, retryable: args.retryable === true && r.state === "held", recheckHeld: r.recheckHeld === true });
     return r;
   };
 
@@ -106,7 +162,7 @@ async function body(ctx: ActionCtx, a: RunArgs, summary: Record<string, any>): P
   if (window.some(decidable)) {
     const students = R.psStudentsOf(await pagedRows(host, tok, "students", `schoolid==${schoolid};exitdate=ge=${windowStart}`,
       "id,student_number,grade_level,entrydate,exitdate", deadline));
-    if (!students.length) return { ok: false, done: false, reason: "PowerSchool returned no students, so nobody can be judged. Nothing was decided." };
+    if (!students.length) return { ok: false, reason: "PowerSchool returned no students, so nobody can be judged. Nothing was decided." };
     const tb = Math.floor(Number(termid) / 100) * 100;
     const cc = R.ccRowsOf([
       ...await pagedRows(host, tok, "cc", `schoolid==${schoolid};termid=ge=${tb};termid=le=${tb + 99};dateleft=ge=${windowStart}`, CC_FIELDS, deadline),
@@ -159,42 +215,16 @@ async function body(ctx: ActionCtx, a: RunArgs, summary: Record<string, any>): P
       await apply({ runId: a.runId, date: d, state: "held", retryable: true, reason: "PowerSchool could not count this date's attendance. Tried again on the next run." });
     }
   }
-  summary.decided = results.filter((r) => r.state === "school").map((r) => r.date);
+  summary.decided = results.filter((r) => r.state === "school" && !r.recheckHeld).map((r) => r.date);
   summary.held = results.filter((r) => r.state === "held").map((r) => r.date);
+  summary.recheckHeld = results.filter((r) => r.recheckHeld).map((r) => r.date);
   summary.noSchool = results.filter((r) => r.state === "no-school").map((r) => r.date);
 
   // 4. WHAT STAYED HELD PAST THE LOOKBACK EXPIRES.
   const exp: any = await ctx.runMutation(internal.perfectDay.expireOld, { runId: a.runId, before: windowStart });
   if (exp?.stopped) throw new Stopped(String(exp.reason));
   summary.expired = { dates: exp.dates, rows: exp.rows };
-
-  // 5. PAYDAY: the first good run on or after Monday.
-  const payWeek = R.weekStartOf(a.today);
-  const retryableHeldBefore = results.some((r) => r.retryable && r.date < payWeek);
-  const pv = R.paydayVerdict({ today: a.today, minute: a.minute, mode: settings.mode, lastPayWeek: c.lastPayWeek, retryableHeldBefore });
-  summary.payday = { due: pv.due, payWeek: pv.payWeek, why: pv.why };
-  if (pv.due) {
-    const plan: any = await ctx.runQuery(internal.perfectDay.payPlan, { before: pv.payWeek });
-    const pay = { students: 0, movements: 0, days: 0, amount: 0, alreadyPaidThisWeek: 0, noHubRecord: 0, ambiguous: 0, dropped: 0, skipped: {} as Record<string, number>, batches: 0 };
-    for (let i = 0; i < plan.students.length; i += R.PAY_BATCH) {
-      const r: any = await ctx.runMutation(internal.perfectDay.payBatch, {
-        runId: a.runId, payWeek: pv.payWeek, students: plan.students.slice(i, i + R.PAY_BATCH), tz: a.tz,
-      });
-      if (r?.stopped) throw new Stopped(`Payday stopped: ${r.reason}`);
-      pay.batches++;
-      for (const k of ["students", "movements", "days", "amount", "alreadyPaidThisWeek", "noHubRecord", "ambiguous", "dropped"] as const) pay[k] += Number(r[k]) || 0;
-      for (const [k, n] of Object.entries(r.skipped ?? {})) pay.skipped[k] = (pay.skipped[k] ?? 0) + Number(n);
-    }
-    summary.pay = pay;
-    const fin: any = await ctx.runMutation(internal.perfectDay.finishPayday, { runId: a.runId, payWeek: pv.payWeek, summary: pay });
-    if (fin?.stopped) throw new Stopped(String(fin.reason));
-  }
-
-  // 6. EVERY ATTENDANCE ROW HAS ITS PAYMENT (review M2).
-  summary.ledgerCheck = await ctx.runQuery(internal.perfectDay.ledgerCheck, {});
-
-  const waiting = !pv.due && pv.why.startsWith("Waiting");
-  return { ok: true, done: !results.some((r) => r.retryable) && !waiting };
+  return { ok: true, results };
 }
 
 class Stopped extends Error {}
