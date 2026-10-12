@@ -473,8 +473,16 @@ suite.dayFloor = async (Mx) => {
     black && black.small === true && res.groups.find((g) => g.id === "gender:F").small === false);
   check("sizes leave rounded to the nearest 5 (297 -> 295, 47 -> 45, 115 -> 115)",
     res.groups.find((g) => g.id === "gender:F").size === 295 && black.size === 45 && res.groups.find((g) => g.id === "el:el").size === 115);
-  const at30 = (await ask(M, ADMIN, {}, world((d, c) => { c.IFEP = 30; c.TBD = 2; }))).res;
+  const at30 = (await ask(M, ADMIN, {}, world((d, c) => { c.IFEP = 30; c.TBD = 0; c.EO += 2; }))).res;
   check("IFEP at 30 on a typical day IS offered (the floor is 30, not 31)", at30.groups.some((g) => g.id === "ela:IFEP"));
+  // With 2 pending assessment every day, the five classification lines and
+  // the whole school subtract to those 2: IFEP (the smallest line whose going
+  // settles it) is not charted, and says so -- it is not offered only to be
+  // withheld every week.
+  const pend = (await ask(M, ADMIN, {}, world((d, c) => { c.IFEP = 30; c.TBD = 2; }))).res;
+  check("...but with 2 students pending on a typical day, IFEP's line would let them be worked out: not charted, and why",
+    !pend.groups.some((g) => g.id === "ela:IFEP")
+      && pend.unavailable.some((u) => u.group === "Initially fluent (IFEP)" && /worked out by subtraction/.test(u.reason)));
   const onlyLast = world();
   onlyLast.attendanceRunGroupDays = onlyLast.attendanceRunGroupDays.filter((r) => r.yearid === 35);
   const ol = (await ask(M, ADMIN, {}, onlyLast)).res;
@@ -615,7 +623,9 @@ suite.withheldEverywhere = async (Mx) => {
   return got.slice(0, 5).every((x) => x === "small") && got.slice(5).every((x) => x === null);
 };
 suite.minDays = async (Mx) => {
-  // A week with ONE school day is never a period on its own: a daily rate.
+  // A week with ONE school day is withheld on its own AND merged into the
+  // next week: served merged, it would come back as the merged rate less the
+  // next week's, asked for separately -- a daily rate.
   const tables = world();
   const keep = new Set([...week(THIS_WEEKS[0]).slice(0, 1), ...THIS_WEEKS.slice(1).flatMap((w) => week(w)), ...LAST_WEEKS.flatMap((w) => week(w))]);
   tables.attendanceRunDays = tables.attendanceRunDays.filter((r) => keep.has(r.date));
@@ -623,7 +633,7 @@ suite.minDays = async (Mx) => {
   const one = (await ask(Mx, ADMIN, { group: "gender:F", periods: [[THIS_WEEKS[0]], [THIS_WEEKS[1]]] }, tables)).res;
   const merged = (await ask(Mx, ADMIN, { group: "gender:F", periods: [[THIS_WEEKS[0], THIS_WEEKS[1]]] }, tables)).res;
   return one.periods[0].withheld === "few-days" && one.periods[0].value === null && one.periods[1].withheld === null
-    && merged.periods[0].withheld === null;
+    && merged.periods[0].withheld === "few-days" && merged.periods[0].value === null;
 };
 {
   check("periods are 1-4 whole weeks named by their Mondays; a lone date, a week twice, five weeks, a bad date or 121 periods are refused",
@@ -634,7 +644,7 @@ suite.minDays = async (Mx) => {
   const twice = (await ask(M, ADMIN, { group: "gender:F", periods: [[THIS_WEEKS[2]], [THIS_WEEKS[2], THIS_WEEKS[3]]] })).res;
   check("overlapping periods in one call are refused before anything is read", typeof twice.invalid === "string" && twice.periods.length === 0);
   check("a withheld week is withheld in EVERY period containing it, and only those", await suite.withheldEverywhere(M));
-  check("a period of one school day is never served (it would be a daily rate); merged with the next week it is", await suite.minDays(M));
+  check("a week of one school day is never served, alone OR merged into the next week (either way, a daily rate)", await suite.minDays(M));
   // Weeks merged across a break (runWeekGroups carries a short week into the
   // next SCHOOL week) are not consecutive, and are allowed.
   const gap = (await ask(M, ADMIN, { group: "gender:F", periods: [[THIS_WEEKS[0], THIS_WEEKS[2]]] })).res;
@@ -693,9 +703,10 @@ console.log("\nTHE LINES LINE UP WITH TRENDS\n");
   const four = world();
   four.attendanceRunDays = four.attendanceRunDays.filter((r) => r.date !== wed);
   four.attendanceRunGroupDays = four.attendanceRunGroupDays.filter((r) => r.date !== wed);
-  const a = (await ask(M, ADMIN, { group: "gender:F", periods: [[THIS_WEEKS[4]]] }, extra)).res.periods[0].value;
+  const a = (await ask(M, ADMIN, { group: "gender:F", periods: [[THIS_WEEKS[4]]] }, extra)).res.periods[0];
   const b = (await ask(M, ADMIN, { group: "gender:F", periods: [[THIS_WEEKS[4]]] }, four)).res.periods[0].value;
-  check("a group's days are a subset of the whole-school axis: a day Trends does not have is never read", a === b && a > 80, `${a} vs ${b}`);
+  check("a day Trends does not have is never read: the week is withheld as no data (it could gain that day later), "
+    + "and the same four days with no extra row are served", a.value === null && a.withheld === "no-data" && b > 80, `${JSON.stringify(a)} vs ${b}`);
   // The rest of the school, and the gap the headline reads.
   const res = (await ask(M, ADMIN, { group: "race:black", periods: THIS_WEEKS.slice(0, 6).map((w) => [w]) },
     world((d, c) => {}))).res;
@@ -713,7 +724,7 @@ const ALLOWED_KEYS = new Set([
   ".floors", ".floors.chart", ".floors.day", ".floors.small", ".floors.sizeRoundedTo",
   ".group", ".group.id", ".group.type", ".group.typeLabel", ".group.label", ".group.size", ".group.small", ".group.sameAs",
   ".periods", ".periods[].key", ".periods[].value", ".periods[].rest", ".periods[].withheld",
-  ".vsRest", ".vsRest.yearid", ".vsRest.periods", ".vsRest.points",
+  ".vsRest", ".vsRest.yearid", ".vsRest.periods", ".vsRest.points", ".vsRest.withinChance", ".notBuilt",
 ]);
 suite.keys = async (Mx) => {
   const bad = new Set();
@@ -999,6 +1010,329 @@ console.log("\nGOVERNANCE: THE APPROVAL IS ON RECORD, AND NOTHING ELSE WAS WIDEN
 }
 
 // ===========================================================================
+console.log("\nNO TWO ANSWERS SUBTRACT TO LESS THAN ONE FINISHED WEEK (review, 2026-10-12)\n");
+// ===========================================================================
+// THE ATTACK: ask for the week in progress each morning (one more day in it
+// each time), or for a short week merged and separately, and subtract. On a
+// group of ~115 with rates to 0.1, that gave the EXACT number of English
+// Learners out a whole day, every day. A week is now served only once no
+// build can add a day to it, and only with at least 2 school days.
+/** `world()` as it stood on the morning of `morning`: rows through the day before; October's builds stamped that morning. */
+function asOfMorning(morning, tweak) {
+  const t = world(tweak);
+  const keep = (r) => r.date < morning;
+  const stamp = (r) => (r.date.startsWith(morning.slice(0, 7)) ? { ...r, syncedAt: morning + "T10:15:00.000Z" } : r);
+  t.attendanceRunDays = t.attendanceRunDays.filter(keep).map(stamp);
+  t.attendanceRunGroupDays = t.attendanceRunGroupDays.filter(keep).map(stamp);
+  return t;
+}
+suite.mornings = async (Mx) => {
+  // The week of 10/5 as it was built: Tuesday morning holds Monday, ...,
+  // Saturday morning holds the whole week. The weeks before it are finished.
+  const W = THIS_WEEKS[7], W1 = THIS_WEEKS[6], W2 = THIS_WEEKS[5];
+  const asks = [[[W]], [[W1, W]], [[W2, W1, W]], [[W1]], [[W2], [W1]], [[W2, W1]]];
+  const seen = new Map();       // the weeks asked -> the values served, morning by morning
+  const out = { ok: true, why: [] };
+  for (let k = 1; k <= 5; k++) {
+    const tables = asOfMorning(addDays(W, k));
+    for (const p of asks) {
+      for (const g of ["el:el", "gender:F", "ela:EO"]) {
+        const res = (await ask(Mx, PBIS, { group: g, periods: p }, tables)).res;
+        res.periods.forEach((a, i) => {
+          const weeks = p[i].join("+");
+          const hasW = p[i].includes(W);
+          // A period holding the unfinished week is never served until the week is whole.
+          if (hasW && k < 5 && (a.value !== null || a.withheld !== "open")) { out.ok = false; out.why.push(`${g} ${weeks} morning ${k}: ${JSON.stringify(a)}`); }
+          if (!hasW && a.value === null) { out.ok = false; out.why.push(`${g} ${weeks} morning ${k}: a finished week withheld`); }
+          const key = g + "|" + weeks;
+          if (!seen.has(key)) seen.set(key, new Set());
+          if (a.value !== null) seen.get(key).add(a.value);
+        });
+      }
+    }
+  }
+  // Every period is served with ONE value across the mornings: nothing to subtract.
+  for (const [k, vals] of seen) if (vals.size > 1) { out.ok = false; out.why.push(`${k} served ${[...vals].join(" and ")}`); }
+  return out;
+};
+suite.monthEdge = async (Mx) => {
+  // September's last build ran on the morning of 9/30 (through 9/29) and its
+  // first-week rebuilds all failed; October is built through 10/10. The
+  // week of 9/28 must wait: a later September build would add 9/30 to it.
+  const t = world();
+  t.attendanceRunDays = t.attendanceRunDays.filter((r) => r.date !== "2026-09-30")
+    .map((r) => (r.date.startsWith("2026-09") ? { ...r, syncedAt: "2026-09-30T10:15:00.000Z" } : r));
+  t.attendanceRunGroupDays = t.attendanceRunGroupDays.filter((r) => r.date !== "2026-09-30")
+    .map((r) => (r.date.startsWith("2026-09") ? { ...r, syncedAt: "2026-09-30T10:15:00.000Z" } : r));
+  const res = (await ask(Mx, ADMIN, { group: "gender:F", periods: [[THIS_WEEKS[5]], [THIS_WEEKS[6]]] }, t)).res;
+  return res.periods[0].withheld === null && res.periods[1].withheld === "open";
+};
+{
+  const m = await suite.mornings(M);
+  check("asked every morning of a week, alone or with the weeks before it, the week in progress is never served; "
+    + "every finished period has ONE value all week -- no two answers subtract to a day", m.ok, m.why.slice(0, 3).join("; "));
+  // The repro, decoded the attacker's way: Wednesday's 2-day rate less
+  // Tuesday's 1-day rate. With the week withheld there is nothing to decode.
+  const tue = (await ask(M, PBIS, { group: "el:el", periods: [[THIS_WEEKS[7]]] }, asOfMorning(addDays(THIS_WEEKS[7], 2)))).res.periods[0];
+  check("...the repro's Wednesday ask (two built days of the week in progress) is withheld as 'open'", tue.value === null && tue.withheld === "open");
+  check("a week touching a month whose last build stopped short of it waits, though a later month is built", await suite.monthEdge(M));
+  // A FRIDAY OFF (no Trends row for it) still finishes the week once the
+  // Saturday build has run: the week is not stuck open.
+  const fri = world();
+  const off = addDays(THIS_WEEKS[7], 4);
+  fri.attendanceRunDays = fri.attendanceRunDays.filter((r) => r.date !== off);
+  fri.attendanceRunGroupDays = fri.attendanceRunGroupDays.filter((r) => r.date !== off);
+  const f = (await ask(M, ADMIN, { group: "gender:F", periods: [[THIS_WEEKS[7]]] }, fri)).res.periods[0];
+  check("a week whose Friday is a holiday is served once its month's build has passed the Friday", typeof f.value === "number" && f.withheld === null);
+  // A WEEK STARTING IN A MONTH WITH NO SCHOOL DAYS (a year opening on Tuesday
+  // 9/1): August has no Trends rows, so the newest build decides it.
+  const sep = world();
+  sep.attendanceRunDays = sep.attendanceRunDays.filter((r) => r.yearid !== 36 || r.date >= "2026-09-01");
+  sep.attendanceRunGroupDays = sep.attendanceRunGroupDays.filter((r) => r.yearid !== 36 || r.date >= "2026-09-01");
+  const s1 = (await ask(M, ADMIN, { group: "gender:F", periods: [["2026-08-31"]] }, sep)).res.periods[0];
+  check("a week whose Monday falls in a month with no school days is not stuck open", typeof s1.value === "number");
+  check("the clock is the server's own (Los Angeles), never the browser's: no 'today' argument exists",
+    /today: laDayOf\(Date\.now\(\)\)!/.test(SRC.query) && !/a\.today|args\.today/.test(SRC.query));
+}
+
+// ===========================================================================
+console.log("\nTHE FLOOR OF 30 HOLDS FOR WHAT CAN BE WORKED OUT, NOT ONLY FOR WHAT IS DRAWN (review, 2026-10-12)\n");
+// ===========================================================================
+// As measured this year: nobody pending assessment on most days, IFEP 28.
+// Current EL, Not EL, English Only and RFEP beside the whole school (Trends)
+// subtract to exactly the IFEP students.
+const PROD_LIKE = (d, c) => { c.EO += c.TBD; c.TBD = 0; };
+suite.pbisPool = async (Mx) => {
+  const res = (await ask(Mx, PBIS, {}, world(PROD_LIKE))).res;
+  return res.groups.map((g) => g.id).join(",") === "gender:F,gender:M,el:el,el:notel,ela:EO,ela:EL"
+    && res.unavailable.some((u) => u.group === "Reclassified fluent (RFEP)" && /fewer than 30 students be worked out by subtraction/.test(u.reason));
+};
+suite.adminListProd = async (Mx) => (await ask(Mx, ADMIN, {}, world(PROD_LIKE))).res.groups.map((g) => g.id).join(",")
+  === "gender:F,gender:M,race:black,el:el,el:notel,ela:EO,ela:EL";
+/** Every sum and difference (coefficients -2..2) of these lines and the whole school: the smallest pool of 1..floor-1, or null. */
+function smallestPool(cells, lines, floor) {
+  const keys = [...cells.keys()];
+  const vecs = [keys.map(() => 1), ...lines.map((l) => keys.map((k) => (l.includes(k) ? 1 : 0)))];
+  const coef = new Array(vecs.length).fill(-2);
+  let best = null;
+  for (;;) {
+    let pool = 0, ok = true;
+    for (let k = 0; k < keys.length; k++) {
+      let s = 0;
+      for (let j = 0; j < vecs.length; j++) s += coef[j] * vecs[j][k];
+      if (s !== 0 && s !== 1) { ok = false; break; }
+      if (s === 1) pool += cells.get(keys[k]);
+    }
+    if (ok && pool > 0 && pool < floor) best = best === null ? pool : Math.min(best, pool);
+    let j = 0;
+    while (j < coef.length && coef[j] === 2) coef[j++] = -2;
+    if (j === coef.length) break;
+    coef[j]++;
+  }
+  return best;
+}
+suite.poolBrute = (Mx) => {
+  // Random typical years of the English Learner family: whatever linesForYear
+  // keeps, no sum or difference of it and the whole school is a group of
+  // 1 to 29 students -- and where the lines offered DO isolate one, the rank
+  // test said so.
+  let seed = 777;
+  const rnd = (n) => { seed = (seed * 1103515245 + 12345) % 2147483648; return seed % n; };
+  const CELLS = ["EL", "EO", "RFEP", "IFEP", "TBD", "NOREC"];
+  const LINES = { "el:el": ["EL"], "el:notel": ["EO", "RFEP", "IFEP", "TBD"], "ela:EO": ["EO"], "ela:RFEP": ["RFEP"], "ela:IFEP": ["IFEP"] };
+  let leaks = 0, missed = 0, cases = 0;
+  for (let t = 0; t < 200; t++) {
+    const size = Object.fromEntries(CELLS.map((c) => [c, [0, 0, 2, 5, 12, 19, 28, 31, 45, 120, 268][rnd(11)]]));
+    // A school under 30 is its own small pool, on Trends: not this card's to guard.
+    if (CELLS.reduce((n, c) => n + size[c], 0) < 30) continue;
+    const rows = [];
+    for (const d of ["2026-09-14", "2026-09-15", "2026-09-16"]) {
+      const r = (axis, group, n) => storedRow(36, d, axis, group, n, 0);
+      rows.push(r("el", "el", size.EL), r("el", "notel", size.EO + size.RFEP + size.IFEP + size.TBD), r("el", "none", size.NOREC),
+        r("ela", "EO", size.EO), r("ela", "RFEP", size.RFEP), r("ela", "IFEP", size.IFEP), r("ela", "none", size.TBD + size.NOREC));
+    }
+    const offered = Object.keys(LINES).filter(() => rnd(4) > 0);
+    const { kept } = Mx.groups.linesForYear("el", rows, offered);
+    const cells = new Map(CELLS.filter((c) => size[c] > 0).map((c) => [c, size[c]]));
+    cases++;
+    if (smallestPool(cells, kept.map((r) => LINES[r]), 30) !== null) leaks++;
+    for (const r of kept) if (size[LINES[r][0]] !== undefined && LINES[r].reduce((n, c) => n + size[c], 0) < 30) leaks++;
+    if (smallestPool(cells, offered.map((r) => LINES[r]), 30) !== null
+      && !Mx.groups.exposesSmall(cells, offered.map((r) => LINES[r]), 30)) missed++;
+  }
+  return { ok: leaks === 0 && missed === 0, leaks, missed, cases };
+};
+{
+  const pb = (await ask(M, PBIS, {}, world(PROD_LIKE))).res;
+  check("this year as measured (IFEP 28, nobody pending): PBIS is offered Current EL, Not EL and English Only -- RFEP goes, "
+    + "because with it the lines subtract to the IFEP students -- and RFEP says why", await suite.pbisPool(M),
+    pb.groups.map((g) => g.id).join(","));
+  const cells = M.groups.typicalCells("el", world(PROD_LIKE).attendanceRunGroupDays.filter((r) => r.yearid === 36));
+  const LINES = { "el:el": ["EL"], "el:notel": ["EO", "RFEP", "IFEP", "TBD"], "ela:EO": ["EO"], "ela:RFEP": ["RFEP"] };
+  check("...the reviewer's subtraction (whole - EL - EO - RFEP) is no longer possible from what PBIS is served: "
+    + "no sum or difference of its lines and the whole school is under 30",
+    smallestPool(cells, pb.groups.filter((g) => g.type !== "gender").map((g) => LINES[M.groups.SERIES.find((s) => s.id === g.id).row]), 30) === null
+      && smallestPool(cells, Object.values(LINES), 30) === 28);
+  const rf = (await ask(M, PBIS, { group: "ela:RFEP", periods: [[THIS_WEEKS[4]]] }, world(PROD_LIKE))).res;
+  check("...and asking for RFEP anyway is refused, with no rate", rf.refused && rf.periods.length === 0);
+  const bf = suite.poolBrute(M);
+  check(`a brute-force reader finds no pool of 1-29 students in the lines kept, over ${bf.cases} random years (and the rank test misses none)`,
+    bf.ok, JSON.stringify(bf));
+  // LAST YEAR IS HELD TO LAST YEAR'S SIZES. This year (2 pending on a
+  // typical day) keeps all four lines; last year (IFEP 19, nobody pending)
+  // they subtract to the IFEP students, so last year's RFEP weeks go.
+  const lastRfep = (await ask(M, ADMIN, { group: "ela:RFEP", periods: LAST_WEEKS.map((w) => [w]) })).res;
+  const lastEo = (await ask(M, ADMIN, { group: "ela:EO", periods: LAST_WEEKS.map((w) => [w]) })).res;
+  const thisRfep = (await ask(M, ADMIN, { group: "ela:RFEP", periods: [[THIS_WEEKS[4]]] })).res;
+  check("last year's weeks are judged on last year's own figures: RFEP held back there, English Only served, RFEP served this year",
+    lastRfep.periods.every((p) => p.withheld === "small") && lastEo.periods.every((p) => typeof p.value === "number")
+      && typeof thisRfep.periods[0].value === "number");
+}
+
+// ===========================================================================
+console.log("\nTHE GAP TO THE REST OF THE SCHOOL: THIS YEAR'S, AND WITHIN CHANCE ONLY WHEN IT IS (review, 2026-10-12)\n");
+// ===========================================================================
+{
+  // A NEW YEAR WITH NO FINISHED WEEK: last year in full, this year two days.
+  // The morning of Wednesday 8/19: this year holds Monday and Tuesday.
+  const t = asOfMorning("2026-08-19");
+  const early = (await ask(M, ADMIN, { group: "race:black", periods: [...LAST_WEEKS.map((w) => [w]), [THIS_WEEKS[0]]] }, t)).res;
+  check("a new year with no finished week has NO gap to report -- never last year's, quoted as this year's reading",
+    t.attendanceRunGroupDays.some((r) => r.yearid === 36) && early.vsRest === null && early.periods[4].withheld === "open"
+      && early.periods.slice(0, 4).every((p) => typeof p.value === "number"), JSON.stringify(early.vsRest));
+  const later = (await ask(M, ADMIN, { group: "race:black", periods: [...LAST_WEEKS, ...THIS_WEEKS.slice(0, 3)].map((w) => [w]) })).res;
+  check("...and once this year has weeks, the gap is this year's only (3 weeks, not 7)", later.vsRest && later.vsRest.yearid === 36 && later.vsRest.periods === 3);
+}
+// THE CHANCE BAND, CALIBRATED: groups of 47 drawn at random from a school
+// of 610 with NO true difference. Student propensities follow Beta(0.918,
+// 10.552), fitted to the measured September (8.0% whole days, 39% chronic);
+// then all students alike. The spread is what the build stores (rateSpread
+// of one simulated month); the gaps are weekly, as served.
+function chanceSim(Mx, { a, b, weeks, trials, shift = 0, seed = 99 }) {
+  let st = seed;
+  const rnd = () => { st = (st * 1103515245 + 12345) % 2147483648; return st / 2147483648; };
+  const gauss = () => { let u = 0, v = 0; while (!u) u = rnd(); while (!v) v = rnd(); return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v); };
+  const gamma = (k) => { if (k < 1) return gamma(k + 1) * Math.pow(rnd(), 1 / k); const d = k - 1 / 3, c = 1 / Math.sqrt(9 * d);
+    for (;;) { let x, v; do { x = gauss(); v = 1 + c * x; } while (v <= 0); v = v * v * v; const u = rnd();
+      if (u < 1 - 0.0331 * x ** 4 || Math.log(u) < 0.5 * x * x + d * (1 - v + Math.log(v))) return d * v; } };
+  const N = 610, G = 47;
+  const p = Array.from({ length: N }, () => { const x = gamma(a), y = gamma(b); return x / (x + y); });
+  const tallies = p.map((q) => { let f = 0; for (let d = 0; d < 20; d++) if (rnd() < q) f++; return { memberDays: 20, fullDays: f }; });
+  const spread = Mx.days.rateSpread(tallies);
+  let flagged = 0, said = 0;
+  for (let t = 0; t < trials; t++) {
+    const idx = Array.from({ length: N }, (_, i) => i);
+    for (let i = N - 1; i > 0; i--) { const j = Math.floor(rnd() * (i + 1)); [idx[i], idx[j]] = [idx[j], idx[i]]; }
+    const inG = new Uint8Array(N);
+    for (let i = 0; i < G; i++) inG[idx[i]] = 1;
+    const gaps = [];
+    for (let w = 0; w < weeks; w++) {
+      let gf = 0, rf = 0;
+      for (let i = 0; i < N; i++) { const q = Math.min(1, p[i] + (inG[i] ? shift : 0)); for (let d = 0; d < 5; d++) if (rnd() < q) (inG[i] ? gf++ : rf++); }
+      gaps.push(((1 - gf / (G * 5)) - (1 - rf / ((N - G) * 5))) * 100);
+    }
+    const v = Mx.groups.gapWithinChance(gaps, G, N - G, spread);
+    if (v !== null) { said++; if (v === false) flagged++; }
+  }
+  return { rate: flagged / said, said, spread };
+}
+suite.calibrated = (Mx) => {
+  const out = [];
+  for (const [a, b] of [[0.918, 10.552], [1000, 12333]]) for (const weeks of [3, 5, 9]) {
+    const r = chanceSim(Mx, { a, b, weeks, trials: 300 });
+    out.push({ a, weeks, rate: +r.rate.toFixed(3) });
+  }
+  return { ok: out.every((r) => r.rate <= 0.07), out };
+};
+suite.power = (Mx) => {
+  const r = chanceSim(Mx, { a: 0.918, b: 10.552, weeks: 9, trials: 200, shift: 0.06, seed: 7 });
+  return { ok: r.rate >= 0.7, rate: r.rate };
+};
+{
+  const cal = suite.calibrated(M);
+  check("random groups of 47 with NO true difference are called 'more than chance' at most 7% of the time "
+    + "(3, 5 and 9 weeks; chronic absentees and alike students) -- the old test said so about 30% of the time", cal.ok, JSON.stringify(cal.out));
+  const pw = suite.power(M);
+  check("...and a group truly 6 points worse IS called more than chance most of the time (9 weeks)", pw.ok, JSON.stringify(pw));
+  const spread = chanceSim(M, { a: 0.918, b: 10.552, weeks: 3, trials: 1 }).spread;
+  check("the reviewer's example (weekly gaps -1, -2, -3 in a group of 47) is within chance for a group that size",
+    M.groups.gapWithinChance([-1, -2, -3], 47, 563, spread) === true);
+  check("...and nothing is said with fewer than 3 weeks, or before a spread is built",
+    M.groups.gapWithinChance([-5, -6], 47, 563, spread) === null && M.groups.gapWithinChance([-5, -6, -7], 47, 563, null) === null);
+  // THE SPREAD, END TO END: the group build computes it, the write keeps it,
+  // the answer uses it -- and the plain band build never sees it.
+  const g = withGroups(M);
+  const t30 = [{ memberDays: 10, fullDays: 2 }, { memberDays: 20, fullDays: 2 }, ...Array.from({ length: 28 }, () => ({ memberDays: 10, fullDays: 0 }))];
+  const r30 = [0.2, 0.1, ...new Array(28).fill(0)];
+  const mean = r30.reduce((a, b) => a + b, 0) / 30;
+  const want = r30.reduce((a, r) => a + (r - mean) ** 2, 0) / 29;
+  check("rateSpread is the variance across students of their month's whole-day rate; under 10 days enrolled is left out; under 30 students, none",
+    Math.abs(M.days.rateSpread(t30) - want) < 1e-15
+      && Math.abs(M.days.rateSpread([...t30, { memberDays: 9, fullDays: 9 }]) - want) < 1e-15
+      && M.days.rateSpread(t30.slice(1)) === null);
+  check("the group build returns the school's spread of monthly rates; the plain build has no such key",
+    typeof g.rateSpread === "number" && g.rateSpread >= 0 && !("rateSpread" in M.days.buildRunDays(baseInput)));
+  const run = await runAction("buildMonth", { yearid: 36, month: "2026-09" });
+  const gw = run.mutations.find((m) => m.ref === "attendanceGroupRunChart.replaceGroupMonth").args;
+  check("...the nightly build passes it with the group rows", typeof gw.rateVar === "number" && Math.abs(gw.rateVar - g.rateSpread) < 1e-12);
+  const tables = { attendanceRunGroupDays: [], attendanceRunGroupMonths: [] };
+  const pay = monthPayload(M.groups.AXES, week("2026-09-14"));
+  await M.query.replaceGroupMonth.handler({ db: fakeDb(tables) }, { ...pay, rateVar: 0.0096 });
+  const kept = tables.attendanceRunGroupMonths[0].rateVar;
+  await M.query.replaceGroupMonth.handler({ db: fakeDb(tables) }, { ...pay, axes: [], days: [], skipped: [{ axis: "race", reason: "x" }] });
+  check("...the month keeps it, and a build that could not make groups does not erase it", kept === 0.0096 && tables.attendanceRunGroupMonths[0].rateVar === 0.0096);
+  const w = world();
+  w.attendanceRunGroupMonths = ["2026-08", "2026-09", "2026-10"].map((month) => ({ _id: month, yearid: 36, month, built: [], skipped: [], updatedAt: SYNC, rateVar: 0.0096 }));
+  const withSpread = (await ask(M, ADMIN, { group: "race:black", periods: THIS_WEEKS.map((x) => [x]) }, w)).res;
+  const without = (await ask(M, ADMIN, { group: "race:black", periods: THIS_WEEKS.map((x) => [x]) })).res;
+  check("...and the answer carries the verdict once a spread is stored (none before)",
+    typeof withSpread.vsRest.withinChance === "boolean" && without.vsRest.withinChance === null);
+}
+
+// ===========================================================================
+console.log("\nA SKIPPED AXIS IS MENDED, NOT LEFT STALE FOR GOOD (review, 2026-10-12)\n");
+// ===========================================================================
+suite.staleMended = async (Mx) => {
+  // 9/30 night: every axis, school days to 9/29. Nights of 10/1-10/7: the
+  // race read fails each time while 9/30 is added to the others.
+  const tables = { attendanceRunGroupDays: [], attendanceRunGroupMonths: [] };
+  const db = fakeDb(tables);
+  const A = ["2026-09-21", "2026-09-22", "2026-09-23", "2026-09-24", "2026-09-25", "2026-09-28", "2026-09-29"];
+  const B = [...A, "2026-09-30"];
+  await Mx.query.replaceGroupMonth.handler({ db }, { ...monthPayload(Mx.groups.AXES, A), syncedAt: "2026-09-30T10:15:00.000Z" });
+  for (let n = 1; n <= 7; n++) {
+    await Mx.query.replaceGroupMonth.handler({ db }, { ...monthPayload(["gender", "el", "ela"], B), syncedAt: `2026-10-0${n}T10:15:00.000Z`,
+      skipped: [{ axis: "race", reason: "Race codes could not be read: HTTP 503" }] });
+  }
+  const stale = await Mx.query.groupMonthsStatus.handler({ db }, { yearid: 36 });
+  // The nightly run on 10/8: September is not this month or last week's, so only a mend reaches it.
+  const nightly = await runAction("refreshCurrent", {}, { Mx, queries: {
+    "attendanceRunChartData.monthsPresent": () => ["2026-08", "2026-09", "2026-10"],
+    "attendanceGroupRunChart.groupMonthsStatus": () => stale,
+  } });
+  const mended = nightly.scheduled.filter((x) => x.args.groupsOnly).map((x) => x.args.month);
+  // The mend's build succeeds: race is current again.
+  await Mx.query.replaceGroupMonth.handler({ db }, { ...monthPayload(Mx.groups.AXES, B), syncedAt: "2026-10-09T10:15:00.000Z" });
+  const fixed = await Mx.query.groupMonthsStatus.handler({ db }, { yearid: 36 });
+  return { ok: !stale[0].built.includes("race") && stale[0].built.join(",") === "gender,el,ela" && mended.includes("2026-09")
+    && fixed[0].built.slice().sort().join(",") === "el,ela,gender,race" && tables.attendanceRunGroupMonths[0].skipped.length === 0,
+    stale: stale[0].built, mended };
+};
+{
+  const sm = await suite.staleMended(M);
+  check("a month whose last builds all skipped race is NOT complete: the nightly mend rebuilds it, and race is current again after",
+    sm.ok, JSON.stringify(sm));
+  // The screen is told why the days are missing, for that line's axes only.
+  const t = world();
+  t.attendanceRunGroupMonths = [{ _id: "s", yearid: 36, month: "2026-09", built: [{ axis: "gender", syncedAt: "2026-10-07T10:15:00.000Z" }],
+    skipped: [{ axis: "race", reason: "Race codes could not be read: HTTP 503", at: "2026-10-07T10:15:00.000Z" }], updatedAt: "x" }];
+  const black = (await ask(M, ADMIN, { group: "race:black", periods: [[THIS_WEEKS[4]]] }, t)).res;
+  const fem = (await ask(M, ADMIN, { group: "gender:F", periods: [[THIS_WEEKS[4]]] }, t)).res;
+  check("...and the Black line's answer says why some of its days are missing; Female's does not",
+    /HTTP 503/.test(black.notBuilt || "") && !("notBuilt" in fem));
+}
+
+// ===========================================================================
 console.log("\nTEETH: EACH RULE, BROKEN ON PURPOSE, IS CAUGHT\n");
 // ===========================================================================
 {
@@ -1036,7 +1370,9 @@ console.log("\nTEETH: EACH RULE, BROKEN ON PURPOSE, IS CAUGHT\n");
   await caught("a withheld week served inside a longer period", mutate("groups",
     "else if (v.removed.has(series.row)) small = true;", "else if (v.removed.has(series.row) && dates.length < 6) small = true;"),
     suite.withheldEverywhere);
-  await caught("a one-day period served", mutate("groups", "export const MIN_PERIOD_DAYS = 2;", "export const MIN_PERIOD_DAYS = 1;"), suite.minDays);
+  await caught("a one-day week served", mutate("groups", "export const MIN_WEEK_DAYS = 2;", "export const MIN_WEEK_DAYS = 1;"), suite.minDays);
+  await caught("a one-day week served inside a merged period", mutate("groups", "if (inWeek < MIN_WEEK_DAYS) fewDays = true;",
+    "if (inWeek < MIN_WEEK_DAYS && weeks.length === 1) fewDays = true;"), suite.minDays);
   await caught("a count on the wire", mutate("groups", "answers.push({ key, value, rest, withheld: value === null ? \"no-data\" : null });",
     "answers.push({ key, value, rest, withheld: value === null ? \"no-data\" : null, memberDays: md } as any);"), suite.keys);
   await caught("the group absences not bumped in the loop", mutate("days",
@@ -1053,8 +1389,19 @@ console.log("\nTEETH: EACH RULE, BROKEN ON PURPOSE, IS CAUGHT\n");
   await caught("groupsOnly rewriting the band rows", M, async () => suite.groupsOnly(actionMut("    if (!groupsOnly) {\n", "    if (true) {\n")));
   await caught("a backfill that rewrites last year's bands by default", M, async () => suite.backfillSays(actionMut(
     "if (groupsOnly === rewriteBands || (groupsOnly !== true && rewriteBands !== true)) {", "if (groupsOnly === true && rewriteBands === true) {")));
-  await caught("the chart floor lowered to 28 (IFEP offered)", mutate("groups", "export const CHART_FLOOR = 30;", "export const CHART_FLOOR = 28;"),
-    suite.adminList);
+  await caught("the week in progress served (no build-coverage check)", mutate("groups", "if (!covered(d)) open = true;", ""), suite.mornings);
+  await caught("a month's coverage taken from the newest build only", mutate("groups",
+    "const through = builtThrough.get(date.slice(0, 7)) ?? newestBuilt;", "const through = newestBuilt;"), suite.monthEdge);
+  await caught("the pool test at 10, not 30 (RFEP offered beside the IFEP pool)", mutate("groups",
+    "exposesSmall(cells, lines.map(cellsOf), CHART_FLOOR)", "exposesSmall(cells, lines.map(cellsOf), DAY_FLOOR)"), suite.pbisPool);
+  await caught("the chart floor lowered to 28 (IFEP and RFEP offered, as measured)", mutate("groups", "export const CHART_FLOOR = 30;",
+    "export const CHART_FLOOR = 28;"), suite.adminListProd);
+  await caught("the pool brute force, with no pool test", mutate("groups", "while (exposes(live)) {", "while (false) {"), suite.poolBrute);
+  await caught("the chance band without who-is-in-the-group", mutate("groups",
+    "const who = spread * 10000 * (1 / n + 1 / rest);", "const who = 0;"), suite.calibrated);
+  await caught("a skipped axis counted as built", mutate("groups",
+    "return m.built.filter((b) => !m.skipped.some((s) => s.axis === b.axis && s.at >= b.syncedAt)).map((b) => b.axis);",
+    "return m.built.map((b) => b.axis);"), suite.staleMended);
   await caught("a stale row left behind", mutate("query", "for (const r of old) if (axes.includes(r.axis)) await ctx.db.delete(r._id);",
     "for (const r of old.slice(1)) if (axes.includes(r.axis)) await ctx.db.delete(r._id);"), suite.replaceClean);
 }

@@ -4,8 +4,8 @@ import { requireStaff } from "./identity";
 import { GROUP_NONE } from "./runChartDays";
 import {
   AXES, GROUP_AXES, SERIES, TYPE_LABELS, FAMILY_AXES, NEVER_CHARTED, groupTypesFor,
-  CHART_FLOOR, DAY_FLOOR, SMALL_CHART_GROUP, SIZE_ROUND, roundSize, median, checkPeriods, evaluatePeriods,
-  addDaysIso, type GroupType, type StoredGroupDay,
+  CHART_FLOOR, DAY_FLOOR, SMALL_CHART_GROUP, SIZE_ROUND, roundSize, checkPeriods, evaluatePeriods,
+  addDaysIso, laDayOf, typicalRows, linesForYear, currentAxes, type GroupType, type StoredGroupDay,
 } from "./runChartGroups";
 
 /**
@@ -65,6 +65,10 @@ export const replaceGroupMonth = internalMutation({
     whole: v.array(v.object({ date: v.string(), members: v.number(), absentDays: v.number() })),
     days: v.array(groupDayRow),
     skipped: v.array(v.object({ axis: v.string(), reason: v.string() })),
+    // The school's between-student variance of the month's whole-day rate
+    // (runChartDays.rateSpread): one number, for the chance band. Optional:
+    // a build that could not make the group rows has none.
+    rateVar: v.optional(v.number()),
   },
   handler: async (ctx, a) => {
     if (!/^\d{4}-\d{2}$/.test(a.month)) throw new Error("month must be YYYY-MM");
@@ -118,20 +122,21 @@ export const replaceGroupMonth = internalMutation({
     const built = (prev?.built ?? []).filter((b) => !axes.includes(b.axis)).concat(axes.map((axis) => ({ axis, syncedAt: a.syncedAt })));
     const skipped = (prev?.skipped ?? []).filter((s) => !touched.has(s.axis))
       .concat(a.skipped.map((s) => ({ axis: s.axis, reason: String(s.reason).slice(0, 300), at: a.syncedAt })));
+    const rateVar = a.rateVar !== undefined && Number.isFinite(a.rateVar) && a.rateVar >= 0 ? { rateVar: a.rateVar } : {};
     for (const extra of status.slice(1)) await ctx.db.delete(extra._id);
-    if (prev) await ctx.db.patch(prev._id, { built, skipped, updatedAt: a.syncedAt });
-    else await ctx.db.insert("attendanceRunGroupMonths", { yearid: a.yearid, month: a.month, built, skipped, updatedAt: a.syncedAt });
+    if (prev) await ctx.db.patch(prev._id, { built, skipped, updatedAt: a.syncedAt, ...rateVar });
+    else await ctx.db.insert("attendanceRunGroupMonths", { yearid: a.yearid, month: a.month, built, skipped, updatedAt: a.syncedAt, ...rateVar });
     return { written: axes.length ? a.days.length : 0, axes, skipped: a.skipped.map((s) => s.axis) };
   },
 });
 
-/** Which axes each stored month of a year has: the nightly run mends the missing ones. */
+/** Which axes each stored month of a year has CURRENT rows for: the nightly run mends the rest. */
 export const groupMonthsStatus = internalQuery({
   args: { yearid: v.number() },
   handler: async (ctx, { yearid }) => {
     const rows = await ctx.db.query("attendanceRunGroupMonths")
       .withIndex("by_yearid_month", (q) => q.eq("yearid", yearid)).take(100);
-    return rows.map((r) => ({ month: r.month, built: r.built.map((b) => b.axis) }));
+    return rows.map((r) => ({ month: r.month, built: currentAxes(r) }));
   },
 });
 
@@ -200,25 +205,29 @@ export const groupWeeks = query({
       return { allowed: true as const, notYet: "This year's group rows are longer than this reads. Tell an administrator.",
                ...empty, unavailable };
     }
-    const perDay = new Map<string, number[]>();
     let asOf = "";
-    for (const r of yearRows) {
-      const k = r.axis + ":" + r.group;
-      if (!perDay.has(k)) perDay.set(k, []);
-      perDay.get(k)!.push(r.members);
-      if (r.syncedAt > asOf) asOf = r.syncedAt;
-    }
-    const typical = new Map<string, number>();
-    for (const [k, xs] of perDay) typical.set(k, median(xs) ?? 0);
+    for (const r of yearRows) if (r.syncedAt > asOf) asOf = r.syncedAt;
+    const typical = typicalRows(yearRows);
     const months = await ctx.db.query("attendanceRunGroupMonths")
       .withIndex("by_yearid_month", (q) => q.eq("yearid", newest.yearid)).take(30);
+    // A skip still on record is a CURRENT one: a later build of that axis
+    // clears it (replaceGroupMonth), so its days are missing until then.
     const skipWhy = (axis: string) => {
       let latest: { reason: string; at: string } | null = null;
       for (const m of months) for (const s of m.skipped) if (s.axis === axis && (!latest || s.at > latest.at)) latest = s;
       return latest?.reason ?? null;
     };
 
+    // WHICH LINES THIS YEAR MAY SHOW, family by family, from the lines this
+    // person may see that have rows: the floor of 30 on a typical day, for
+    // each line AND for every pool the lines and the whole school subtract to
+    // (linesForYear).
     const visible = SERIES.filter((s) => types.includes(s.type));
+    const thisYear = new Map<string, ReturnType<typeof linesForYear>>();
+    for (const f of new Set(visible.map((s) => s.family))) {
+      const candidates = [...new Set(visible.filter((s) => s.family === f && typical.has(s.row)).map((s) => s.row))];
+      thisYear.set(f, linesForYear(f, yearRows, candidates));
+    }
     const groups: Array<{ id: string; type: GroupType; typeLabel: string; label: string; size: number; small: boolean; sameAs?: string }> = [];
     for (const s of visible) {
       const t = typical.get(s.row);
@@ -228,10 +237,17 @@ export const groupWeeks = query({
           reason: why ? "Not built this year: " + why : "No figures for this group yet this year." });
         continue;
       }
-      if (t < CHART_FLOOR) {
+      const lines = thisYear.get(s.family)!;
+      if (lines.under.includes(s.row)) {
         unavailable.push({ type: s.type, group: s.label,
           reason: `Fewer than ${CHART_FLOOR} students on a typical school day this year, so one or two students `
             + "would move its weekly rate. It is not charted." });
+        continue;
+      }
+      if (lines.pool.includes(s.row)) {
+        unavailable.push({ type: s.type, group: s.label,
+          reason: "Drawn beside the other lines of its kind and the whole school, it would let a group of fewer than "
+            + `${CHART_FLOOR} students be worked out by subtraction, so it is not charted this year.` });
         continue;
       }
       groups.push({ id: s.id, type: s.type, typeLabel: TYPE_LABELS[s.type], label: s.label,
@@ -251,9 +267,13 @@ export const groupWeeks = query({
     if (!series || !chosen) {
       return { ...listed, refused: "That group is not available to you.", group: null, periods: [], vsRest: null };
     }
-    if (!periods) return { ...listed, group: chosen, periods: [], vsRest: null };
+    // Days of this line a failed PowerSchool read left unbuilt, and why:
+    // the mend retries them each night (refreshCurrent).
+    const why = FAMILY_AXES[series.family].map(skipWhy).find((x) => x !== null) ?? null;
+    const notBuilt = why ? { notBuilt: why } : {};
+    if (!periods) return { ...listed, group: chosen, periods: [], vsRest: null, ...notBuilt };
 
-    // THE FAMILY'S ROWS IN RANGE, and the school days Trends has there.
+    // THE FAMILY'S ROWS IN RANGE.
     const min = periods.reduce((m, p) => (p[0] < m ? p[0] : m), periods[0][0]);
     const max = addDaysIso(periods.reduce((m, p) => (p[p.length - 1] > m ? p[p.length - 1] : m), periods[0][0]), 4);
     const rows: StoredGroupDay[] = [];
@@ -263,19 +283,48 @@ export const groupWeeks = query({
       if (got.length > RANGE_ROW_CAP) return { ...listed, invalid: "That is more weeks than one answer can read.", group: chosen, periods: [], vsRest: null };
       rows.push(...got);
     }
+    // THE SCHOOL DAYS TRENDS HAS, over the WHOLE MONTHS the periods touch,
+    // and how far each month's build reached (the day before the build's own
+    // day in Los Angeles): a week is served only once no build can add a day
+    // to it.
     const years = new Set<number>([newest.yearid, newest.yearid - 1, ...rows.map((r) => r.yearid)]);
     const trendsDays = new Map<string, number>();
+    const monthSync = new Map<string, string>();
     for (const y of years) {
       const t = await ctx.db.query("attendanceRunDays")
-        .withIndex("by_yearid_date", (q) => q.eq("yearid", y).gte("date", min).lte("date", max)).take(2000);
-      for (const r of t) trendsDays.set(r.date, r.yearid);
+        .withIndex("by_yearid_date", (q) => q.eq("yearid", y).gte("date", min.slice(0, 7) + "-01").lte("date", max.slice(0, 7) + "-31"))
+        .take(2000);
+      for (const r of t) {
+        trendsDays.set(r.date, r.yearid);
+        const m = r.date.slice(0, 7);
+        const was = monthSync.get(m);
+        if (was === undefined || r.syncedAt < was) monthSync.set(m, r.syncedAt);
+      }
     }
-    // The family's rows this reader may see at the floor, smallest first.
-    const offered = [...new Set(visible.filter((s) => s.family === series.family && groups.some((g) => g.id === s.id))
-      .map((s) => s.row))];
-    const order = offered.slice().sort((x, y) => (typical.get(x)! - typical.get(y)!) || (x < y ? -1 : x > y ? 1 : 0));
-    const out = evaluatePeriods({ series, periods, trendsDays, rows, offered, order, misrecordAt: a.misrecordAt });
+    const dayBefore = (at: unknown) => { const d = laDayOf(at); return d ? addDaysIso(d, -1) : null; };
+    const builtThrough = new Map<string, string>();
+    for (const [m, at] of monthSync) { const d = dayBefore(at); if (d) builtThrough.set(m, d); }
+
+    // THE LINES EACH YEAR MAY SHOW: this year's as listed; any other year's,
+    // from those, on that year's own figures.
+    const offeredByYear = new Map<number, string[]>([[newest.yearid, thisYear.get(series.family)!.kept]]);
+    for (const y of new Set(trendsDays.values())) {
+      if (offeredByYear.has(y)) continue;
+      const other = await ctx.db.query("attendanceRunGroupDays")
+        .withIndex("by_yearid_date", (q) => q.eq("yearid", y)).take(YEAR_ROW_CAP + 1);
+      if (other.length > YEAR_ROW_CAP) return { ...listed, invalid: "That year's group rows are longer than this reads.", group: chosen, periods: [], vsRest: null };
+      offeredByYear.set(y, linesForYear(series.family, other, offeredByYear.get(newest.yearid)!).kept);
+    }
+    const order = offeredByYear.get(newest.yearid)!.slice()
+      .sort((x, y) => (typical.get(x)! - typical.get(y)!) || (x < y ? -1 : x > y ? 1 : 0));
+    // The school's spread of student rates this year, for the chance band.
+    const spreads = months.map((m) => m.rateVar).filter((x): x is number => typeof x === "number" && Number.isFinite(x));
+    const spread = spreads.length ? spreads.reduce((p, q) => p + q, 0) / spreads.length : null;
+    const out = evaluatePeriods({
+      series, periods, trendsDays, builtThrough, newestBuilt: dayBefore(newestTrends?.syncedAt), today: laDayOf(Date.now())!,
+      rows, offeredByYear, order, misrecordAt: a.misrecordAt, newestYear: newest.yearid, spread,
+    });
     if (!out.ok) return { ...listed, invalid: out.reason, group: chosen, periods: [], vsRest: null };
-    return { ...listed, group: chosen, periods: out.periods, vsRest: out.vsRest };
+    return { ...listed, group: chosen, periods: out.periods, vsRest: out.vsRest, ...notBuilt };
   },
 });

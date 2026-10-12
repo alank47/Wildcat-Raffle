@@ -134,6 +134,19 @@ export function groupPairs(d: Demographics | undefined, date: string, axes: stri
   return out;
 }
 
+/**
+ * An axis whose stored rows are CURRENT for a month: built, and not skipped
+ * by a build since. A skipped axis keeps its rows from the build before (a
+ * failed race read does not blank the Black line), but those rows lack every
+ * day added since -- so until a build of that axis succeeds, the month is
+ * not complete and the nightly mend rebuilds it (review, 2026-10-12: the
+ * month's last rebuilds are nights 1-7 of the next month, and a read failing
+ * on all of them used to leave its new days missing from that axis for good).
+ */
+export function currentAxes(m: { built: Array<{ axis: string; syncedAt: string }>; skipped: Array<{ axis: string; at: string }> }): string[] {
+  return m.built.filter((b) => !m.skipped.some((s) => s.axis === b.axis && s.at >= b.syncedAt)).map((b) => b.axis);
+}
+
 // ===========================================================================
 // 2. WHO MAY SEE WHICH GROUP (the query)
 // ===========================================================================
@@ -205,7 +218,11 @@ export const NEVER_CHARTED = [
 // 3. THE FLOORS (owner, 2026-10-11)
 // ===========================================================================
 
-/** A group is offered only when its TYPICAL day this year has this many students (drops IFEP at 28). */
+/**
+ * A group is offered only when its TYPICAL day this year has this many
+ * students (drops IFEP at 28) -- and so is every pool the lines offered and
+ * the whole school subtract to (linesForYear, section 5).
+ */
 export const CHART_FLOOR = 30;
 /** And a week is drawn only when EVERY school day in it has this many (and passes the residual test). */
 export const DAY_FLOOR = 10;
@@ -213,13 +230,27 @@ export const DAY_FLOOR = 10;
 export const SMALL_CHART_GROUP = 60;
 /** Group sizes leave rounded to the nearest 5, and nothing else about membership leaves at all. */
 export const SIZE_ROUND = 5;
-/** A period with fewer school days than this is never served: a one-day period is a daily rate. */
-export const MIN_PERIOD_DAYS = 2;
+/**
+ * A WEEK with fewer school days than this is withheld in EVERY period that
+ * contains it, the way a small week is: served inside a merged period, it
+ * would come back as that period less the week after it, asked for alone --
+ * a daily rate (review, 2026-10-12).
+ */
+export const MIN_WEEK_DAYS = 2;
 export const MAX_PERIOD_WEEKS = 4;
 export const MAX_PERIODS = 120;
 
 export function roundSize(n: number): number {
   return Math.round(n / SIZE_ROUND) * SIZE_ROUND;
+}
+
+/** "YYYY-MM-DD" in Los Angeles for an instant (an ISO string or ms), or null. */
+export function laDayOf(at: unknown): string | null {
+  const ms = typeof at === "number" ? at : Date.parse(String(at ?? ""));
+  if (!Number.isFinite(ms)) return null;
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/Los_Angeles", year: "numeric", month: "2-digit", day: "2-digit",
+  }).format(new Date(ms));
 }
 
 export function median(xs: number[]): number | null {
@@ -372,7 +403,88 @@ export function withheldOnDay(family: string, rows: Map<string, { members: numbe
 }
 
 // ===========================================================================
-// 5. THE PERIODS A SCREEN ASKS FOR
+// 5. THE LINES A YEAR MAY SHOW: THE FLOOR OF 30 APPLIES TO WHAT CAN BE
+//    WORKED OUT, NOT ONLY TO WHAT IS DRAWN (review, 2026-10-12)
+// ===========================================================================
+//
+// THE LEAK. IFEP (28 on a typical day) is not charted. But Current English
+// Learner, Not EL, English Only and RFEP, beside the whole school on Trends,
+// subtract to the IFEP students plus the few pending assessment -- on most
+// days of this year, exactly the IFEP students. A shift in that pool, set
+// against the named absence lists, says which children are IFEP. The per-day
+// test above only guards pools of 1 to 9; this one holds every pool to the
+// owner's floor.
+//
+// THE RULE, on a TYPICAL day of the year (each cell's median over the school
+// days whose rows add up):
+//   - every line has at least CHART_FLOOR students, and
+//   - no sum or difference of the lines and the whole school describes 1 to
+//     CHART_FLOOR - 1 students.
+// When that fails, lines go one at a time: the smallest line whose going
+// settles it on its own, else the smallest. Decided on the year's medians,
+// never on a day, so which line goes says nothing about any day. Each year
+// is decided on its own figures, so last year's weeks are held to last
+// year's sizes.
+
+/** Each row's typical size over a year: the median of its members over the days it was built. */
+export function typicalRows(rows: StoredGroupDay[]): Map<string, number> {
+  const per = new Map<string, number[]>();
+  for (const r of rows) {
+    const k = r.axis + ":" + r.group;
+    if (!per.has(k)) per.set(k, []);
+    per.get(k)!.push(r.members);
+  }
+  return new Map([...per].map(([k, xs]) => [k, median(xs) ?? 0]));
+}
+
+/** Each cell of a family on a typical day: the median of its size over the days whose rows add up. Null with none. */
+export function typicalCells(family: string, rows: StoredGroupDay[]): Map<string, number> | null {
+  const byDate = new Map<string, Map<string, { members: number }>>();
+  for (const r of rows) {
+    if (!(FAMILY_AXES[family] ?? []).includes(r.axis)) continue;
+    if (!byDate.has(r.date)) byDate.set(r.date, new Map());
+    byDate.get(r.date)!.set(r.axis + ":" + r.group, r);
+  }
+  const per = new Map<string, number[]>();
+  for (const day of byDate.values()) {
+    const cells = familyCells(family, day);
+    if (!cells) continue;
+    for (const [k, n] of cells) {
+      if (!per.has(k)) per.set(k, []);
+      per.get(k)!.push(n);
+    }
+  }
+  if (!per.size) return null;
+  return new Map([...per].map(([k, xs]) => [k, median(xs) ?? 0]));
+}
+
+/**
+ * The lines of one family a year may show, from `candidates` (stored rows a
+ * reader may see). `under`: a line under CHART_FLOOR on a typical day of the
+ * year; `pool`: a line withheld so that no pool under CHART_FLOOR can be
+ * worked out. A candidate with no rows that year is kept (its days are "no
+ * data", never "small").
+ */
+export function linesForYear(family: string, yearRows: StoredGroupDay[], candidates: string[]):
+  { kept: string[]; under: string[]; pool: string[] } {
+  const typical = typicalRows(yearRows);
+  const under = candidates.filter((r) => typical.has(r) && typical.get(r)! < CHART_FLOOR);
+  let live = candidates.filter((r) => !under.includes(r));
+  const cells = typicalCells(family, yearRows);
+  const cellsOf = (row: string) => (SERIES.find((s) => s.row === row)?.cells ?? []);
+  const exposes = (lines: string[]) => !!cells && lines.length > 0 && exposesSmall(cells, lines.map(cellsOf), CHART_FLOOR);
+  const pool: string[] = [];
+  while (exposes(live)) {
+    const bySize = live.slice().sort((a, b) => ((typical.get(a) ?? 0) - (typical.get(b) ?? 0)) || (a < b ? -1 : a > b ? 1 : 0));
+    const one = bySize.find((r) => !exposes(live.filter((x) => x !== r))) ?? bySize[0];
+    live = live.filter((x) => x !== one);
+    pool.push(one);
+  }
+  return { kept: live, under, pool };
+}
+
+// ===========================================================================
+// 6. THE PERIODS A SCREEN ASKS FOR
 // ===========================================================================
 
 const ISO = /^\d{4}-\d{2}-\d{2}$/;
@@ -422,61 +534,103 @@ export function rateOf(memberDays: number, fullDays: number): number | null {
 }
 
 export type PeriodAnswer = { key: string; value: number | null; rest: number | null; withheld: string | null };
+export type VsRest = { yearid: number; periods: number; points: number; withinChance: boolean | null };
 
 /**
- * The served rates for one line over the periods asked for.
+ * THE SMALLEST THING SERVED IS ONE FINISHED WEEK OF AT LEAST MIN_WEEK_DAYS
+ * SCHOOL DAYS, held on the server for every week -- never per call (review,
+ * 2026-10-12). Checking only the period in front of it, the server served
+ * the week in progress each morning with one more day in it, and a short
+ * week inside a merged period: two answers subtracted to one day's rate,
+ * and from a group of ~115 that was the EXACT number of its members out
+ * that day. So a period is withheld when any week in it:
  *
- *   trendsDays  the school days on Trends (attendanceRunDays) in range, with
- *               their year: a period covers exactly those, so its days are
- *               always a subset of the whole-school axis.
- *   rows        the family's stored rows in range.
- *   offered     the family's rows this reader may see at the CHART_FLOOR;
- *               `order` the same, smallest first.
+ *   "open"      is not over: its Friday is today or later in Los Angeles,
+ *               or one of its weekdays was not yet covered by its month's
+ *               Trends build (a month built tonight covers up to
+ *               yesterday). Then no later build can add a day to it.
+ *   "few-days"  has fewer than MIN_WEEK_DAYS school days.
+ *   "no-data"   has a school day with no group rows (or rows that do not
+ *               add up), or group rows on a day Trends does not have: the
+ *               two must hold the SAME days, or the week could gain one.
+ *   "small"     holds a day where the line failed the per-day floor or the
+ *               residual test, or the line is not shown that year
+ *               (linesForYear). One code for these, so the answer does not
+ *               say which pool was small.
  *
- * Withheld codes: "few-days" (under MIN_PERIOD_DAYS), "no-data" (a school day
- * with no group rows), "small" (on some day the line was under DAY_FLOOR, or
- * the residual test took it). One code for the last two, so the answer does
- * not say which pool was small.
+ * Decided week by week, so a week withheld is withheld in every period
+ * containing it, and two periods can only ever differ by whole served weeks.
+ *
+ *   trendsDays    every Trends school day (attendanceRunDays) of the months
+ *                 the periods touch, with its year
+ *   builtThrough  per "YYYY-MM": the last day that month's Trends build
+ *                 covered; a month with no Trends rows falls back to
+ *                 `newestBuilt`, the last day the newest build covered
+ *   rows          the family's stored rows in range
+ *   offeredByYear per school year: the family's rows this reader may see
+ *                 that year (linesForYear); `order` them, smallest first
+ *   newestYear    the gap to the rest of the school is averaged over THIS
+ *                 year's served weeks only -- the year the rules read
+ *   spread        the school's between-student variance of the monthly
+ *                 whole-day rate (rateSpread), for the chance band
  */
 export function evaluatePeriods(args: {
   series: Series; periods: string[][]; trendsDays: Map<string, number>;
-  rows: StoredGroupDay[]; offered: string[]; order: string[]; misrecordAt: unknown;
-}): { ok: true; periods: PeriodAnswer[]; vsRest: { yearid: number; periods: number; points: number } | null }
-  | { ok: false; reason: string } {
-  const { series, periods, trendsDays, rows, offered, order, misrecordAt } = args;
+  builtThrough: Map<string, string>; newestBuilt: string | null; today: string;
+  rows: StoredGroupDay[]; offeredByYear: Map<number, string[]>; order: string[]; misrecordAt: unknown;
+  newestYear: number; spread: number | null;
+}): { ok: true; periods: PeriodAnswer[]; vsRest: VsRest | null } | { ok: false; reason: string } {
+  const { series, periods, trendsDays, builtThrough, newestBuilt, today, rows, offeredByYear, order, misrecordAt } = args;
   const byDate = new Map<string, Map<string, StoredGroupDay>>();
   for (const r of rows) {
     if (!FAMILY_AXES[series.family].includes(r.axis)) continue;
     if (!byDate.has(r.date)) byDate.set(r.date, new Map());
     byDate.get(r.date)!.set(r.axis + ":" + r.group, r);
   }
+  const yearOf = (date: string) => trendsDays.get(date);
   const dayVerdict = new Map<string, { removed: Set<string>; noData: boolean }>();
   const verdict = (date: string) => {
     let v = dayVerdict.get(date);
-    if (!v) { v = withheldOnDay(series.family, byDate.get(date) ?? new Map(), offered, order); dayVerdict.set(date, v); }
+    if (!v) {
+      const offered = offeredByYear.get(yearOf(date)!) ?? [];
+      v = withheldOnDay(series.family, byDate.get(date) ?? new Map(), offered, order.filter((r) => offered.includes(r)));
+      dayVerdict.set(date, v);
+    }
     return v;
+  };
+  const covered = (date: string) => {
+    const through = builtThrough.get(date.slice(0, 7)) ?? newestBuilt;
+    return !!through && through >= date;
   };
   const wholeAxis = WHOLE_AXIS[series.family];
   const answers: PeriodAnswer[] = [];
-  const gaps = new Map<number, number[]>();
+  const newest = { gaps: [] as number[], md: 0, restMd: 0, days: 0 };
   for (const weeks of periods) {
     const dates: string[] = [];
     const years = new Set<number>();
+    let open = false, fewDays = false, mismatch = false;
     for (const w of weeks) {
+      if (addDaysIso(w, 4) >= today) open = true;
+      let inWeek = 0;
       for (let i = 0; i < 5; i++) {
         const d = addDaysIso(w, i);
-        const y = trendsDays.get(d);
-        if (y === undefined) continue;
+        if (!covered(d)) open = true;
+        const y = yearOf(d);
+        if (y === undefined) { if (byDate.has(d)) mismatch = true; continue; }
         dates.push(d);
         years.add(y);
+        inWeek++;
       }
+      if (inWeek < MIN_WEEK_DAYS) fewDays = true;
     }
     if (years.size > 1) return { ok: false, reason: "A period cannot cross from one school year into the next." };
     const key = weeks[0];
     const no = (withheld: string): PeriodAnswer => ({ key, value: null, rest: null, withheld });
-    if (dates.length < MIN_PERIOD_DAYS) { answers.push(no("few-days")); continue; }
-    if (!offered.includes(series.row)) { answers.push(no("small")); continue; }
-    let noData = false, small = false;
+    if (open) { answers.push(no("open")); continue; }
+    if (fewDays) { answers.push(no("few-days")); continue; }
+    const year = [...years][0];
+    if (!(offeredByYear.get(year) ?? []).includes(series.row)) { answers.push(no("small")); continue; }
+    let noData = mismatch, small = false;
     for (const d of dates) {
       const v = verdict(d);
       if (v.noData) noData = true;
@@ -500,20 +654,71 @@ export function evaluatePeriods(args: {
     const value = rateOf(md, full);
     const rest = restMd > 0 ? rateOf(restMd, restFull) : null;
     answers.push({ key, value, rest, withheld: value === null ? "no-data" : null });
-    if (value !== null && rest !== null) {
-      const y = [...years][0];
-      if (!gaps.has(y)) gaps.set(y, []);
+    if (value !== null && rest !== null && year === args.newestYear) {
       // The unrounded gap, so the average is not an average of roundings.
-      gaps.get(y)!.push(((1 - full / md) - (1 - restFull / restMd)) * 100);
+      newest.gaps.push(((1 - full / md) - (1 - restFull / restMd)) * 100);
+      newest.md += md;
+      newest.restMd += restMd;
+      newest.days += dates.length;
     }
   }
-  const newest = gaps.size ? Math.max(...gaps.keys()) : null;
-  const g = newest === null ? [] : gaps.get(newest)!;
+  const k = newest.gaps.length;
   return {
     ok: true, periods: answers,
-    vsRest: newest === null ? null : {
-      yearid: newest, periods: g.length,
-      points: Math.round((g.reduce((a, b) => a + b, 0) / g.length) * 10) / 10,
+    vsRest: !k ? null : {
+      yearid: args.newestYear, periods: k,
+      points: Math.round((newest.gaps.reduce((a, b) => a + b, 0) / k) * 10) / 10,
+      withinChance: gapWithinChance(newest.gaps, newest.md / newest.days, newest.restMd / newest.days, args.spread),
     },
   };
+}
+
+// ===========================================================================
+// 7. IS A SMALL GROUP'S GAP WITHIN CHANCE FOR A GROUP THIS SIZE?
+// ===========================================================================
+//
+// THE OLD TEST WAS WRONG BY SIX TIMES (review, 2026-10-12). It asked whether
+// the average weekly gap was more than two standard errors of the group's
+// own weekly gaps. That leaves out the biggest source of chance: WHO happens
+// to be in a group of 47. Chronically absent students stay chronically
+// absent, so a group that drew two of them sits below the rest of the school
+// every week -- a steady gap with nothing behind it but the draw. On groups
+// of 47 drawn at random (no true difference at all), it said "more than its
+// weeks usually vary" about 30% of the time where 5% was meant.
+//
+// THE BAND NOW has both parts, as a variance of the average gap in points:
+//   who is in the group:   spread x (1/n + 1/rest), the two-sample variance
+//                          of a random split of the school into n and rest
+//                          students (spread: the variance across students
+//                          of their monthly whole-day rate, from the build)
+//   how its weeks wobble:  the variance of the weekly gaps / their number
+// and its critical value is Student's t on the degrees of freedom of that
+// sum (Welch-Satterthwaite): about 2 when who-is-in-it dominates, larger
+// when a few noisy weeks do. A calibration test draws random groups and
+// holds the false alarm rate near or under 5%.
+
+/** Two-sided 5% points of Student's t for 1 to 30 degrees of freedom; 2 past 30. */
+const T95 = [12.71, 4.3, 3.18, 2.78, 2.57, 2.45, 2.36, 2.31, 2.26, 2.23, 2.2, 2.18, 2.16, 2.14, 2.13,
+  2.12, 2.11, 2.1, 2.09, 2.09, 2.08, 2.07, 2.07, 2.06, 2.06, 2.06, 2.05, 2.05, 2.05, 2.04];
+export function tCrit95(df: number): number {
+  if (!(df >= 1)) return T95[0];
+  if (df > 30) return 2;
+  return T95[Math.floor(df) - 1];
+}
+
+/**
+ * Is an average gap of these weekly gaps (points) within what chance gives a
+ * group of about `n` students against `rest` others? Null when it cannot be
+ * said: fewer than 3 weeks, or no spread built yet.
+ */
+export function gapWithinChance(gaps: number[], n: number, rest: number, spread: number | null): boolean | null {
+  const k = gaps.length;
+  if (k < 3 || !(n > 0) || !(rest > 0) || spread === null || !(spread >= 0)) return null;
+  const mean = gaps.reduce((a, b) => a + b, 0) / k;
+  const who = spread * 10000 * (1 / n + 1 / rest);
+  const weeks = gaps.reduce((a, g) => a + (g - mean) * (g - mean), 0) / (k - 1) / k;
+  const total = who + weeks;
+  if (!(total > 0)) return mean === 0;
+  const df = weeks > 0 ? (total * total) / ((weeks * weeks) / (k - 1)) : Infinity;
+  return Math.abs(mean) <= tCrit95(df) * Math.sqrt(total);
 }

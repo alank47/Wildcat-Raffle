@@ -37759,9 +37759,10 @@
 
         /** Why a week is not on the group's line -- said without saying which pool was small. */
         const GR_WITHHELD_WORDS = {
-            small: 'on at least one of its school days, this line set against the whole school could have singled out '
-                + 'fewer than 10 students, so the whole week is held back',
-            'few-days': 'fewer than 2 school days, which would be a daily rate',
+            small: 'this line set against the whole school could have singled out a small group of students (fewer than '
+                + '10 on one of its school days, or fewer than 30 on a typical day that year), so the whole week is held back',
+            open: 'the week is not over, or its last days are not built yet; it joins the line once they are',
+            'few-days': 'a week of fewer than 2 school days (alone or merged into the next), and a rate over a single day is never shown',
             'no-data': 'no group figures for those days yet (they are built overnight)',
             'not-asked': 'more than 4 weeks merged into one point, which is longer than the chart asks for'
         };
@@ -37825,9 +37826,12 @@
 
         /**
          * The gap to the rest of the school, over this year's weeks on the
-         * chart, in one sentence. A small group says whether the gap is bigger
-         * than its weeks usually wobble -- measured on its own weeks
-         * (runGapSpread), so absences bunched in a few students count.
+         * chart, in one sentence. A small group says whether the gap is
+         * within chance for a group its size -- the server's verdict
+         * (gapWithinChance), which counts WHO happens to be in a group that
+         * size as well as how its weeks wobble. The old test here counted
+         * only the wobble, and called a gap real for about 3 in 10 random
+         * groups with no difference at all (review, 2026-10-12).
          */
         function grGapSentence(model, chosen) {
             const vs = model && model.vsRest;
@@ -37838,10 +37842,9 @@
                 + ' on the chart it averaged ' + (shown === 0 ? 'the same as'
                     : shown.toFixed(1) + ' points ' + (Number(vs.points) > 0 ? 'above' : 'below')) + ' the rest of the school';
             if (chosen && chosen.small && shown !== 0) {
-                const sp = model.gapSpread;
-                s += !sp ? ', too few weeks yet to tell that from chance'
-                    : sp.withinChance ? ', within chance for a group this size'
-                    : ', more than its weeks usually vary, though a group this size can move with one or two students';
+                s += vs.withinChance === true ? ', within chance for a group this size'
+                    : vs.withinChance === false ? ', more than chance usually gives a group this size: worth a look, not a finding'
+                    : ', too soon to tell that from chance';
             }
             return s + '.';
         }
@@ -38016,6 +38019,12 @@
                 const n = held[k];
                 note(n + ' week' + (n === 1 ? ' is' : 's are') + ' not on this line: ' + (GR_WITHHELD_WORDS[k] || GR_WITHHELD_WORDS['no-data']) + '.');
             });
+            // A PowerSchool read that failed on a night this line was built:
+            // said with the server's reason, so the gap is not a mystery.
+            if (ctx.notBuilt) {
+                note('Some school days of this line could not be built from PowerSchool (' + String(ctx.notBuilt).replace(/[.\s]+$/, '')
+                    + '). They are tried again each night.');
+            }
             if (chosen.small) {
                 note('A small group: about ' + chosen.size + ' students on a typical school day. Its line is never coloured, '
                     + 'because a group this size can move with one or two students.');
@@ -38041,7 +38050,9 @@
                 'It includes students who have since left, for the weeks they were enrolled; the table counts students enrolled today.',
                 'The whole school is Trends’ own line, value for value. The short-week setting here is Trends’ setting too.',
                 'A group is charted only when it has at least ' + ((list.floors && list.floors.chart) || 30) + ' students on a typical '
-                    + 'school day this year, and a week is shown only when every school day in it has at least '
+                    + 'school day this year, and only when the lines shown, added to or taken from the whole school, cannot work out '
+                    + 'a group of fewer than ' + ((list.floors && list.floors.chart) || 30) + '. A week is shown only once it is over, '
+                    + 'when it has at least 2 school days, and when every school day in it has at least '
                     + ((list.floors && list.floors.day) || 10) + ' in the group and nothing set against the whole school singles out '
                     + 'fewer than ' + ((list.floors && list.floors.day) || 10) + '. Group sizes are rounded to the nearest '
                     + ((list.floors && list.floors.sizeRoundedTo) || 5) + '. No counts are shown, only rates.'
@@ -38234,7 +38245,8 @@
                     if (!ghost || ghost.allowed !== true || ghost.invalid || ghost.refused) ghost = null;
                 }
             }
-            const ctx = { list: list, chosen: chosen, policy: _arPolicy, ghost: _grGhost, ghostDrawn: !!ghost, skipped: ask.skipped };
+            const ctx = { list: list, chosen: chosen, policy: _arPolicy, ghost: _grGhost, ghostDrawn: !!ghost, skipped: ask.skipped,
+                          notBuilt: (answer && typeof answer.notBuilt === 'string') ? answer.notBuilt : null };
             if (answer && (answer.allowed !== true || answer.refused || answer.invalid || answer.notYet)) {
                 ctx.notice = answer.refused || answer.invalid || answer.notYet || answer.reason || 'This group could not be loaded.';
             }

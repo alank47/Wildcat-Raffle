@@ -602,20 +602,31 @@ console.log("\nD. THE WORDS: STATUS FIRST, THE REST OF THE SCHOOL, WORTH A LOOK,
     const q = makePage({ staff: PBIS, w: W }); await q.app.renderAttendanceGroupChart(false);
     const g = makePage({ staff: GRANT, w: W }); await g.app.renderAttendanceGroupChart(false);
     return /6 lines can be checked here/.test(q.ids.attGroupBody.innerHTML) && /2 lines can be checked here/.test(g.ids.attGroupBody.innerHTML); })());
-  // A SMALL GROUP (Black, about 45): the gap is set against its own weeks' wobble.
-  const small = makePage({ staff: ADMIN, w: W });
+  // A SMALL GROUP (Black, about 45): whether the gap is within chance for a
+  // group this size is the SERVER's verdict, which counts who happens to be
+  // in a group that size as well as how its weeks wobble.
+  const spreadW = world();
+  spreadW.tables.attendanceRunGroupMonths = ["2026-08", "2026-09", "2026-10"].map((month) =>
+    ({ yearid: 36, month, built: [], skipped: [], updatedAt: SYNC, rateVar: 0.0096 }));
+  const small = makePage({ staff: ADMIN, w: spreadW });
   await small.app.renderAttendanceGroupChart(false);
   await small.app.setAttendanceGroup("race:black");
   const sAns = small.ids.attGroupAnswer.textContent;
   const sm = small.app.state._grModel;
-  check("a small group's answer says whether the gap is within chance for a group this size (measured on its own weeks)",
-    sm.gapSpread && (sm.gapSpread.withinChance ? /within chance for a group this size\.$/.test(sAns)
-      : /more than its weeks usually vary, though a group this size can move with one or two students\.$/.test(sAns)), sAns);
-  check("...the chance test is the gap against twice its standard error over this year's weeks",
-    R.runGapSpread([{ yearid: 36, value: 90, rest: 91 }, { yearid: 36, value: 92, rest: 91 }, { yearid: 36, value: 91, rest: 91 }], 36).withinChance === true
-      && R.runGapSpread([{ yearid: 36, value: 88, rest: 91 }, { yearid: 36, value: 88.2, rest: 91 }, { yearid: 36, value: 87.9, rest: 91 }], 36).withinChance === false
-      && R.runGapSpread([{ yearid: 36, value: 88, rest: 91 }, { yearid: 36, value: 88, rest: 91 }], 36) === null);
-  check("...and fewer than three weeks says it is too soon to tell", /too few weeks yet to tell that from chance/.test(liftFn(scriptSrc, "grGapSentence")));
+  check("a small group's answer says whether the gap is within chance for a group this size -- the server's verdict, said as given",
+    sm.vsRest && typeof sm.vsRest.withinChance === "boolean" && (sm.vsRest.withinChance ? /within chance for a group this size\.$/.test(sAns)
+      : /more than chance usually gives a group this size: worth a look, not a finding\.$/.test(sAns)), sAns);
+  const say = (withinChance) => small.app.grGapSentence({ vsRest: { yearid: 36, periods: 8, points: -2.2, withinChance } }, { small: true });
+  check("...each verdict in its own words, and no verdict (under 3 weeks, or no spread built yet) says it is too soon",
+    /within chance for a group this size\.$/.test(say(true)) && /more than chance usually gives a group this size/.test(say(false))
+      && /too soon to tell that from chance\.$/.test(say(null)) && !/weeks usually vary/.test(liftFn(scriptSrc, "grGapSentence")));
+  check("...and the browser computes no chance test of its own (the old one counted only the weekly wobble)",
+    typeof R.runGapSpread === "undefined" && !/gapSpread/.test(rosterSrc));
+  // A NEW YEAR: a gap the server averaged over another year is never quoted as this year's.
+  const other = R.runGroupRateModel(W.series, { periods: [], vsRest: { yearid: 35, periods: 42, points: -3.6, withinChance: null } },
+    Object.assign({ group: "race:black", ghost: null }, opts()));
+  check("a gap for any year but the one the chart reads is dropped, so no sentence quotes it",
+    other.vsRest === null && small.app.grGapSentence(other, { small: true }) === "");
   check("a large group never gets the chance clause (it is for small groups)", !/chance/.test(ans.split(". Over")[1] || ""));
   check("the small group's reading says it can move with one or two students, and its line is never coloured",
     /A small group: about 45 students on a typical school day\. Its line is never coloured, because a group this size can move with one or two students\./.test(small.ids.attGroupBody.innerHTML));
@@ -692,10 +703,12 @@ console.log("\nD. A WITHHELD WEEK IS A GAP, AND A LINE THAT IS ALL GAP IS SAID I
   check("...the line breaks there instead of joining across it", (path.match(/M/g) || []).length >= 3, path.slice(0, 60));
   const said = (p.ids.attGroupBody.innerHTML.match(/1 week is not on this line: [^<]+/) || [""])[0];
   check("...and the reading says how many weeks are not shown and why, without naming the pool",
-    /on at least one of its school days, this line set against the whole school could have singled out fewer than 10 students/.test(said)
+    /this line set against the whole school could have singled out a small group of students \(fewer than 10 on one of its school days/.test(said)
       && !/gender|female|male|neither|outside/i.test(said), said);
-  // EVERY week withheld (a pool of 3 outside F/M every day): words, not an empty chart.
-  const all = world({ tweak: (d, c) => { c.gnone = 3; c.F -= 3; } });
+  // EVERY week withheld (a pool of 3 outside F/M every Wednesday, so not on a
+  // typical day): words, not an empty chart.
+  const wed = (d) => new Date(d + "T00:00:00Z").getUTCDay() === 3;
+  const all = world({ tweak: (d, c) => { if (wed(d)) { c.gnone = 3; c.F -= 3; } } });
   const g = makePage({ staff: GRANT, w: all });
   await g.app.renderAttendanceGroupChart(false);
   check("a line held back on most days is a plain explanation, not an empty chart (the grant's gender case)",
@@ -703,7 +716,7 @@ console.log("\nD. A WITHHELD WEEK IS A GAP, AND A LINE THAT IS ALL GAP IS SAID I
       && /nothing needs doing/.test(g.ids.attGroupBody.innerHTML) && g.ids.attGroupAnswer.textContent === "Female: not shown for most weeks.");
   check("...and Male, the larger, is still drawn for her", await (async () => { await g.app.setAttendanceGroup("gender:M"); return /<svg/.test(g.ids.attGroupBody.innerHTML); })());
   // MOST of this year held back, a few weeks drawable: the chart, with the words first.
-  const most = world({ tweak: (d, c) => { if (d >= "2026-08-24" && d <= "2026-09-25") { c.gnone = 3; c.F -= 3; } } });
+  const most = world({ tweak: (d, c) => { if (d >= "2026-08-24" && d <= "2026-09-25" && wed(d)) { c.gnone = 3; c.F -= 3; } } });
   const mp = makePage({ staff: GRANT, w: most });
   await mp.app.renderAttendanceGroupChart(false);
   const mh = mp.ids.attGroupBody.innerHTML;
@@ -712,6 +725,42 @@ console.log("\nD. A WITHHELD WEEK IS A GAP, AND A LINE THAT IS ALL GAP IS SAID I
   const few = makePage({ staff: GRANT, w: world({ tweak: (d, c) => { if (d === "2026-09-16") { c.gnone = 3; c.F -= 3; } } }) });
   await few.app.renderAttendanceGroupChart(false);
   check("...and one week held back draws no such box (the reading's sentence says it)", !/Most of this year/.test(few.ids.attGroupBody.innerHTML));
+  // 3 STUDENTS OUTSIDE F/M ON A TYPICAL DAY: whole - Female - Male is those
+  // 3 all year, so Female (the smaller) is not offered at all -- the grant is
+  // shown Male, and told in words why Female is not there (review, 2026-10-12).
+  const pool = makePage({ staff: GRANT, w: world({ tweak: (d, c) => { c.gnone = 3; c.F -= 3; } }) });
+  await pool.app.renderAttendanceGroupChart(false);
+  const ph = pool.ids.attGroupBody.innerHTML;
+  check("3 outside F/M on a typical day: the grant is offered Male only, drawn, and the 'not charted' fold says why Female is not",
+    optionsOf(pool.ids.attGroupBody).join(",") === "gender:M" && /<svg/.test(ph)
+      && /<strong>Female<\/strong><div class="wc-sub">Drawn beside the other lines of its kind and the whole school, it would let a group of fewer than 30 students be worked out by subtraction/.test(ph));
+  check("...and the 'how counted' fold says the floor of 30 covers what can be worked out, not only what is drawn",
+    /cannot work out a group of fewer than 30\. A week is shown only once it is over, when it has at least 2 school days/.test(ph));
+  // A WEEK A BUILD COULD STILL ADD A DAY TO: September's last build stopped at 9/29.
+  const edge = world();
+  for (const t of [edge.tables.attendanceRunDays, edge.tables.attendanceRunGroupDays]) {
+    for (let i = t.length - 1; i >= 0; i--) {
+      if (t[i].date === "2026-09-30") t.splice(i, 1);
+      else if (t[i].date.startsWith("2026-09")) t[i] = { ...t[i], syncedAt: "2026-09-30T10:15:00.000Z" };
+    }
+  }
+  const ep = makePage({ staff: ADMIN, w: edge });
+  await ep.app.renderAttendanceGroupChart(false);
+  check("a week a later build could still add a day to is a gap, said as not over or not built yet",
+    ep.app.state._grModel.withheld.some((x) => x.key === "2026-09-28" && x.why === "open")
+      && /1 week is not on this line: the week is not over, or its last days are not built yet; it joins the line once they are\./.test(ep.ids.attGroupBody.innerHTML));
+  // A FAILED POWERSCHOOL READ: the reading says why the days are missing.
+  const skip = world();
+  skip.tables.attendanceRunGroupMonths = [{ yearid: 36, month: "2026-09", built: [{ axis: "gender", syncedAt: "2026-10-07T10:15:00.000Z" }],
+    skipped: [{ axis: "race", reason: "Race codes could not be read: HTTP 503", at: "2026-10-07T10:15:00.000Z" }], updatedAt: "x" }];
+  const sp = makePage({ staff: ADMIN, w: skip });
+  await sp.app.renderAttendanceGroupChart(false);
+  await sp.app.setAttendanceGroup("race:black");
+  const sh = sp.ids.attGroupBody.innerHTML;
+  await sp.app.setAttendanceGroup("gender:F");
+  check("a line some of whose days a failed read left unbuilt says so, with the reason; another line does not",
+    /Some school days of this line could not be built from PowerSchool \(Race codes could not be read: HTTP 503\)\. They are tried again each night\./.test(sh)
+      && !/could not be built from PowerSchool/.test(sp.ids.attGroupBody.innerHTML));
 }
 
 // ===========================================================================

@@ -161,6 +161,26 @@ export function seatedStudents(cc: Array<Record<string, unknown>>): Set<string> 
   return out;
 }
 
+/**
+ * HOW MUCH STUDENTS DIFFER FROM EACH OTHER (2026-10-12): the variance, across
+ * students, of each one's whole-day absence rate over the month (a share,
+ * 0-1), counting students enrolled at least RATE_SPREAD_MIN_DAYS days of it.
+ * The group card uses it to say whether a small group's gap to the rest of
+ * the school is more than chance gives a group that size: WHO lands in a
+ * group of 47 is itself a source of difference, because chronically absent
+ * students stay so week after week. One school-wide number; nothing about
+ * any student or group. Null with fewer than RATE_SPREAD_MIN_STUDENTS.
+ */
+export const RATE_SPREAD_MIN_DAYS = 10;
+export const RATE_SPREAD_MIN_STUDENTS = 30;
+export function rateSpread(tallies: Iterable<{ memberDays: number; fullDays: number }>): number | null {
+  const rates: number[] = [];
+  for (const t of tallies) if (t.memberDays >= RATE_SPREAD_MIN_DAYS) rates.push(t.fullDays / t.memberDays);
+  if (rates.length < RATE_SPREAD_MIN_STUDENTS) return null;
+  const mean = rates.reduce((a, b) => a + b, 0) / rates.length;
+  return rates.reduce((a, r) => a + (r - mean) * (r - mean), 0) / (rates.length - 1);
+}
+
 export function buildRunDays(input: BuildInput) {
   const { from, to } = input;
   const inRange = (d: string) => d.length === 10 && d >= from && d <= to;
@@ -338,7 +358,7 @@ export function buildRunDays(input: BuildInput) {
 
   return {
     schoolDays,
-    ...(groupDays ? { groupDays } : {}),
+    ...(groupDays ? { groupDays, rateSpread: rateSpread(tally.values()) } : {}),
     days: [...days.values()].sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : a.band < b.band ? -1 : 1)),
     months: [...months.values()].sort((a, b) => (a.month < b.month ? -1 : a.month > b.month ? 1 : a.band < b.band ? -1 : 1)),
     diagnostics: {

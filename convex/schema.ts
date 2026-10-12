@@ -805,7 +805,10 @@ export default defineSchema({
    * What each month of group rows holds: the axes built (and when), and the
    * axes the last build skipped with the reason -- a demographic read that
    * failed never stops the Trends rows, it is recorded here instead. The
-   * nightly run mends months missing an axis.
+   * nightly run mends months with an axis missing OR skipped since it was
+   * built (runChartGroups.currentAxes). `rateVar`: the school's variance,
+   * across students, of the month's whole-day absence rate -- one number,
+   * never sent, for the group card's chance band.
    */
   attendanceRunGroupMonths: defineTable({
     yearid: v.number(),
@@ -813,6 +816,7 @@ export default defineSchema({
     built: v.array(v.object({ axis: v.string(), syncedAt: v.string() })),
     skipped: v.array(v.object({ axis: v.string(), reason: v.string(), at: v.string() })),
     updatedAt: v.string(),
+    rateVar: v.optional(v.number()),
   }).index("by_yearid_month", ["yearid", "month"]),
 
   /** Per month per band: the measures a daily total cannot give (see runChartDays.ts). */

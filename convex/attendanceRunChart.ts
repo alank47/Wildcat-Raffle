@@ -71,6 +71,8 @@ type GroupBuild = {
   skipped: Array<{ axis: string; reason: string }>;
   groupDays: DayGroup[];
   reads: Record<string, number>;
+  /** The school's between-student variance of the month's whole-day rate (runChartDays.rateSpread), or null. */
+  rateVar?: number | null;
 };
 
 const why = (e: unknown) => String((e as any)?.message ?? e).slice(0, 200);
@@ -158,7 +160,7 @@ async function buildGroups(host: string, tok: string, schoolid: string, input: B
   if (JSON.stringify(built.days) !== JSON.stringify(bands.days) || JSON.stringify(built.months) !== JSON.stringify(bands.months)) {
     return skipAll("The group build's whole-school rows differed from the band build's; nothing about groups was kept.");
   }
-  return { axes, skipped, groupDays: built.groupDays ?? [], reads };
+  return { axes, skipped, groupDays: built.groupDays ?? [], reads, rateVar: built.rateSpread ?? null };
 }
 
 /** The whole school per school day, from the band rows: what every axis must add up to. */
@@ -318,7 +320,7 @@ export const buildMonth = internalAction({
       const g = await buildGroups(host, tok, schoolid, input, missing, built);
       await ctx.runMutation(internal.attendanceGroupRunChart.replaceGroupMonth, {
         yearid, month, syncedAt, axes: g.axes, schoolDays: built.schoolDays, whole,
-        days: g.groupDays, skipped: g.skipped,
+        days: g.groupDays, skipped: g.skipped, ...(typeof g.rateVar === "number" ? { rateVar: g.rateVar } : {}),
       });
       groups = groupSummary(g, whole);
     } catch (e) {
@@ -410,10 +412,11 @@ export const refreshCurrent = internalAction({
         { yearid, month: all[i], onlyWhileOpen: true });
     }
     // GROUP MONTHS TO MEND (2026-10-12): a month of this year whose band rows
-    // exist but whose group rows lack an axis -- a read skipped that night, or
-    // a month built before the group charts existed -- is rebuilt for its
-    // GROUPS ONLY, two a night, after the months above. Its band rows are left
-    // exactly as they are.
+    // exist but whose group rows lack an axis, or hold an axis a later build
+    // skipped (its rows lack the days added since: groupMonthsStatus lists
+    // only CURRENT axes) -- or a month built before the group charts existed
+    // -- is rebuilt for its GROUPS ONLY, two a night, after the months above.
+    // Its band rows are left exactly as they are.
     let groupMend: string[] = [];
     try {
       const groupHave: Array<{ month: string; built: string[] }> =

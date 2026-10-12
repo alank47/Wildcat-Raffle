@@ -2948,25 +2948,6 @@
   }
 
   /**
-   * The spread of the weekly gap to the rest of the school, so a sentence
-   * about a gap can say whether it is bigger than the weeks themselves wobble.
-   * Measured on THIS group's own weeks, so absences bunched in a few
-   * students are in it (a binomial guess would understate it). Null under
-   * three weeks: too few to say anything.
-   */
-  function runGapSpread(points, year) {
-    var gaps = (points || []).filter(function (p) {
-      return p && p.yearid === year && typeof p.rest === 'number' && isFinite(p.rest) && isFinite(Number(p.value));
-    }).map(function (p) { return Number(p.value) - p.rest; });
-    var n = gaps.length;
-    if (n < 3) return null;
-    var mean = gaps.reduce(function (a, b) { return a + b; }, 0) / n;
-    var sd = Math.sqrt(gaps.reduce(function (a, g) { return a + (g - mean) * (g - mean); }, 0) / (n - 1));
-    var se = sd / Math.sqrt(n);
-    return { n: n, mean: Math.round(mean * 10) / 10, se: Math.round(se * 100) / 100, withinChance: Math.abs(mean) <= 2 * se };
-  }
-
-  /**
    * EVERYTHING THE GROUP CARD DRAWS, as plain data.
    *
    *   `res`     attendanceRunChartData:series (the Trends rows)
@@ -3062,8 +3043,11 @@
       series: [{ series: o.group || 'group', points: points, analysis: analysis, baseline: baseline,
                  lastYear: lastYear, vsLastYear: vsLastYear }],
       withheld: withheld, wholeBaseline: wholeBase,
-      vsRest: (answer && answer.vsRest) || null,
-      gapSpread: runGapSpread(points, newest),
+      // THE GAP TO THE REST OF THE SCHOOL, for the year the rules read and no
+      // other: the server averages this year's served weeks, and says
+      // whether a small group's gap is within chance for its size
+      // (gapWithinChance: who is in the group, and how its weeks wobble).
+      vsRest: (answer && answer.vsRest && answer.vsRest.yearid === newest) ? answer.vsRest : null,
       thisYear: axis.filter(function (a) { return a.yearid === newest; }).length,
       pendingWeeks: whole.pendingWeeks, shortPeriods: whole.shortPeriods, missingMonths: whole.missingMonths
     };
@@ -3286,7 +3270,6 @@
     GROUP_MAX_PERIOD_WEEKS: GROUP_MAX_PERIOD_WEEKS,
     GROUP_MAX_PERIODS: GROUP_MAX_PERIODS,
     runGroupAsk: runGroupAsk,
-    runGapSpread: runGapSpread,
     runGroupRateModel: runGroupRateModel,
     REBUILD_LIMITS: REBUILD_LIMITS,
     rebuildHealthVerdict: rebuildHealthVerdict,
