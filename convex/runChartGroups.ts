@@ -234,7 +234,9 @@ export const SIZE_ROUND = 5;
  * A WEEK with fewer school days than this is withheld in EVERY period that
  * contains it, the way a small week is: served inside a merged period, it
  * would come back as that period less the week after it, asked for alone --
- * a daily rate (review, 2026-10-12).
+ * a daily rate (review, 2026-10-12). A week with NO school days (a break)
+ * adds nothing to a period, so it withholds nothing: "same week last year"
+ * asks for last year's break weeks between the Mondays of a merged period.
  */
 export const MIN_WEEK_DAYS = 2;
 export const MAX_PERIOD_WEEKS = 4;
@@ -549,7 +551,9 @@ export type VsRest = { yearid: number; periods: number; points: number; withinCh
  *               or one of its weekdays was not yet covered by its month's
  *               Trends build (a month built tonight covers up to
  *               yesterday). Then no later build can add a day to it.
- *   "few-days"  has fewer than MIN_WEEK_DAYS school days.
+ *   "few-days"  has 1 to MIN_WEEK_DAYS - 1 school days -- or the period
+ *               has none at all. A week of none (a break) adds no day, so
+ *               it is no reason to withhold the weeks beside it.
  *   "no-data"   has a school day with no group rows (or rows that do not
  *               add up), or group rows on a day Trends does not have: the
  *               two must hold the SAME days, or the week could gain one.
@@ -621,8 +625,9 @@ export function evaluatePeriods(args: {
         years.add(y);
         inWeek++;
       }
-      if (inWeek < MIN_WEEK_DAYS) fewDays = true;
+      if (inWeek > 0 && inWeek < MIN_WEEK_DAYS) fewDays = true;
     }
+    if (!dates.length) fewDays = true;
     if (years.size > 1) return { ok: false, reason: "A period cannot cross from one school year into the next." };
     const key = weeks[0];
     const no = (withheld: string): PeriodAnswer => ({ key, value: null, rest: null, withheld });

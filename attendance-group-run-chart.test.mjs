@@ -635,6 +635,22 @@ suite.minDays = async (Mx) => {
   return one.periods[0].withheld === "few-days" && one.periods[0].value === null && one.periods[1].withheld === null
     && merged.periods[0].withheld === "few-days" && merged.periods[0].value === null;
 };
+suite.breakWeek = async (Mx) => {
+  // "Same week last year" for a short week merged across a break names every
+  // one of last year's Mondays in between -- and last year took whole weeks
+  // off (Thanksgiving, winter, spring). A week with NO school days adds no
+  // day, so it withholds nothing: the period is served with the next week's
+  // value, the one that week has asked for alone. A period of break weeks
+  // only is still "few-days". (review, 2026-10-12, second round)
+  const tables = world((d, c) => { if (d >= LAST_WEEKS[3] && d < "2025-09-13") c.F -= 10; });
+  const off = new Set(week(LAST_WEEKS[2]));
+  tables.attendanceRunDays = tables.attendanceRunDays.filter((r) => !off.has(r.date));
+  tables.attendanceRunGroupDays = tables.attendanceRunGroupDays.filter((r) => !off.has(r.date));
+  const ghost = (await ask(Mx, ADMIN, { group: "gender:F", periods: [[LAST_WEEKS[2], LAST_WEEKS[3]]] }, tables)).res.periods[0];
+  const alone = (await ask(Mx, ADMIN, { group: "gender:F", periods: [[LAST_WEEKS[3]], [LAST_WEEKS[2]], [LAST_WEEKS[1]]] }, tables)).res.periods;
+  return { ok: ghost.withheld === null && typeof ghost.value === "number" && ghost.value === alone[0].value && ghost.rest === alone[0].rest
+    && alone[0].value !== alone[2].value && alone[1].withheld === "few-days" && alone[1].value === null, ghost, alone };
+};
 {
   check("periods are 1-4 whole weeks named by their Mondays; a lone date, a week twice, five weeks, a bad date or 121 periods are refused",
     suite.periodShape(M));
@@ -645,6 +661,9 @@ suite.minDays = async (Mx) => {
   check("overlapping periods in one call are refused before anything is read", typeof twice.invalid === "string" && twice.periods.length === 0);
   check("a withheld week is withheld in EVERY period containing it, and only those", await suite.withheldEverywhere(M));
   check("a week of one school day is never served, alone OR merged into the next week (either way, a daily rate)", await suite.minDays(M));
+  const bw = await suite.breakWeek(M);
+  check("a break week (no school days) merged with the next week withholds nothing: served with that week's value; "
+    + "a period of break weeks only is 'few-days'", bw.ok, JSON.stringify([bw.ghost, bw.alone]));
   // Weeks merged across a break (runWeekGroups carries a short week into the
   // next SCHOOL week) are not consecutive, and are allowed.
   const gap = (await ask(M, ADMIN, { group: "gender:F", periods: [[THIS_WEEKS[0], THIS_WEEKS[2]]] })).res;
@@ -1371,8 +1390,11 @@ console.log("\nTEETH: EACH RULE, BROKEN ON PURPOSE, IS CAUGHT\n");
     "else if (v.removed.has(series.row)) small = true;", "else if (v.removed.has(series.row) && dates.length < 6) small = true;"),
     suite.withheldEverywhere);
   await caught("a one-day week served", mutate("groups", "export const MIN_WEEK_DAYS = 2;", "export const MIN_WEEK_DAYS = 1;"), suite.minDays);
-  await caught("a one-day week served inside a merged period", mutate("groups", "if (inWeek < MIN_WEEK_DAYS) fewDays = true;",
-    "if (inWeek < MIN_WEEK_DAYS && weeks.length === 1) fewDays = true;"), suite.minDays);
+  await caught("a one-day week served inside a merged period", mutate("groups", "if (inWeek > 0 && inWeek < MIN_WEEK_DAYS) fewDays = true;",
+    "if (inWeek > 0 && inWeek < MIN_WEEK_DAYS && weeks.length === 1) fewDays = true;"), suite.minDays);
+  await caught("a break week withholding the week beside it", mutate("groups", "if (inWeek > 0 && inWeek < MIN_WEEK_DAYS) fewDays = true;",
+    "if (inWeek < MIN_WEEK_DAYS) fewDays = true;"), suite.breakWeek);
+  await caught("a period of break weeks only, said as 'small'", mutate("groups", "    if (!dates.length) fewDays = true;\n", ""), suite.breakWeek);
   await caught("a count on the wire", mutate("groups", "answers.push({ key, value, rest, withheld: value === null ? \"no-data\" : null });",
     "answers.push({ key, value, rest, withheld: value === null ? \"no-data\" : null, memberDays: md } as any);"), suite.keys);
   await caught("the group absences not bumped in the loop", mutate("days",
