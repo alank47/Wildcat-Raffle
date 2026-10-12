@@ -366,12 +366,25 @@ console.log("\nB. LIVE, OFF FOR TWO DAYS, ON AGAIN: A SWITCH OFF AND ON NEVER BA
   check("...and says so: 24 days earned before the switch went back on, counted, not paid",
     st.nextPayday.earnedNotPaid["before-start"] === 24 && st.nextPayday.students === 0, J(st.nextPayday));
   check("...the days of the pause were never decided at all", !w.rows("perfectDays").some((r) => r.date >= "2026-10-21" && r.date <= "2026-10-23"));
+  // THE ADMIN CARD'S QUERY (the browser half): the same answer, admins only.
+  const asCaller = async (email) => {
+    w.rt.signIn(email ? { issuer: STAFF_ISSUER, email } : null);
+    try { return { ok: true, value: await w.rt.run("perfectDay.adminStatus", {}) }; }
+    catch (e) { return { ok: false, why: String(e?.data ?? e?.message ?? e) }; }
+    finally { w.rt.signIn(null); }
+  };
+  const asAdmin = await asCaller("admin@school.test"), asTeacher = await asCaller("teacher@school.test"), asNobody = await asCaller(null);
+  check("THE ADMIN CARD: perfectDay:adminStatus gives an admin exactly the command line's status",
+    asAdmin.ok && J(asAdmin.value) === J(st), asAdmin.why);
+  check("...and refuses a teacher and a caller who is not signed in, with no figures",
+    !asTeacher.ok && /Admins only/.test(asTeacher.why) && !asNobody.ok, J({ asTeacher, asNobody }));
   for (const d of ["2026-10-27", "2026-10-28", "2026-10-29", "2026-10-30", "2026-11-02"]) await morning(w, d);
   check("the next payday pays only days from the switch-on: 10/26-10/30",
     TEST.every((s) => J(paidDates(w, s.key)) === J(["2026-10-26", "2026-10-27", "2026-10-28", "2026-10-29", "2026-10-30"])) && w.jobLedger().length === 12);
   const entries = w.rows("appAuditLog").filter((e) => e.payload?.action === "perfect_day_paid");
   check("with the summary switched on: ONE audit entry for the payday, counts only, from the system, never per student",
-    entries.length === 1 && entries[0].payload.teacherId === "system:attendance" && entries[0].payload.ticketCount === 0
+    entries.length === 1 && entries[0].payload.teacherId === "system:attendance" && !("ticketCount" in entries[0].payload)
+    && entries[0].payload.behavior === "Perfect attendance (automatic)" && entries[0].payload.notes === entries[0].payload.reason
     && /12 students, 60 perfect days/.test(entries[0].payload.reason) && w.rows("appAuditLog").length === 1, J(entries.map((e) => e.payload.reason)));
 }
 

@@ -1,4 +1,4 @@
-import { internalMutation, internalQuery } from "./_generated/server";
+import { internalMutation, internalQuery, query } from "./_generated/server";
 import type { MutationCtx, QueryCtx } from "./_generated/server";
 import { internal } from "./_generated/api";
 import { v } from "convex/values";
@@ -7,6 +7,7 @@ import { cashWeekKey } from "./cashReversalRules";
 import { doReverse } from "./cashReversal";
 import { CASH_ZERO_POINT_KEY } from "./cashArrivalRules";
 import * as R from "./perfectDayRules";
+import { requireAdmin } from "./identity";
 
 /**
  * THE AUTOMATIC PERFECT-DAY AWARD: the server half that writes.
@@ -33,9 +34,11 @@ import * as R from "./perfectDayRules";
  * no audit entry per student (one summary per payday, and only when switched
  * on: an action the open tabs do not know reaches every teacher's feed).
  *
- * NOTHING HERE IS REACHABLE FROM A BROWSER. Every function is internal, for
- * the cron, the run and the command line, except perfectDaysForStudent, which
- * views_app.myStudentView calls for the student signed in.
+ * NOTHING HERE CHANGES ANYTHING FROM A BROWSER. Every function that writes is
+ * internal, for the cron, the run and the command line. Two things are read
+ * from a browser: perfectDaysForStudent, which views_app.myStudentView calls
+ * for the student signed in, and adminStatus, the admin card on the Cash
+ * Audit Log (requireAdmin, read-only: the same answer as perfectDay:status).
  *
  * THE COMMAND LINE (deploy key only):
  *   npx convex run perfectDay:configure '{"mode":"shadow","actorName":"..."}'
@@ -433,11 +436,16 @@ export const finishPayday = internalMutation({
           + `${Number(s.days) || 0} perfect days.`;
         await ctx.db.insert("appAuditLog", {
           entryId, timestamp: at,
+          // NO ticketCount (2026-10-12, the browser half). Every audit screen
+          // reads money off that field, and this entry carries none: absent, it
+          // reads as a dash; 0 read as "+$0". behavior and notes as their own
+          // fields, so no screen splits the sentence at its first comma.
           payload: {
             entryId, timestamp: at, action: "perfect_day_paid", category: "Wildcat Cash",
             studentId: "all", studentName: "All students",
             teacher: R.SYSTEM_ACTOR.name, teacherName: R.SYSTEM_ACTOR.name, teacherId: R.SYSTEM_ACTOR.id,
-            ticketCount: 0, reason, details: reason,
+            behavior: "Perfect attendance (automatic)", notes: reason,
+            reason, details: reason,
           },
         });
         audited = true;
@@ -819,4 +827,19 @@ export async function statusFor(ctx: QueryCtx, nDates = 10) {
 export const status = internalQuery({
   args: { dates: v.optional(v.number()) },
   handler: async (ctx, { dates }) => statusFor(ctx, dates ?? 10),
+});
+
+/**
+ * THE SAME STATUS, FOR THE ADMIN CARD on the Cash Audit Log (2026-10-12).
+ * Admins and superadmins only, asked first: a teacher's tab gets a refusal,
+ * never a count. Read-only. Student numbers appear only in the held and
+ * paid-then-broken lists, and the browser joins them to names from the
+ * roster it already holds, so no name travels in this answer.
+ */
+export const adminStatus = query({
+  args: {},
+  handler: async (ctx) => {
+    await requireAdmin(ctx);
+    return statusFor(ctx, 10);
+  },
 });
