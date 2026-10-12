@@ -564,6 +564,9 @@ export type VsRest = { yearid: number; periods: number; points: number; withinCh
  *
  * Decided week by week, so a week withheld is withheld in every period
  * containing it, and two periods can only ever differ by whole served weeks.
+ * And a week, once it could be served, is served from the same rows for good
+ * (keptDates, below): a correction made after it reaches Trends, never the
+ * group lines.
  *
  *   trendsDays    every Trends school day (attendanceRunDays) of the months
  *                 the periods touch, with its year
@@ -676,6 +679,77 @@ export function evaluatePeriods(args: {
       withinChance: gapWithinChance(newest.gaps, newest.md / newest.days, newest.restMd / newest.days, args.spread),
     },
   };
+}
+
+// ===========================================================================
+// 6b. A WEEK THAT COULD HAVE BEEN SERVED KEEPS ITS ROWS (review, 2026-10-12,
+//     second round)
+// ===========================================================================
+//
+// THE LEAK. Holding a week back until it is finished stopped it gaining a
+// day, not its figures changing. Each night the build rebuilds this month
+// (and last month, in the first week of a new one) from PowerSchool as it
+// stands, and the mend rebuilds older months: a finished week asked on two
+// mornings differed by exactly the corrections made overnight, and only the
+// lines holding the corrected student moved. On a group of ~115 one whole
+// day moves the rate 0.17 points, so it always shows; PBIS sees the named
+// absence lists, so it knows whose record changed -- and the line that moved
+// said whether that child is an English Learner.
+//
+// THE RULE. A build never replaces one axis's stored rows for a week once
+// the week is over (its Friday is before the build's day) and those rows
+// hold every school day of it the build that wrote them could have read:
+// they may have been served, and what was served is served for good. A week
+// is written afresh only while it is not over, when nothing is stored for
+// it, or when its stored rows were built before one of its school days had
+// happened -- a group read that failed on the night that would have added
+// it, so the week was "no data" and never served.
+//
+// THE COST, accepted: a correction PowerSchool takes after a week could be
+// served reaches Trends, never the group lines. On such a week the line and
+// "the rest of the school" add up to the school as it stood then, a little
+// off Trends' own line (0.1 point on the one week of September measured
+// with late corrections); so does a month mended for its groups only, whose
+// rows are newer than its band rows. The difference is the whole
+// school's corrections: no line holds the corrected student differently from
+// before, so it says nothing about any group.
+//
+// To rebuild served weeks on purpose (a bug in the group build), delete that
+// month's group rows first; the next build writes them afresh.
+
+/**
+ * The dates of one month whose stored rows of one axis a build keeps -- and
+ * whose newly built rows it drops. `stored`: that axis's stored rows in the
+ * month; `schoolDays`: this build's school days; `buildDay`: the build's day
+ * in Los Angeles. A build reads through the day before its own, so that is
+ * the last day stored rows could hold; a time that cannot be read is taken
+ * to have read everything (keeping is the safe side).
+ */
+export function keptDates(stored: Array<{ date: string; syncedAt: string }>, schoolDays: string[], buildDay: string): Set<string> {
+  const mondayOf = (iso: string) => addDaysIso(iso, -((new Date(iso + "T00:00:00Z").getUTCDay() + 6) % 7));
+  const weeks = new Map<string, { stored: Set<string>; readThrough: string; days: string[] }>();
+  const weekOf = (date: string) => {
+    const m = mondayOf(date);
+    let w = weeks.get(m);
+    if (!w) { w = { stored: new Set(), readThrough: "", days: [] }; weeks.set(m, w); }
+    return w;
+  };
+  for (const r of stored) {
+    const w = weekOf(r.date);
+    w.stored.add(r.date);
+    const built = laDayOf(r.syncedAt);
+    const through = built ? addDaysIso(built, -1) : "9999-12-31";
+    if (through > w.readThrough) w.readThrough = through;
+  }
+  for (const d of schoolDays) weekOf(d).days.push(d);
+  const kept = new Set<string>();
+  for (const [monday, w] of weeks) {
+    if (!w.stored.size || !(addDaysIso(monday, 4) < buildDay)) continue;
+    if (w.days.some((d) => !w.stored.has(d) && d > w.readThrough)) continue;
+    for (const d of w.stored) kept.add(d);
+    for (const d of w.days) kept.add(d);
+  }
+  return kept;
 }
 
 // ===========================================================================

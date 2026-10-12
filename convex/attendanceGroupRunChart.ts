@@ -5,7 +5,7 @@ import { GROUP_NONE } from "./runChartDays";
 import {
   AXES, GROUP_AXES, SERIES, TYPE_LABELS, FAMILY_AXES, NEVER_CHARTED, groupTypesFor,
   CHART_FLOOR, DAY_FLOOR, SMALL_CHART_GROUP, SIZE_ROUND, roundSize, checkPeriods, evaluatePeriods,
-  addDaysIso, laDayOf, typicalRows, linesForYear, currentAxes, type GroupType, type StoredGroupDay,
+  addDaysIso, laDayOf, typicalRows, linesForYear, currentAxes, keptDates, type GroupType, type StoredGroupDay,
 } from "./runChartGroups";
 
 /**
@@ -53,6 +53,9 @@ const RANGE_ROW_CAP = 6000;
  * pass it with the true pool still small. Axes not built this time keep their
  * stored rows (a failed race lookup tonight does not blank the Black line);
  * the month's status row records what was built and what was skipped, why.
+ * And a week that could already have been served keeps its stored rows on
+ * every axis built (runChartGroups.keptDates): a served week's value never
+ * changes, so no two mornings subtract to the night's corrections.
  *
  * REFUSES rows that do not add up: every axis must hold every school day once,
  * each group once, and add up to the whole school exactly (the band build's
@@ -77,6 +80,7 @@ export const replaceGroupMonth = internalMutation({
     if (axes.includes("el") !== axes.includes("ela")) {
       throw new Error("English Learner and the classification share rows, so they are written together or not at all.");
     }
+    let written = 0, keptDays = 0;
     if (axes.length) {
       if (!a.schoolDays.length) throw new Error("Refusing to replace a month of group rows with no school days.");
       const days = new Set(a.schoolDays);
@@ -108,12 +112,23 @@ export const replaceGroupMonth = internalMutation({
           }
         }
       }
+      const buildDay = laDayOf(a.syncedAt);
+      if (!buildDay) throw new Error("syncedAt must be the time of the build.");
       const from = a.month + "-01", to = a.month + "-31";
       const old = await ctx.db.query("attendanceRunGroupDays")
         .withIndex("by_yearid_date", (q) => q.eq("yearid", a.yearid).gte("date", from).lte("date", to)).take(MONTH_ROW_CAP + 1);
       if (old.length > MONTH_ROW_CAP) throw new Error("More stored group rows in the month than a month can hold; nothing was written.");
-      for (const r of old) if (axes.includes(r.axis)) await ctx.db.delete(r._id);
-      for (const r of a.days) await ctx.db.insert("attendanceRunGroupDays", { ...r, yearid: a.yearid, syncedAt: a.syncedAt });
+      // A WEEK THAT COULD HAVE BEEN SERVED KEEPS ITS ROWS, so it is served
+      // with one value for good (runChartGroups.keptDates): its stored rows
+      // stay, and tonight's rows for its days are dropped.
+      const kept = new Map(axes.map((axis) => [axis, keptDates(old.filter((r) => r.axis === axis), a.schoolDays, buildDay)]));
+      for (const r of old) if (axes.includes(r.axis) && !kept.get(r.axis)!.has(r.date)) await ctx.db.delete(r._id);
+      for (const r of a.days) {
+        if (kept.get(r.axis)!.has(r.date)) continue;
+        await ctx.db.insert("attendanceRunGroupDays", { ...r, yearid: a.yearid, syncedAt: a.syncedAt });
+        written++;
+      }
+      keptDays = new Set([...kept.values()].flatMap((s) => [...s])).size;
     }
     const status = await ctx.db.query("attendanceRunGroupMonths")
       .withIndex("by_yearid_month", (q) => q.eq("yearid", a.yearid).eq("month", a.month)).take(5);
@@ -126,7 +141,7 @@ export const replaceGroupMonth = internalMutation({
     for (const extra of status.slice(1)) await ctx.db.delete(extra._id);
     if (prev) await ctx.db.patch(prev._id, { built, skipped, updatedAt: a.syncedAt, ...rateVar });
     else await ctx.db.insert("attendanceRunGroupMonths", { yearid: a.yearid, month: a.month, built, skipped, updatedAt: a.syncedAt, ...rateVar });
-    return { written: axes.length ? a.days.length : 0, axes, skipped: a.skipped.map((s) => s.axis) };
+    return { written, keptDays, axes, skipped: a.skipped.map((s) => s.axis) };
   },
 });
 

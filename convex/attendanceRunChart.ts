@@ -35,6 +35,14 @@ import {
  * rows that Trends, the Attendance Watch grant and Cash Analytics read.
  * `groupsOnly` builds a month and writes ONLY its group rows -- how last
  * year's group rows are filled without rewriting last year's band rows.
+ *
+ * A WEEK THAT COULD ALREADY HAVE BEEN SERVED KEEPS ITS GROUP ROWS on every
+ * build, nightly, mend or by hand (runChartGroups.keptDates): a served
+ * week's value never changes, so two mornings never subtract to one night's
+ * corrections. Those corrections still reach the band rows (Trends), so on
+ * such a week the group lines can sit a little off Trends' line -- accepted
+ * (docs/field-sourcing-approval.md, 2026-10-11 entry). To rebuild served
+ * weeks on purpose, delete the month's group rows first.
  */
 function laToday(): string {
   return new Intl.DateTimeFormat("en-CA", { timeZone: "America/Los_Angeles", year: "numeric", month: "2-digit", day: "2-digit" })
@@ -343,6 +351,8 @@ export const buildMonth = internalAction({
  *     Cash Analytics read. A closed year's band rows are rebuilt from records
  *     PowerSchool has since promoted, so this is a deliberate act, never a
  *     default.
+ * Either way, a week whose group rows are already stored and could have
+ * been served keeps them (keptDates): a second backfill changes no line.
  */
 export const backfillYear = internalAction({
   args: {
@@ -416,7 +426,8 @@ export const refreshCurrent = internalAction({
     // skipped (its rows lack the days added since: groupMonthsStatus lists
     // only CURRENT axes) -- or a month built before the group charts existed
     // -- is rebuilt for its GROUPS ONLY, two a night, after the months above.
-    // Its band rows are left exactly as they are.
+    // Its band rows are left exactly as they are, and so are the group rows
+    // of its weeks that could already have been served (keptDates).
     let groupMend: string[] = [];
     try {
       const groupHave: Array<{ month: string; built: string[] }> =

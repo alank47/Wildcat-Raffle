@@ -784,7 +784,9 @@ function monthPayload(axes, days = week("2026-09-14").concat(week("2026-09-21"))
 const DAYS20 = ["2026-08-31", "2026-09-07", "2026-09-14", "2026-09-21", "2026-09-28"].flatMap((w) => week(w))
   .filter((d) => d.startsWith("2026-09")).slice(0, 20);
 suite.replaceClean = async (Mx) => {
-  // 240 stale rows: a month of every axis (20 days x 12), built the night before.
+  // 240 stale rows: a month of every axis (20 days x 12), built the night
+  // before -- replaced by a build on 9/4, while every week of them is still
+  // in progress (a week that could have been served is kept: keptDates).
   const tables = { attendanceRunGroupDays: [], attendanceRunGroupMonths: [] };
   for (const d of DAYS20) {
     for (const r of familyRows(36, d, THIS)) tables.attendanceRunGroupDays.push({ _id: "old" + Math.random(), ...r, syncedAt: "old" });
@@ -793,18 +795,19 @@ suite.replaceClean = async (Mx) => {
   tables.attendanceRunGroupDays.push({ _id: "aug", ...storedRow(36, "2026-08-31", "gender", "F", 297, 9), syncedAt: "old" });
   const db = fakeDb(tables);
   const before = tables.attendanceRunGroupDays.length;
-  await Mx.query.replaceGroupMonth.handler({ db }, monthPayload(Mx.groups.AXES, DAYS20));
+  await Mx.query.replaceGroupMonth.handler({ db }, { ...monthPayload(Mx.groups.AXES, DAYS20), syncedAt: "2026-09-04T10:15:00.000Z" });
   const left = tables.attendanceRunGroupDays;
   return before === 241 && left.filter((r) => r.syncedAt === "old").length === 1 && left.find((r) => r._id === "aug")
-    && left.length === 1 + 240 && left.every((r) => r.syncedAt === "old" || r.syncedAt === "2026-10-12T10:15:00.000Z");
+    && left.length === 1 + 240 && left.every((r) => r.syncedAt === "old" || r.syncedAt === "2026-09-04T10:15:00.000Z");
 };
 {
-  check("replacing a month of 240 stored rows leaves none of them behind, and another month untouched", await suite.replaceClean(M));
-  // Only the axes built are replaced: a skipped race read keeps last night's Black line.
+  check("replacing a month of 240 stored rows (weeks in progress) leaves none of them behind, and another month untouched", await suite.replaceClean(M));
+  // Only the axes built are replaced: a skipped race read keeps last night's
+  // Black line. (Built on Friday 9/18 morning: the week is not over yet.)
   const tables = { attendanceRunGroupDays: [], attendanceRunGroupMonths: [] };
   for (const d of week("2026-09-14")) for (const r of familyRows(36, d, THIS)) tables.attendanceRunGroupDays.push({ _id: "o" + Math.random(), ...r, syncedAt: "old" });
   const db = fakeDb(tables);
-  const p = monthPayload(["gender", "el", "ela"], week("2026-09-14"));
+  const p = { ...monthPayload(["gender", "el", "ela"], week("2026-09-14")), syncedAt: "2026-09-18T10:15:00.000Z" };
   p.skipped = [{ axis: "race", reason: "Race codes could not be read: HTTP 403" }];
   await M.query.replaceGroupMonth.handler({ db }, p);
   const race = tables.attendanceRunGroupDays.filter((r) => r.axis === "race");
@@ -1115,6 +1118,129 @@ suite.monthEdge = async (Mx) => {
 }
 
 // ===========================================================================
+console.log("\nA SERVED WEEK KEEPS ITS VALUE: A LATER CORRECTION MOVES NO LINE (review, 2026-10-12, second round)\n");
+// ===========================================================================
+// THE ATTACK: ask for a FINISHED week on two mornings. Overnight the build
+// rebuilt October from PowerSchool with one correction in it -- an English
+// Learner's whole-day absence on Wednesday 10/7 changed to present -- and
+// only the lines holding that student moved (Current English Learner 92.2
+// to 92.3; English Only had it been an English Only student). PBIS sees the
+// named absence lists, so it knows whose record changed: the line that moved
+// said whether that child is an English Learner. Each night here goes
+// through the real write (replaceGroupMonth), as the nightly build does.
+/** The nightly build of October on the morning of `morning`, through the real write; `fix` corrects tonight's rows. */
+async function nightly(Mx, tables, morning, fix = (rows) => rows) {
+  const t = asOfMorning(morning);
+  const oct = (r) => r.date.startsWith("2026-10");
+  // The band rows, as replaceMonth leaves them: October's replaced, stamped tonight.
+  tables.attendanceRunDays = tables.attendanceRunDays.filter((r) => !oct(r)).concat(t.attendanceRunDays.filter(oct));
+  const days = fix(t.attendanceRunGroupDays.filter(oct)).map(({ yearid, syncedAt, ...r }) => r);
+  const schoolDays = [...new Set(days.map((r) => r.date))].sort();
+  const whole = schoolDays.map((d) => {
+    const g = days.filter((r) => r.date === d && r.axis === "gender");
+    return { date: d, members: g.reduce((n, r) => n + r.members, 0), absentDays: g.reduce((n, r) => n + r.absentDays, 0) };
+  });
+  return Mx.query.replaceGroupMonth.handler({ db: fakeDb(tables) },
+    { yearid: 36, month: "2026-10", syncedAt: morning + "T10:15:00.000Z", axes: Mx.groups.AXES, schoolDays, whole, days, skipped: [] });
+}
+/** One whole day out on `date` corrected to present, for a student in these rows (one per axis that holds them). */
+const corrected = (date, rowsOf) => (rows) => rows.map((r) => (r.date === date && rowsOf.includes(r.axis + ":" + r.group)
+  ? { ...r, absentDays: r.absentDays - 1, fullDaysStrict: r.fullDaysStrict - 1 } : r));
+suite.servedKept = async (Mx) => {
+  const W = THIS_WEEKS[7], WED = addDays(THIS_WEEKS[7], 2);
+  const base = world();
+  const tables = {
+    attendanceRunDays: base.attendanceRunDays.filter((r) => !r.date.startsWith("2026-10")),
+    attendanceRunGroupDays: base.attendanceRunGroupDays.filter((r) => !r.date.startsWith("2026-10")),
+    attendanceRunGroupMonths: [],
+  };
+  const LINES = ["el:el", "el:notel", "ela:EO", "gender:F"];
+  const asked = async () => {
+    const out = {};
+    for (const g of LINES) out[g] = (await ask(Mx, PBIS, { group: g, periods: [[W], [THIS_WEEKS[6]]] }, tables)).res.periods;
+    return out;
+  };
+  const out = { ok: true, why: [] };
+  const bad = (why) => { out.ok = false; out.why.push(why); };
+  // Tuesday to Saturday mornings: the week fills in a day a night, waits as
+  // "open", and is served once whole -- keeping a week never freezes one in
+  // progress.
+  for (let k = 1; k <= 5; k++) {
+    await nightly(Mx, tables, addDays(W, k));
+    const a = await asked();
+    for (const g of LINES) {
+      const p = a[g][0];
+      if (k < 5 && p.withheld !== "open") bad(`${g} morning ${k}: ${JSON.stringify(p)}`);
+      if (k === 5 && typeof p.value !== "number") bad(`${g} Saturday: not served ${JSON.stringify(p)}`);
+    }
+  }
+  const sat = await asked();
+  // Sunday: an English Learner's Wednesday corrected. Monday: an English
+  // Only student's too. Tuesday: the reverse of both.
+  const el = corrected(WED, ["gender:F", "race:none", "el:el"]);
+  const eo = corrected(WED, ["gender:F", "race:none", "el:notel", "ela:EO"]);
+  const nights = [[6, el], [7, (r) => eo(el(r))], [8, (r) => r]];
+  let keptDays = 0;
+  for (const [k, fix] of nights) {
+    const w = await nightly(Mx, tables, addDays(W, k), fix);
+    keptDays = w.keptDays;
+    const a = await asked();
+    for (const g of LINES) {
+      if (JSON.stringify(a[g]) !== JSON.stringify(sat[g])) bad(`${g} ${addDays(W, k)}: ${JSON.stringify(a[g][0])} after ${JSON.stringify(sat[g][0])}`);
+    }
+  }
+  // The corrected rows were built -- and dropped, the week's stored rows kept.
+  const wed = tables.attendanceRunGroupDays.find((r) => r.date === WED && r.axis === "el" && r.group === "el");
+  const fresh = el(asOfMorning(addDays(W, 6)).attendanceRunGroupDays).find((r) => r.date === WED && r.axis === "el" && r.group === "el");
+  if (!(wed && fresh && wed.fullDaysStrict === fresh.fullDaysStrict + 1 && wed.syncedAt.startsWith(addDays(W, 5)))) bad("Wednesday's stored row is not Saturday's");
+  if (keptDays !== 7) bad(`kept ${keptDays} days, not 7 (10/1-2 and the week of 10/5)`);
+  return out;
+};
+suite.keptRule = (Mx) => {
+  const K = (stored, days, buildDay) => [...Mx.groups.keptDates(stored, days, buildDay)].sort().join(",");
+  const st = (dates, at) => dates.map((date) => ({ date, syncedAt: at.length === 10 ? at + "T10:15:00.000Z" : at }));
+  const W = week("2026-10-05"), TG = week("2026-11-23"), SEP = ["2026-09-28", "2026-09-29", "2026-09-30"];
+  const cases = {
+    // Over, and its rows hold every day: kept, and tonight's rows for it dropped.
+    over: K(st(W, "2026-10-10"), W, "2026-10-11") === W.join(","),
+    // Built Friday morning (through Thursday): Friday was not yet readable, so it was never served. Rewritten.
+    builtEarly: K(st(W.slice(0, 4), "2026-10-09"), W, "2026-10-10") === "",
+    // Not over (Thanksgiving week, Wednesday to Friday off): rewritten, so Thursday's corrections to Monday are taken...
+    notOver: K(st(TG.slice(0, 2), "2026-11-25"), TG.slice(0, 2), "2026-11-26") === "",
+    // ...and kept from the Saturday build on.
+    overAfterBreak: K(st(TG.slice(0, 2), "2026-11-27"), TG.slice(0, 2), "2026-11-28") === TG.slice(0, 2).join(","),
+    // A school day that appears in a week after it could be served: the week is kept (and is "no data" from then on).
+    dayAppears: K(st(W.slice(0, 4), "2026-10-10"), W, "2026-10-12") === W.join(","),
+    // A build time that cannot be read is taken to have read everything.
+    unreadable: K(st(W.slice(0, 4), "old"), W, "2026-10-12") === W.join(","),
+    nothingStored: K([], W, "2026-10-12") === "",
+    // The September end of a week that runs into October: kept once the week is over.
+    monthEdge: K(st(SEP, "2026-10-02"), SEP, "2026-10-03") === SEP.join(",") && K(st(SEP, "2026-10-02"), SEP, "2026-10-02") === "",
+    // Weeks decided one by one: the finished week kept, the one in progress rewritten.
+    twoWeeks: K([...st(W, "2026-10-10"), ...st(week("2026-10-12").slice(0, 2), "2026-10-14")],
+      [...W, ...week("2026-10-12").slice(0, 3)], "2026-10-15") === W.join(","),
+  };
+  return { ok: Object.values(cases).every(Boolean), cases };
+};
+{
+  const kr = suite.keptRule(M);
+  check("keptDates keeps a week once it is over and its rows hold every day they could; rewrites one in progress, one with nothing "
+    + "stored, or one stored before its last day had happened", kr.ok, JSON.stringify(kr.cases));
+  const sk = await suite.servedKept(M);
+  check("a finished week asked each morning has ONE value, for every line, though corrections to it are built overnight "
+    + "(an English Learner's, then an English Only student's): the line that moved can no longer say who is in it", sk.ok, sk.why.slice(0, 3).join("; "));
+  // The reviewer's numbers, through the same nights with nothing kept: the
+  // Current English Learner line moves from 92.2 to 92.3 on the EL correction.
+  const leaky = modules({ groups: SRC.groups.replace("if (!w.stored.size || !(addDaysIso(monday, 4) < buildDay)) continue;", "continue;") });
+  const lk = await suite.servedKept(leaky);
+  check("...and with nothing kept, the same nights DO move the English Learner line (the test can see the leak)",
+    !lk.ok && lk.why.some((w) => /^el:el 2026-10-11: \{"key":"2026-10-05","value":92\.3/.test(w)), lk.why.slice(0, 2).join("; "));
+  check("...the write keeps the stored rows through keptDates, for every axis it builds, before anything is deleted or added",
+    /keptDates\(old\.filter\(\(r\) => r\.axis === axis\), a\.schoolDays, buildDay\)/.test(SRC.query)
+      && code(SRC.query).indexOf("keptDates(") < code(SRC.query).indexOf("ctx.db.delete(r._id)"));
+}
+
+// ===========================================================================
 console.log("\nTHE FLOOR OF 30 HOLDS FOR WHAT CAN BE WORKED OUT, NOT ONLY FOR WHAT IS DRAWN (review, 2026-10-12)\n");
 // ===========================================================================
 // As measured this year: nobody pending assessment on most days, IFEP 28.
@@ -1333,14 +1459,17 @@ suite.staleMended = async (Mx) => {
   // The mend's build succeeds: race is current again.
   await Mx.query.replaceGroupMonth.handler({ db }, { ...monthPayload(Mx.groups.AXES, B), syncedAt: "2026-10-09T10:15:00.000Z" });
   const fixed = await Mx.query.groupMonthsStatus.handler({ db }, { yearid: 36 });
+  // ...and its rows hold 9/30 now: the week of 9/28 was stored before 9/30
+  // had happened (never served: "no data"), so it is rebuilt, not kept.
+  const race930 = tables.attendanceRunGroupDays.filter((r) => r.axis === "race" && r.date === "2026-09-30").length;
   return { ok: !stale[0].built.includes("race") && stale[0].built.join(",") === "gender,el,ela" && mended.includes("2026-09")
-    && fixed[0].built.slice().sort().join(",") === "el,ela,gender,race" && tables.attendanceRunGroupMonths[0].skipped.length === 0,
-    stale: stale[0].built, mended };
+    && fixed[0].built.slice().sort().join(",") === "el,ela,gender,race" && tables.attendanceRunGroupMonths[0].skipped.length === 0
+    && race930 === 2, stale: stale[0].built, mended, race930 };
 };
 {
   const sm = await suite.staleMended(M);
-  check("a month whose last builds all skipped race is NOT complete: the nightly mend rebuilds it, and race is current again after",
-    sm.ok, JSON.stringify(sm));
+  check("a month whose last builds all skipped race is NOT complete: the nightly mend rebuilds it, race is current again after, "
+    + "and its missing 9/30 is filled in", sm.ok, JSON.stringify(sm));
   // The screen is told why the days are missing, for that line's axes only.
   const t = world();
   t.attendanceRunGroupMonths = [{ _id: "s", yearid: 36, month: "2026-09", built: [{ axis: "gender", syncedAt: "2026-10-07T10:15:00.000Z" }],
@@ -1424,8 +1553,16 @@ console.log("\nTEETH: EACH RULE, BROKEN ON PURPOSE, IS CAUGHT\n");
   await caught("a skipped axis counted as built", mutate("groups",
     "return m.built.filter((b) => !m.skipped.some((s) => s.axis === b.axis && s.at >= b.syncedAt)).map((b) => b.axis);",
     "return m.built.map((b) => b.axis);"), suite.staleMended);
-  await caught("a stale row left behind", mutate("query", "for (const r of old) if (axes.includes(r.axis)) await ctx.db.delete(r._id);",
-    "for (const r of old.slice(1)) if (axes.includes(r.axis)) await ctx.db.delete(r._id);"), suite.replaceClean);
+  await caught("a finished week's rows replaced by a later build", mutate("groups",
+    "if (!w.stored.size || !(addDaysIso(monday, 4) < buildDay)) continue;", "continue;"), suite.servedKept);
+  await caught("a week kept before it is over (its own week's corrections lost)", mutate("groups",
+    "if (!w.stored.size || !(addDaysIso(monday, 4) < buildDay)) continue;", "if (!w.stored.size) continue;"), suite.keptRule);
+  await caught("a week kept though its rows were built before its last day (stuck as 'no data')", mutate("groups",
+    "    if (w.days.some((d) => !w.stored.has(d) && d > w.readThrough)) continue;\n", ""), suite.servedKept);
+  await caught("a week kept though its rows were built before one of its days", mutate("groups",
+    "    if (w.days.some((d) => !w.stored.has(d) && d > w.readThrough)) continue;\n", ""), suite.staleMended);
+  await caught("a stale row left behind", mutate("query", "for (const r of old) if (axes.includes(r.axis) && !kept.get(r.axis)!.has(r.date)) await ctx.db.delete(r._id);",
+    "for (const r of old.slice(1)) if (axes.includes(r.axis) && !kept.get(r.axis)!.has(r.date)) await ctx.db.delete(r._id);"), suite.replaceClean);
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);
