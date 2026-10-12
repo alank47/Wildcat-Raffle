@@ -4329,6 +4329,12 @@ body.wp-open { overflow: hidden; }
 .wp-rowend.wp-amt-up   { color: #6FD39A; }
 .wp-rowend.wp-amt-down { color: #F2938A; }
 .wp-rowend.wp-amt-flat { opacity: .52; font-size: 12px; font-weight: 400; }
+/* "Perfect day – pending" (2026-10-12): money that is coming, not money that
+   has moved. Lighter, and the row's rule dashed, so it never reads as part of
+   the balance above it. */
+.wp-rowend.wp-amt-pending { opacity: .66; font-weight: 600; }
+.wp-row-pending { border-left-style: dashed; }
+.wp-pending-rows + .wp-rows { margin-top: 6px; }
 
 /* What the adult typed, under what they picked. Wraps, because a note is a
    sentence and truncating it loses the half that explains the number -- unlike
@@ -7651,6 +7657,9 @@ body:has(.wc-preview-bar) .app-content { padding-bottom: 64px; }
 .wp-tx-amt.is-minus { color: #FFC7A8; }
 .wp-card-light .wp-tx-amt.is-plus { color: #1F7A45; }
 .wp-card-light .wp-tx-amt.is-minus { color: #A8431F; }
+/* Pending perfect days (2026-10-12): coming, not yet in the balance. */
+.wp-tx.is-pending { padding-left: 8px; border-left: 2px dashed var(--wp-rule, rgba(255,255,255,.22)); }
+.wp-tx-amt.is-pending { opacity: .7; font-weight: 700; }
 
 .wp-jackpot {
     display: flex; align-items: baseline; justify-content: space-between;
@@ -9569,6 +9578,26 @@ body:has(.wc-preview-bar) .app-content { padding-bottom: 64px; }
 .wc-drift-owed .wc-att-badge { background: #fef3c7; color: #92400e; }
 .wc-drift-held .wc-att-badge { background: #fee2e2; color: #991b1b; }
 .wc-drift .wc-att-list { margin-top: 10px; }
+
+/* THE PERFECT-DAY AWARD, FOR ADMINS (2026-10-12). The drift card's furniture,
+   in the brand blue rather than amber: it is a status, not an alarm. Only a
+   paid control or an unreadable switch is drawn as a warning. */
+.wc-drift.wc-pd { border-left-color: var(--wc-blue, #2F67A7); }
+.wc-pd-line { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 8px; font-size: 13px; }
+.wc-pd-k { flex: 0 0 9.5em; font-weight: 600; color: var(--wc-ink, #14171C); }
+.wc-pd-v { flex: 1 1 16em; min-width: 0; color: var(--wc-ink, #14171C); overflow-wrap: anywhere; }
+.wc-pd-list { margin: 4px 0 0 9.5em; padding-left: 18px; font-size: 12.5px; }
+.wc-pd-why { color: var(--wc-gray-text, #8892a0); }
+.wc-pd-warn { color: #991b1b; }
+/* A date's line can carry a sentence (why it was held, or decided without the
+   second check): the date keeps its width and the sentence wraps beside it. */
+.wc-pd-date .wc-att-name { flex: 0 0 auto; }
+.wc-pd-date .wc-att-figs { flex: 1 1 auto; min-width: 0; }
+.wc-pd-date .wc-att-days { white-space: normal; text-align: right; }
+@media (max-width: 560px) {
+    .wc-pd-k { flex-basis: 100%; }
+    .wc-pd-list { margin-left: 0; }
+}
 
 /* EARLY WARNING tier accents.
    Only the accent classes are new: the cards, the ranked rows, the search box

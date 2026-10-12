@@ -419,8 +419,8 @@ The developer also keeps a calendar reminder for the first week of January.
 
 ## Automatic perfect-day award (Wildcat Cash for perfect attendance)
 
-Added 2026-10-12 (server half; the student card line and the admin card ship
-with the site). Each school morning the server reads the last ten school days
+Added 2026-10-12 (server half, then the site half: the student card line,
+the staff screens and the admin card ship with the site stamped `20261012c`). Each school morning the server reads the last ten school days
 from PowerSchool, finds every student who had a **perfect day** (no absence,
 excused ones included, no unexcused tardy, no ditching, in any block, Promise
 Time and Power-Up included; an excused tardy and a field trip do not break
@@ -466,7 +466,14 @@ live pays the rest of the school only from that day; and payday checks the
 scope again. Counting from an earlier date needs `countFromDate` AND
 `"backPay": true`. Days earned before a pause are counted on the status, not
 paid. The one summary audit entry per payday stays off (`auditSummary`) until
-the site that knows the `perfect_day_paid` action has reached the open tabs.
+the site that knows the `perfect_day_paid` action has reached the open tabs:
+an older tab would show it on every teacher's home feed. The site stamped
+`20261012c` knows it. Open tabs update themselves when idle, so switch it on
+no sooner than the school day after that site is pushed:
+
+```
+npx convex run --prod perfectDay:configure '{"auditSummary":true,"actorName":"Your Name"}'
+```
 
 ### Status and the admin's tools
 
@@ -494,3 +501,35 @@ npx convex run --prod perfectDay:correctPayout '{"txnId":"txn_...","removeDates"
 - **No Hub record, or two**: the days stay pending and are counted, never paid
   to a guess and never dropped.
 - Every admin act is in `perfectDayAudit`; runs in `perfectDayRuns`.
+
+### What people see (the site half)
+
+- **Students** (only when money will move for them: pilot or live, not a
+  control): a "Perfect day – pending" line at the top of their Wildcat Cash
+  activity, on the desk dashboard and on the wallet card, from the morning a
+  day is decided: the days, the amount, and "Arrives Monday 10/19". No reason
+  is ever shown for a day that is not there. The Monday payment is a line in
+  their history, "Perfect attendance -- N days", by "Wildcat Hub
+  (attendance)", with the days in its note.
+- **Staff analytics leave it out**: the Overview tiles and week strip, the
+  Staff tab, Trends, 5 to 1, one-to-one praise, whole-class detection, reach,
+  expectation balance, quiet students and the home dashboard's "cash awarded
+  this week" count only what adults award (kind award or deduct, and no
+  `system:` marks). In the Staff tab's list of recent interactions the
+  payment wears a grey "Attendance" badge.
+- **It counts** in balances, Earned, Total in Circulation, the recount and
+  drift check, and **both leaderboards** (they rank on Earned; owner's
+  decision).
+- **Accounts**: each student's Recent Activity and full history show the
+  payment as "Perfect Attendance", read from the ledger, because it writes no
+  audit entry per student.
+- **Reverse** works on the weekly row and warns that it takes back every day
+  in it.
+- **Admins** see a read-only "Perfect-day award" card on the Cash Audit Log
+  (`perfectDay:adminStatus`, admins and superadmins only): the mode, the last
+  run, the last five dates with counts, held students and paid-then-broken
+  days by name, the next payday and the controls. It changes nothing; it is
+  empty until the award has ever been switched on.
+- **Deploy order**: Convex first (the card's query and the summary entry's
+  shape), then the site. A site without the backend shows no card and nothing
+  else changes.

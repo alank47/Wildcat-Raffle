@@ -689,8 +689,10 @@ console.log("\nAn award made WHILE a save is in flight still reaches a counter")
       const m = new RegExp("const " + name + " = new Set\\(\\[([^\\]]*)\\]\\);").exec(code);
       return m ? m[1].split(",").map((x) => x.trim().replace(/^'|'$/g, "")).sort().join(",") : null;
     };
-    check("final refusals are exactly before_cutoff, coverage_lost, undated, bad_shape",
-      setOf("CASH_TERMINAL_REFUSALS") === "bad_shape,before_cutoff,coverage_lost,undated", setOf("CASH_TERMINAL_REFUSALS"));
+    // reserved_kind joined on 2026-10-12: a movement carrying the perfect-day
+    // job's marks, which the server never applies from a browser.
+    check("final refusals are exactly before_cutoff, coverage_lost, undated, bad_shape, reserved_kind",
+      setOf("CASH_TERMINAL_REFUSALS") === "bad_shape,before_cutoff,coverage_lost,reserved_kind,undated", setOf("CASH_TERMINAL_REFUSALS"));
     check("...and the ones a teacher is TOLD about leave out coverage_lost, which may have been paid",
       setOf("CASH_REFUSALS_TO_SAY") === "bad_shape,before_cutoff,undated", setOf("CASH_REFUSALS_TO_SAY"));
 
