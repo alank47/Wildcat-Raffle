@@ -41,12 +41,15 @@ function lift(name) {
   const end = src.indexOf("\n}\n", start) + 3;
   return src.slice(start, end).replace("export function", "function");
 }
-const consts = ["CASH_COUNTERS", "CASH_APPLIED_MAX"]
+// SYSTEM_CASH_KIND / SYSTEM_ID_PREFIX and isSystemCashRow (2026-10-12): the
+// rule planCashMovements uses to refuse the perfect-day award's movement from
+// a browser. Lifted like the rest, so the harness runs the shipped rule.
+const consts = ["CASH_COUNTERS", "CASH_APPLIED_MAX", "SYSTEM_CASH_KIND", "SYSTEM_ID_PREFIX"]
   .map((n) => src.match(new RegExp(`^export const ${n} =[\\s\\S]*?;$`, "m"))[0]
     .replace("export ", "").replace(" as const", ""))
   .join("\n") + "\nconst HISTORY_SLACK_MS = 60 * 60 * 1000;";
 const js = ts.transpileModule(
-  consts + "\n" + ["cashMovementEffect", "ringPush", "planCashMovements"].map(lift).join("\n"),
+  consts + "\n" + ["cashMovementEffect", "ringPush", "isSystemCashRow", "planCashMovements"].map(lift).join("\n"),
   { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext } },
 ).outputText;
 const [cashMovementEffect, ringPush, planCashMovements, MOVEMENT_FIELDS, CASH_APPLIED_MAX] =

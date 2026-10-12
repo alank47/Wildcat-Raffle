@@ -122,7 +122,19 @@ const RULES = (() => {
 })();
 class ConvexError extends Error {}
 
-const runNew = new Function("RULES", "ConvexError",
+// THE SERVER-ONLY CASH ROW RULE (2026-10-12): appDataShape.isSystemCashRow,
+// the SHIPPED function, which legacyData.ts imports to refuse the perfect-day
+// award's marks from a browser. appDataShape.ts has no imports by design.
+const shapeSrc = readFileSync(new URL("./appDataShape.ts", import.meta.url), "utf8");
+const SHAPE = (() => {
+  const m = { exports: {} };
+  new Function("module", "exports", "require", ts.transpileModule(shapeSrc, {
+    compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS },
+  }).outputText)(m, m.exports, (p) => { throw new Error("unexpected import " + p); });
+  return m.exports;
+})();
+
+const runNew = new Function("RULES", "ConvexError", "SHAPE",
   "return function (ctx, doc, collection, rows, dedupeField, MAX_ROWS_PER_SLICE, notifyNewReferrals) {" +
   touchedJs +
   // The arrival credit (2026-09-30) runs inside mergeSlice after the inserts.
@@ -130,6 +142,7 @@ const runNew = new Function("RULES", "ConvexError",
   // is row-for-row what it always was; cash-arrival-alerts.test.mjs runs the
   // real one.
   "const noteArrivedCash = async () => null;\n" +
+  "const { isSystemCashRow } = SHAPE;\n" +
   "const { pinOwnerFields, planReferralUpdate, planReferralInsert, canCloseReferrals, seesAllReferrals,\n" +
   "  switchAllows, normalizeSwitch, REFERRAL_CLOSE_GUARD_KEY } = RULES;\n" +
   // The close-guard switch (2026-10-07) is an appState row, read through
@@ -143,7 +156,7 @@ const runNew = new Function("RULES", "ConvexError",
   "\nreturn { inserted: toInsert.length, updated: toUpdate.length, deleted, refusedAsHistory, keptCancelledReceipts," +
   " refusedNotYours, keptCloseFields, clampedStamps, refusedReferralDetentions };" +
   "})();" +
-  "};")(RULES, ConvexError);
+  "};")(RULES, ConvexError, SHAPE);
 
 /** The OLD algorithm, verbatim. The thing the new one must still agree with. */
 function referenceMerge(existing, rows, dedupeField, keyedHint) {

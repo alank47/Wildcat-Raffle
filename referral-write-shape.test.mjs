@@ -28,6 +28,8 @@ const read = (p) => readFileSync(new URL(p, import.meta.url), "utf8");
 const SRC = {
   legacyData: read("./convex/legacyData.ts"),
   referralAccessRules: read("./convex/referralAccessRules.ts"),
+  // legacyData.ts imports isSystemCashRow from it (the perfect-day award, 2026-10-12). The real module.
+  appDataShape: read("./convex/appDataShape.ts"),
 };
 const script = read("./script.js");
 /** Comments stripped, so prose describing a call is never mistaken for one. */

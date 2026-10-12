@@ -9,6 +9,7 @@ import {
   planReferralUpdate, planReferralInsert, REFERRAL_SCOPE_KEY, REFERRAL_CLOSE_GUARD_KEY,
 } from "./referralAccessRules";
 import type { ReferralSwitch } from "./referralAccessRules";
+import { isSystemCashRow } from "./appDataShape";
 
 /**
  * The app-facing half of the legacy mirror.
@@ -654,6 +655,14 @@ export const mergeSlice = mutation({
       storedByToken.set(token, r);
     }
     let keptCancelledReceipts = 0;
+    /**
+     * Cash rows only the server makes (appDataShape.isSystemCashRow: the
+     * perfect-day award), refused on insert and never rewritten by a copy
+     * (review M2, 2026-10-12). Counted, never thrown: every tab sends the
+     * server's own rows back, and those are simply the duplicates they are.
+     */
+    let refusedSystemCash = 0;
+    const cashDoc = doc.startsWith("cash_tx_");
     for (const r of rows) {
       const token = tokenFor(r);
       if (seen.has(token)) {
@@ -683,6 +692,13 @@ export const mergeSlice = mutation({
           if (plan.keptCloseFields) keptCloseFields++;
           if (plan.clamped) clampedStamps++;
           toUpdate.push({ id: stored._id, payload: plan.payload });
+          continue;
+        }
+        // A server-made cash row is final, and a browser copy may not turn
+        // a stored row into one. Neither side of an update may carry the
+        // marks; the stored row stays exactly as it is.
+        if (stored && cashDoc && (isSystemCashRow(stored.payload) || isSystemCashRow(r.payload))) {
+          if (touchedAt(r.payload) > touchedAt(stored.payload)) refusedSystemCash++;
           continue;
         }
         if (stored && touchedAt(r.payload) > touchedAt(stored.payload)) {
@@ -745,6 +761,13 @@ export const mergeSlice = mutation({
           refusedAsHistory++;
           continue;
         }
+      }
+      // MONEY ONLY THE SERVER MAKES. A new ledger row carrying the
+      // perfect-day marks did not come from the job (it writes in its own
+      // transaction, never through here), so it is not inserted.
+      if (cashDoc && isSystemCashRow(accepted.payload)) {
+        refusedSystemCash++;
+        continue;
       }
       if (clamped) clampedStamps++;
       toInsert.push(accepted);
@@ -836,6 +859,8 @@ export const mergeSlice = mutation({
       cashArrival,
       // Store receipts kept cancelled against an incoming copy that was not.
       keptCancelledReceipts,
+      // Server-only cash rows (the perfect-day award) a browser tried to add or rewrite.
+      refusedSystemCash,
       // The close guard's per-row decisions (all zero while it is off).
       refusedNotYours,
       keptCloseFields,
@@ -892,7 +917,10 @@ export const saveSlice = mutation({
     // this deploys; the client stops sending rows it knows are stored in the
     // same change.
     if (doc.startsWith("cash_tx_")) {
-      const fresh = unionCashRows(old, rows);
+      // A server-only row (the perfect-day award) is never added from here:
+      // see appDataShape.isSystemCashRow. Its stored copy is already in `old`.
+      const unioned = unionCashRows(old, rows);
+      const fresh = unioned.filter((r) => !isSystemCashRow(r.payload));
       const mirroredAt = new Date().toISOString();
       for (const r of fresh) {
         await ctx.db.insert("legacyMirror", {

@@ -94,9 +94,11 @@ export function txnIdMs(txnId: string): number {
 /**
  * Behaviour ids that belong to other flows and must never arrive as an award:
  * the reset, the store, its refunds and reversals all write their own rows
- * through their own guarded paths.
+ * through their own guarded paths. `system:` is the server's own money (the
+ * perfect-day award, perfectDay.ts), which no browser may ever send; the
+ * other three write paths refuse it too (appDataShape.isSystemCashRow).
  */
-const RESERVED_BEHAVIOR = /^(system_reset|reward:|reward-refund:|reversal:)/;
+const RESERVED_BEHAVIOR = /^(system_reset|reward:|reward-refund:|reversal:|system:)/i;
 
 /** The audit entry id for an award, derived so both paths agree on it. */
 export function cashAwardAuditId(txnId: string): string {
@@ -171,7 +173,7 @@ export function validateAward(
   }
 
   const behaviorId = String(r.behaviorId ?? "");
-  if (RESERVED_BEHAVIOR.test(behaviorId)) {
+  if (RESERVED_BEHAVIOR.test(behaviorId.trim())) {
     return { ok: false, code: "reserved_behavior", reason: "That behaviour belongs to another part of the app." };
   }
 

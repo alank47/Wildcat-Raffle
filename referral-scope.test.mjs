@@ -27,6 +27,8 @@ const SRC = {
   legacyData: read("./convex/legacyData.ts"),
   referralAccess: read("./convex/referralAccess.ts"),
   referralAccessRules: read("./convex/referralAccessRules.ts"),
+  // legacyData.ts imports isSystemCashRow from it (the perfect-day award, 2026-10-12). The real module.
+  appDataShape: read("./convex/appDataShape.ts"),
 };
 
 class ConvexError extends Error {}
