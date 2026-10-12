@@ -235,14 +235,32 @@ always: an older server refuses the new screen's `lunchOk`.
   room.
 - **Print changes only** appears when your own print is out of date: the
   students added since it, and a "release this student" list.
-- **Room attendance** (roles and grant holders), from Lunch & Power-Up start
-  until the next list is made: tick **Not here**, then press **Attendance
-  done**; only ticked students carry. **Room did not run today** (roles only,
-  with a reason) carries everyone without counting toward the limit. Each act
-  is kept on the detention or the day, and in `reflectionAudit`. All of this
-  applies to the **live** division only: a division in shadow (HS during the
-  MS live week) has no Not here box, and PowerSchool decides its carries
+- **Room attendance is check-off** (owner, 2026-10-12; roles and grant
+  holders), from Lunch & Power-Up start until the next list is made: check
+  **Here** next to each student as they arrive (the screen shows "N of M
+  here", for the whole list and for each sitting), then press **Attendance
+  done**. It first names how many students are not checked and who; every one
+  of them moves to their next school day's list ("Carried over from ...
+  (absent)" or "(at school: did not come)"), with the same limit of 5 carries
+  as before. A check can be taken back until Attendance done is pressed;
+  **Undo Attendance done** opens the checks again. A student checked Here is
+  served whatever PowerSchool says, even if nobody presses Attendance done;
+  the students nobody checked are then decided by PowerSchool, and the review
+  queue says "Attendance done not pressed". **Room did not run today** (roles
+  only, with a reason) carries everyone without counting toward the limit.
+  Each act is kept on the detention or the day, and in `reflectionAudit`. All
+  of this applies to the **live** division only: a division in shadow (HS
+  during the MS live week) has no box, and PowerSchool decides its carries
   whatever the room presses.
+  - **Mon 10/12's list keeps Not here.** It was made before check-off shipped,
+    and its room ticked Not here: on it, only ticked students carry. Every
+    list made since is stamped check-off when it is made (`roomMode` on
+    `reflectionDays`).
+  - **A tab still on the screen from before** (stamp 20261012b) is shown the
+    list but no Not here box ("This list now uses check-off: the Hub is
+    updating itself"), and a Not here tick or Attendance done it sends is
+    refused with the same words. Nobody needs to refresh: the tab updates
+    itself.
 - **Review** (roles only) is the admin review queue: "Add to next list" or
   "Dismiss" (a reason is required), each with its age in school days.
 - **Read PowerSchool now** and **This is a school day** (roles only) are on
@@ -407,9 +425,14 @@ The developer also keeps a calendar reminder for the first week of January.
   The MS column says "Class before lunch" and is sorted by that teacher, then
   grade, then last name. The list prints MS first, then HS.
 - **At each sitting:** the room supervisor checks the screen once (it updates
-  itself: "Since your print: +2 added, release 1"), ticks Not here for anyone
-  missing, then presses Attendance done. A student at school who does not come
-  carries over exactly like an absent one.
+  itself: "Since your print: +2 added, release 1"), checks **Here** next to
+  each student who arrives (on paper, the empty Here box), and after the last
+  sitting of the day (HS, the second half) presses Attendance done once.
+  Everyone not checked moves to their next school day: a student at school
+  who does not come carries over exactly like an absent one. Pressed after the
+  MS sitting by mistake, its confirmation lists the HS students still to come
+  under "High school"; press Undo Attendance done and check them as they
+  arrive.
 - **Daily, after the list:** the PBIS lead clears the review queue, so nothing
   is older than 2 school days.
 - **If the room cannot run:** an admin presses "Room did not run today", and
