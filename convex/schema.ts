@@ -769,6 +769,52 @@ export default defineSchema({
     syncedAt: v.string(),
   }).index("by_yearid_date", ["yearid", "date"]),
 
+  /**
+   * THE RUN CHART BY STUDENT GROUP (2026-10-12): one row per SCHOOL DAY per
+   * group, built in the same student-by-day loop as attendanceRunDays and
+   * written by attendanceGroupRunChart:replaceGroupMonth. Axes: gender (F, M),
+   * race (black), el (el, notel), ela (EO, RFEP, IFEP); each also has a
+   * "none" row -- that axis's members in none of its groups -- which the
+   * query's residual test reads and NEVER sends. Every row exists on every
+   * school day of a built month, zeros included, so a missing row means "not
+   * built", never "nobody".
+   *
+   * A SEPARATE TABLE ON PURPOSE. attendanceRunDays is read whole by the Trends
+   * line and by every teacher's Cash Analytics, and the browser sums every
+   * row of it into the whole school; group rows there would be double-counted
+   * and handed to the Attendance Watch grant. Read only through
+   * attendanceGroupRunChart:groupWeeks, which serves rates, never these counts.
+   */
+  attendanceRunGroupDays: defineTable({
+    yearid: v.number(),
+    date: v.string(),
+    axis: v.string(),
+    group: v.string(),
+    members: v.number(),
+    absentDays: v.number(),
+    fullDaysStrict: v.number(),
+    misrecordDaysByGap: v.array(v.number()),
+    partialDays: v.number(),
+    assumedPresentDays: v.number(),
+    syncedAt: v.string(),
+  })
+    .index("by_yearid_date", ["yearid", "date"])
+    .index("by_axis_date", ["axis", "date"]),
+
+  /**
+   * What each month of group rows holds: the axes built (and when), and the
+   * axes the last build skipped with the reason -- a demographic read that
+   * failed never stops the Trends rows, it is recorded here instead. The
+   * nightly run mends months missing an axis.
+   */
+  attendanceRunGroupMonths: defineTable({
+    yearid: v.number(),
+    month: v.string(),
+    built: v.array(v.object({ axis: v.string(), syncedAt: v.string() })),
+    skipped: v.array(v.object({ axis: v.string(), reason: v.string(), at: v.string() })),
+    updatedAt: v.string(),
+  }).index("by_yearid_month", ["yearid", "month"]),
+
   /** Per month per band: the measures a daily total cannot give (see runChartDays.ts). */
   attendanceRunMonths: defineTable({
     yearid: v.number(),
@@ -970,19 +1016,22 @@ export default defineSchema({
    * LOADED IS NOT VISIBLE, and that distinction is the whole design.
    * restrictedPolicy.ts grants `elaStatus` to NO role -- not teacher, not
    * pbis, not admin, not superadmin -- and no query in this codebase returns
-   * it. The only public query that reads restricted fields at all is
-   * disciplineAggregates:raceVerification, which uses federal race and
-   * ethnicity, the two fields the owner explicitly approved on 2026-08-19, and
-   * never touches English Learner.
+   * any student's English Learner status. Federal race and ethnicity are
+   * visible per student to admin and superadmin only (2026-08-19, for
+   * verification); every other use of these fields is an AGGREGATE.
    *
-   * ENGLISH LEARNER IS THE ONE RESERVED DECISION. docs/field-sourcing.md
-   * singles it out from the rest of the restricted block: unlike federal race
-   * and ethnicity, EL status has an obvious instructional use for a classroom
-   * teacher, so it needs a visibility decision rather than a justification for
-   * existing at all. docs/field-sourcing-approval.md still records it as NOT
-   * approved, because no decision it informs has been named. Widening it means
-   * an entry in ALLOWED_BY_ROLE, a named approver and purpose in that
-   * approval doc, and a test pinning the roles still denied.
+   * ENGLISH LEARNER IS APPROVED AS AN AGGREGATE ONLY (corrected 2026-10-12;
+   * this comment used to say no query reads it, which stopped being true when
+   * attendanceSubgroups:chronicBySubgroup shipped English Learner totals on
+   * 2026-09-22). docs/field-sourcing-approval.md records the owner's decision
+   * of 2026-10-11: English Learner and classification AGGREGATES for
+   * attendance -- the year-to-date table and the weekly run charts -- for
+   * admin, superadmin and PBIS, with small groups withheld on the server. The
+   * run charts read the status on each date straight from PowerSchool's
+   * history (S_CA_STU_ELA_C), not this table. An individual's status is still
+   * granted to no role: that would mean an entry in ALLOWED_BY_ROLE, a named
+   * approver and purpose in the approval doc, and a test pinning the roles
+   * still denied.
    */
   psRestricted: defineTable({
     studentNumber: v.string(),

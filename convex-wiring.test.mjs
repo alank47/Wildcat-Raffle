@@ -95,6 +95,11 @@ for (const src of [clientSrc, serverSrc]) {
 // ---------------------------------------------------------------------------
 const CLI_ONLY = {
   "syncLog:latest": "docs/runbook.md — `npx convex run syncLog:latest` when checking a sync",
+  // UNTIL THE STUDENT GROUPS CARD CALLS IT (the browser half of the 2026-10-12
+  // group run charts): the server half ships first, and its pilot checks who
+  // may read it from a terminal. The commit that wires the card removes this.
+  "attendanceGroupRunChart:groupWeeks": "convex/attendanceGroupRunChart.ts header — the pilot runs it with " +
+    "`npx convex run --identity` as each role before the Student groups card calls it",
 };
 
 console.log("\n1. Every public server function is reachable");

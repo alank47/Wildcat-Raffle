@@ -104,6 +104,16 @@ export type MonthBand = {
  */
 export const MONTH_MISRECORD_AT = 1;
 
+/**
+ * ONE SCHOOL DAY OF ONE STUDENT GROUP (2026-10-12): the same members and
+ * whole-day components as a band row, for the group run charts. `group` is
+ * a stored group or GROUP_NONE -- the members of that axis in none of its
+ * stored groups, kept so the server can test what subtraction would expose
+ * (runChartGroups.ts). Server-only; never sent anywhere as counts.
+ */
+export type DayGroup = AbsenceSplit & { date: string; axis: string; group: string; members: number };
+export const GROUP_NONE = "none";
+
 export type BuildInput = {
   /** [{ studentid, att_date, attendance_codeid, ccid }] -- every record in range. */
   attendance: Array<Record<string, unknown>>;
@@ -117,7 +127,39 @@ export type BuildInput = {
   to: string;
   isCurrentYear: boolean;
   yearLastDay: string;
+  /**
+   * OPTIONAL, AND ONLY FOR THE GROUP RUN CHARTS: the axes to build, each
+   * with its stored groups (GROUP_NONE is added here), and which group of
+   * each axis a student is in on a date -- [axis, group] pairs; an axis left
+   * out of a student's pairs counts them in no row of that axis (a current
+   * English Learner is in el:el, not in the classification axis). Without
+   * it the answer is exactly what it always was, with no group key at all.
+   */
+  groups?: {
+    axes: Record<string, string[]>;
+    of: (studentId: string, date: string) => Array<[string, string]>;
+  };
 };
+
+/**
+ * The students who sat in at least one class of the year: the same seats the
+ * build below counts (a slot, a student, two real dates, left after joined).
+ * The group build looks up race codes for these students only, so a lookup
+ * per id is bounded by the school, never by the district.
+ */
+export function seatedStudents(cc: Array<Record<string, unknown>>): Set<string> {
+  const out = new Set<string>();
+  for (const c of cc) {
+    const slot = String(c.expression ?? "").trim();
+    const sid = String(c.studentid ?? "");
+    if (!slot || !sid) continue;
+    const start = String(c.dateenrolled ?? "").slice(0, 10);
+    const end = String(c.dateleft ?? "").slice(0, 10);
+    if (start.length !== 10 || end.length !== 10 || end <= start) continue;
+    out.add(sid);
+  }
+  return out;
+}
 
 export function buildRunDays(input: BuildInput) {
   const { from, to } = input;
@@ -198,6 +240,28 @@ export function buildRunDays(input: BuildInput) {
   // estimate is visible rather than silently shrinking the denominator.
   const unbanded = new Map<string, Set<string>>();
 
+  // THE GROUP ROWS, when asked for: the same members and the same absent
+  // days as the band row, bumped at the same two places in the loop below,
+  // so each axis adds up to the whole school exactly, every day.
+  const grp = input.groups;
+  const groupRows = new Map<string, DayGroup>();       // date|axis|group
+  const groupRow = (date: string, axis: string, group: string) => {
+    const k = date + "|" + axis + "|" + group;
+    let row = groupRows.get(k);
+    if (!row) { row = Object.assign({ date, axis, group, members: 0 }, emptyAbsenceSplit()); groupRows.set(k, row); }
+    return row;
+  };
+  const groupAxes = grp ? Object.keys(grp.axes) : [];
+  const pairsFor = (sid: string, date: string): Array<[string, string]> => {
+    if (!grp) return [];
+    const out: Array<[string, string]> = [];
+    for (const [axis, group] of grp.of(sid, date)) {
+      if (!groupAxes.includes(axis)) continue;
+      out.push([axis, grp.axes[axis].includes(group) ? group : GROUP_NONE]);
+    }
+    return out;
+  };
+
   for (const [sid, seats] of seatsOf) {
     const known = bandOf.get(sid);
     const band: RowBand = known ?? OTHER;
@@ -217,6 +281,8 @@ export function buildRunDays(input: BuildInput) {
       }
       const row = dayRow(date, band);
       row.members++;
+      const pairs = pairsFor(sid, date);
+      for (const [axis, group] of pairs) groupRow(date, axis, group).members++;
       const month = date.slice(0, 7);
       const tk = sid + "|" + month;
       let t = tally.get(tk);
@@ -235,6 +301,7 @@ export function buildRunDays(input: BuildInput) {
       const unrecordedBlocks = Math.max(0, blocksThatDay - absentBlocks - presentBlocks);
       const day = { blocksThatDay, absentBlocks, presentBlocks, unrecordedBlocks };
       addAbsenceDay(row, day);
+      for (const [axis, group] of pairs) addAbsenceDay(groupRow(date, axis, group), day);
       // THE MONTH MEASURES USE THE APP'S DEFAULT THRESHOLD: strict, or a gap
       // made only of explicit presents no larger than MONTH_MISRECORD_AT.
       const gap = blocksThatDay - absentBlocks;
@@ -255,8 +322,23 @@ export function buildRunDays(input: BuildInput) {
     if (t.fullDays > 0 && t.fullDays * 10 >= t.memberDays) m.chronicStudents++;
   }
 
+  // EVERY GROUP ROW ON EVERY SCHOOL DAY, a group with nobody in it that day
+  // included (members 0), so a missing row always means "not built" and
+  // never "nobody" -- the server reads a gap as a gap, not as a zero.
+  let groupDays: DayGroup[] | undefined;
+  if (grp) {
+    for (const date of schoolDays) {
+      for (const axis of groupAxes) {
+        for (const group of [...grp.axes[axis], GROUP_NONE]) groupRow(date, axis, group);
+      }
+    }
+    groupDays = [...groupRows.values()].sort((a, b) =>
+      a.date < b.date ? -1 : a.date > b.date ? 1 : a.axis < b.axis ? -1 : a.axis > b.axis ? 1 : a.group < b.group ? -1 : a.group > b.group ? 1 : 0);
+  }
+
   return {
     schoolDays,
+    ...(groupDays ? { groupDays } : {}),
     days: [...days.values()].sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : a.band < b.band ? -1 : 1)),
     months: [...months.values()].sort((a, b) => (a.month < b.month ? -1 : a.month > b.month ? 1 : a.band < b.band ? -1 : 1)),
     diagnostics: {
