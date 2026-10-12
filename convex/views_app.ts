@@ -9,6 +9,7 @@ import { projectGrade } from "./gradeProjection";
 import { isMissingWork, onlyMissingWork } from "./missingWorkRules";
 import { storeSignal } from "./studentStore";
 import { readGradeScopeBlock } from "./gradeScopeRead";
+import { perfectDaysForStudent } from "./perfectDay";
 
 /**
  * The three reads the app actually needs.
@@ -432,6 +433,13 @@ export const myStudentView = query({
           .collect()
       : [];
 
+    // THE PERFECT-DAY AWARD (2026-10-12): this student's perfect days that
+    // WILL be paid, from the morning each is decided, and the Monday the money
+    // arrives. Null when no money moves for them (switched off, shadow,
+    // outside the pilot): nothing is promised that will not come. A screen
+    // that does not know the field ignores it.
+    const perfectDays = number.ok ? await perfectDaysForStudent(ctx, number.value) : null;
+
     return {
       name: `${student.firstName} ${student.lastName}`.trim(),
       grade: student.grade ?? null,
@@ -457,6 +465,8 @@ export const myStudentView = query({
         balance: student.wildcatCashBalance ?? null,
         earned: student.wildcatCashEarned ?? null,
         spent: student.wildcatCashSpent ?? null,
+        // { days: ["2026-10-12", ...], amount, payday: "2026-10-19" } or null.
+        perfectDays,
 
         /**
          * The last few movements, so a balance is explainable.
