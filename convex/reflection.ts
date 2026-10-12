@@ -496,6 +496,12 @@ async function freezeDay(ctx: MutationCtx, f: {
   return { rows: claim.rows.length, ms, hs, unplaced: claim.unplaced.length };
 }
 
+/** The newest list made before `date`: its carries are the ones `date`'s list claims. */
+async function lastListBefore(ctx: Ctx, date: string): Promise<string | null> {
+  const rows = await ctx.db.query("reflectionDays").withIndex("by_date", (q) => q.lt("date", date)).order("desc").take(60);
+  return rows.find((r) => r.frozenAt)?.date ?? null;
+}
+
 // ===========================================================================
 // THE TICK (build spec 4.2)
 // ===========================================================================
@@ -576,9 +582,24 @@ export const tick = internalMutation({
         runId: `fallback_${Date.now().toString(36)}`, kind: "fallback", key: "fallback", date, startedAt: nowIso, expiresAt: nowIso,
       } satisfies LeaseValue);
       const maps = await readState(ctx, MAPS_KEY);
+      const roster = await loadRoster(ctx);
+      const sm = studentMap(maps?.students);
+      // THE ROOM'S RECORD SINCE THE LAST READ, FIRST (review, 2026-10-12).
+      // This list claims the last list's carries as the last read that
+      // worked decided them, but that room's attendance stays open until
+      // this very freeze: a check typed in the next morning, Attendance done
+      // taken back and pressed again. What the room decides by itself is
+      // decided again now; what needs PowerSchool keeps what the last read
+      // decided.
+      const last = await lastListBefore(ctx, date);
+      if (last) {
+        const enrolledSn = new Set(Object.values(sm.snOf));
+        await decideCarries(ctx, {
+          d: last, summary: null, roster, settings, now: nowIso, enrolled: (sn) => !!roster[sn] || enrolledSn.has(sn),
+        });
+      }
       const made = await freezeDay(ctx, {
-        date, kind: "fallback", nowIso, closingReadStartedAt: null, settings, tz,
-        roster: await loadRoster(ctx), summary: null, gradeOf: studentMap(maps?.students).gradeOf,
+        date, kind: "fallback", nowIso, closingReadStartedAt: null, settings, tz, roster, summary: null, gradeOf: sm.gradeOf,
       });
       return { do: "fallback-freeze", why: `${decision.why} ${made.rows} on the list.` };
     }
@@ -804,9 +825,17 @@ const CARRY_OTHER_MODE = "Carried from a list made in another mode (a pilot list
  * decides; this writes. The verdict is recomputed whenever the date is read
  * in full, and STANDS once the next list has claimed the carry: after that a
  * changed input only notes the change.
+ *
+ * WITHOUT POWERSCHOOL (`summary` null: the fallback freeze, review
+ * 2026-10-12) only what the room's own record decides is decided again -- a
+ * Here check, Attendance done, Room did not run -- and only where it changes
+ * what becomes of the detention. A verdict that needs PowerSchool keeps what
+ * the last read decided; a carry the last read made stands as made (with the
+ * tag PowerSchool's marks gave it) when the room carries it the same way. The
+ * day's review item is left to the next read of the date.
  */
 async function decideCarries(ctx: MutationCtx, c: {
-  d: string; summary: DaySummary; roster: Record<string, RosterSnap>; settings: ReflectionSettings;
+  d: string; summary: DaySummary | null; roster: Record<string, RosterSnap>; settings: ReflectionSettings;
   now: string; enrolled: (sn: string) => boolean;
 }): Promise<{ carried: number; served: number; review: number }> {
   const out = { carried: 0, served: 0, review: 0 };
@@ -846,13 +875,16 @@ async function decideCarries(ctx: MutationCtx, c: {
       final: true, summary: c.summary, snap, enrolled: c.enrolled(u.studentNumber), maxCarries: c.settings.maxCarries,
     });
     if (verdict.verdict === "undecided") continue;
+    if (!c.summary && verdict.verdict === "carry" && carry?.state === "pending"
+      && carry.carryCount === u.carryCount + (verdict.countsTowardLimit ? 1 : 0)) continue;
     // The day's review says the ROOM recorded nothing: only its own detentions count.
     if (roomRuns && (verdict.verdict === "carry" || verdict.verdict === "served") && (verdict.basis === "powerschool" || verdict.basis === "whole-day")) {
       decidedByPowerSchool++;
     }
     if (roomRuns && roomMode === "checkin" && u.roomHere) checkedHere++;
-    const puMarks = snap?.puSlot ? c.summary.marks[u.studentNumber]?.[String(snap.puSlot)] ?? [] : [];
-    const puAbsent = puMarks.length > 0 && puMarks.every((m) => m.absent);
+    const puMarks = snap?.puSlot && c.summary ? c.summary.marks[u.studentNumber]?.[String(snap.puSlot)] ?? [] : [];
+    // Without PowerSchool, what it last said about Power-Up stays.
+    const puAbsent = c.summary ? puMarks.length > 0 && puMarks.every((m) => m.absent) : u.puAbsent;
     // Claimed by a later list: it stands.
     if (carry && carry.state !== "pending" && carry.state !== "expired") {
       if (verdict.verdict !== "carry") await ctx.db.patch(u._id, { carryInputsChangedAt: c.now, puAbsent });
@@ -931,6 +963,7 @@ async function decideCarries(ctx: MutationCtx, c: {
       out.review++;
     }
   }
+  if (!c.summary) return out;
   const fr = fallbackDayReview({
     mode: live ? "live" : "shadow", serveDay: c.d, attendanceDone: !!dRow.roomAttendanceDoneAt,
     roomClosed: !!dRow.roomClosed, decidedByPowerSchool, checkedHere,

@@ -45,7 +45,8 @@
 //   R. Attendance done moves exactly the students it named: a detention
 //      released after the pull and put back after the press is PowerSchool's,
 //      and a press whose students changed during its confirmation (checks
-//      swapped, the same number) is refused.
+//      swapped, the same number) is refused. Then a list made without
+//      PowerSchool (fallback) takes the room's fix of the morning after.
 //   C5. One detention carried five times across a marked holiday, then review.
 //   U. Queued uniform entries: saved late, sent over a weekend, past 72 hours,
 //      observed before the close and saved after the list.
@@ -1382,7 +1383,7 @@ try {
   }
 
   // ==========================================================================
-  realLog("\nR. ATTENDANCE DONE MOVES EXACTLY WHOM IT NAMED: A DETENTION PUT BACK AFTER IT, AND CHECKS SWAPPED DURING ITS CONFIRMATION\n");
+  realLog("\nR. ATTENDANCE DONE MOVES EXACTLY WHOM IT NAMED: A DETENTION PUT BACK AFTER IT, CHECKS SWAPPED DURING ITS CONFIRMATION, AND A MORNING-AFTER FIX ON A FALLBACK DAY\n");
   // ==========================================================================
   // (review, 2026-10-12) MS live, HS in shadow.
   //   Tuesday: RX's tardy is deleted after the 12:29 MS pull and read at
@@ -1394,6 +1395,11 @@ try {
   //     second supervisor takes K3's check back and checks K4: the same
   //     number, different students. The press is refused; the next one names
   //     K3, K5 and RC.
+  //   Thursday: PowerSchool is down from 08:35, after the 08:30 read, so the
+  //     list is made at the ready time without a final read. At 08:40 the
+  //     supervisor fixes Wednesday: Undo, K5 checked Here, Attendance done
+  //     again. The list made without PowerSchool must take that fix: K5 is
+  //     served, K3 and RC move (as the 07:30 read tagged them).
   {
     const TUE = "2026-10-20", WED = "2026-10-21", THU = "2026-10-22", FRI = "2026-10-23";
     const w = await makeWorld({
@@ -1402,6 +1408,7 @@ try {
       },
       students: { RA: "ms", RC: "ms", RX: "ms", K1: "ms", K2: "ms", K3: "ms", K4: "ms", K5: "ms", KH: "hs" },
       settings: { modeByDivision: { ms: "live", hs: "shadow" }, countFromDateByDivision: { ms: TUE, hs: TUE } },
+      down: [[THU, "08:35", "12:10"]],
     });
     const at = (d, t, fn) => [LA(d, t), fn];
     const ids = {};
@@ -1421,6 +1428,12 @@ try {
         swapped = await w.attendanceDone(WED, { between: async () => { await w.here(WED, "K3", false); await w.here(WED, "K4"); } });
       }),
       at(WED, "11:51", () => must(w.attendanceDone(WED))),
+      at(WED, "12:40", () => w.mark(WED, "K3", 9, "A")),               // K3 also absent at Power-Up: tagged (absent)
+      at(THU, "08:40", async () => {
+        await must(w.undoAttendanceDone(WED));
+        await must(w.here(WED, "K5"));
+        await must(w.attendanceDone(WED));
+      }),
     ]);
     const { got } = compare("R", w, Date.parse(`${FRI}T23:55:00Z`));
     check("R: Tuesday, RX put back on the list after Attendance done is not one it named: PowerSchool's (served), and only RC moves to Wednesday",
@@ -1428,8 +1441,10 @@ try {
       J({ tue: got.lists[TUE], wed: Object.keys(got.lists[WED] ?? {}) }));
     check("R: Wednesday, checks swapped while the confirmation was open (same number, different students): the press is refused",
       swapped?.ok === false && /the 3 who would move to the next day are not the 3 you confirmed/.test(swapped.reason ?? ""), J(swapped));
-    check("R: ...and the next press names K3, K5 and RC, who move to Thursday",
-      J(Object.keys(got.lists[THU] ?? {}).sort()) === J(["K3", "K5", "RC"]), J(got.lists[THU]));
+    check("R: Thursday's list, made without PowerSchool, takes the 08:40 fix: K5 (checked Here) is served; K3 and RC move, as the last read tagged them",
+      got.days[THU]?.freezeKind === "fallback" && J(Object.keys(got.lists[THU] ?? {}).sort()) === J(["K3", "RC"])
+        && got.lists[WED]?.K5?.state === "listed" && J(got.lists[THU].K3.tags) === J(["Carried over from Wed 10/21 (absent)"]),
+      J({ thu: got.lists[THU], k5: got.lists[WED]?.K5 }));
   }
 
   // ==========================================================================

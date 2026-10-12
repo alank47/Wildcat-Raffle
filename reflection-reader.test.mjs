@@ -62,6 +62,11 @@
 //      the room's; Here without Attendance done; and a tab still on the
 //      screen from before (Not here boxes), run for real against this
 //      server, is shown the list but refused every tick.
+//  28. Attendance done moves exactly the students it named: a detention put
+//      back on the list after the press is PowerSchool's, on the server and
+//      on this build's screen.
+//  29. A list made without PowerSchool (fallback) takes the room's fix of
+//      the morning after, and leaves the day's review item to a read.
 //
 // TEETH: scripts/reflection-teeth.mjs breaks the direct id confirmation, the
 // natural key, the lease expiry, the "unconfirmed changes nothing" rule,
@@ -2234,6 +2239,85 @@ try {
       J({ C: [unitOf("C").state, unitOf("C").carryBasis], X: [unitOf("X").state, unitOf("X").carryBasis] }));
     await drive(w, la(WED, "07:30"), la(WED, "11:20"));
     check("...so Wednesday's list holds C, the 1 the room confirmed", J(w.listed(WED)) === J(["C"]), J(w.listed(WED)));
+  }
+
+  // ==========================================================================
+  console.log("\n29. A LIST MADE WITHOUT POWERSCHOOL (FALLBACK) TAKES THE ROOM'S FIX OF THE MORNING AFTER\n");
+  // ==========================================================================
+  // (review, 2026-10-12) The room's attendance for a list stays open until
+  // the next list is made, and the runbook's "Attendance done not pressed"
+  // item invites a fix the next morning. When PowerSchool is down from just
+  // after that fix, the next list is made at the ready time without a read,
+  // and claimed the carries as the last read had decided them: B, checked
+  // Here at 08:00, served again. MS live.
+  {
+    const TUE = "2026-10-13", WED = "2026-10-14", THU = "2026-10-15";
+    const ms = { grade: 7, sections: MS };
+    const staff = {
+      admin: { email: "admin@school.test", role: "admin" },
+      granted: { email: "granted@school.test", role: "campusaide", reflectionList: true, reflectionListUntil: "2026-12-18" },
+    };
+    const w = await world({
+      students: { A: ms, B: ms, C: ms, D: ms },
+      days: [{ date: TUE, slots: TUE_SLOTS }, { date: WED, slots: WED_SLOTS }, { date: THU, slots: MON_SLOTS }],
+      settings: { modeByDivision: { ms: "live", hs: "off" }, countFromDateByDivision: { ms: "2026-10-12", hs: null } },
+    });
+    for (const t of Object.values(staff)) await w.store.db.insert("teachers", { name: "Staff", ticketsAwarded: 0, ...t });
+    const as = (who) => { w.rt.signIn({ issuer: STAFF_ISSUER, email: staff[who].email }); return w.rt; };
+    const unitOf = (sn, day) => w.units(sn).find((u) => u.serveDay === day);
+    const carryOf = (sn, from) => w.units(sn).find((u) => u.kind === "carry" && u.carriedFromDay === from);
+    const done = async (day) => {
+      const res = await as("granted").run("reflectionList.listForDay", { day, lunchOk: true, checkinOk: true });
+      const ids = res.sections.flatMap((x) => x.rows).filter((r) => r.unitId && r.state !== "released" && r.mode === "live" && !r.here).map((r) => r.unitId);
+      return as("granted").run("reflectionRoom.roomAttendanceDone", { day, noShowIds: ids });
+    };
+    for (const sn of ["A", "B", "C"]) w.mark(TUE, sn, 3, "T");
+    await drive(w, la(TUE, "07:30"), la(TUE, "11:45"));
+    clock.set(la(TUE, "12:40"));
+    const tueHere = await as("granted").run("reflectionRoom.markHere", { unitId: unitOf("A", TUE)._id, here: true });
+    const tueDone = await done(TUE);
+    await drive(w, la(TUE, "12:45"), la(TUE, "15:45"));
+    w.mark(WED, "D", 2, "T");
+    await drive(w, la(WED, "07:30"), la(WED, "07:55"));
+    check("fallback: Tuesday's Attendance done (A checked) moves B and C, as Wednesday's 07:30 read decides them",
+      tueHere.ok && tueDone.ok && unitOf("B", TUE).state === "carried" && unitOf("C", TUE).state === "carried"
+        && carryOf("C", TUE)?.tags[0] === "Carried over from Tue 10/13 (at school: did not come)", J({ tueDone, B: unitOf("B", TUE).state }));
+    // 08:00: the supervisor finds B's paper check. Then PowerSchool goes down.
+    clock.set(la(WED, "08:00"));
+    const fix = [
+      await as("granted").run("reflectionRoom.roomAttendanceDone", { day: TUE, done: false }),
+      await as("granted").run("reflectionRoom.markHere", { unitId: unitOf("B", TUE)._id, here: true }),
+      await done(TUE),
+    ];
+    await drive(w, la(WED, "08:05"), la(WED, "11:30"), [[la(WED, "08:05"), () => { w.ctl.down = true; }]]);
+    check("fallback: the morning fix is taken (Undo, B checked Here, Attendance done naming C), and Wednesday's list is made without PowerSchool",
+      fix.every((r) => r.ok) && w.day(WED).freezeKind === "fallback", J({ fix, kind: w.day(WED).freezeKind }));
+    check("fallback: ...and it takes the fix: B, checked Here, is served (its carry withdrawn); C moves, tagged as the last read tagged it",
+      J(w.listed(WED)) === J(["C", "D"]) && unitOf("B", TUE).state === "listed" && unitOf("B", TUE).carryBasis === "room"
+        && carryOf("B", TUE)?.state === "expired" && unitOf("C", WED)?.kind === "carry"
+        && J(unitOf("C", WED).tags) === J(["Carried over from Tue 10/13 (at school: did not come)"]),
+      J({ wed: w.listed(WED), B: [unitOf("B", TUE).state, unitOf("B", TUE).carryBasis, carryOf("B", TUE)?.state], C: unitOf("C", WED)?.tags }));
+
+    // WEDNESDAY: nobody records the room; C is gone from Power-Up on in
+    // PowerSchool (carried by it), D is in class (served). The day's review
+    // item is raised, and an admin acknowledges it. Thursday 08:00 C is
+    // checked Here, then PowerSchool goes down again.
+    w.ctl.down = false;
+    await drive(w, la(WED, "11:35"), la(WED, "15:45"), [[la(WED, "12:40"), () => { for (const slot of [9, 6, 7]) w.mark(WED, "C", slot, "A"); }]]);
+    clock.set(la(WED, "16:00"));
+    const ack = await as("admin").run("reflectionRoom.resolveReview", { kind: "day", id: w.day(WED)._id, action: "dismiss", reason: "Supervisor out" });
+    await drive(w, la(THU, "07:30"), la(THU, "07:55"));
+    const raised = { ...w.day(WED).fallbackReview };
+    clock.set(la(THU, "08:00"));
+    const thuHere = await as("granted").run("reflectionRoom.markHere", { unitId: unitOf("C", WED)._id, here: true });
+    await drive(w, la(THU, "08:05"), la(THU, "12:00"), [[la(THU, "08:05"), () => { w.ctl.down = true; }]]);
+    check("fallback: C, checked Here the morning after (no Attendance done), is served by the list made without PowerSchool",
+      ack.ok && thuHere.ok && w.day(THU).freezeKind === "fallback" && unitOf("C", WED).state === "listed" && unitOf("C", WED).carryBasis === "room"
+        && !w.listed(THU).includes("C"), J({ thu: w.listed(THU), C: [unitOf("C", WED).state, unitOf("C", WED).carryBasis] }));
+    check("...and the day's review item, which only a read can count, is left as the last read raised it, with the admin's acknowledgement",
+      /^Room attendance not recorded Wed 10\/14 \(2 detentions decided from PowerSchool\)$/.test(raised.reason ?? "") && !!raised.resolvedAt
+        && J(w.day(WED).fallbackReview) === J(raised), J({ raised, now: w.day(WED).fallbackReview }));
+    w.ctl.down = false;
   }
 
   // ==========================================================================
