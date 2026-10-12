@@ -267,7 +267,7 @@ async function makeWorld(cfg) {
     /**
      * Attendance done, as this build's screen presses it: on a check-off day
      * naming the students it moves -- the room's rows (a live division's
-     * detention still on the list) not checked Here, read off the list
+     * detention still on the list, not decided in review) not checked Here, read off the list
      * first. `old`: as a tab still on the screen from before check-off
      * presses it, naming nobody. `between`: what happens after the list is
      * read and before the press arrives (a second supervisor's checks while
@@ -278,7 +278,7 @@ async function makeWorld(cfg) {
       if (!old) {
         const res = await w.as("pbis@school.test").run("reflectionList.listForDay", { day, lunchOk: true, checkinOk: true });
         if (res.room?.mode === "checkin") {
-          const rows = res.sections.flatMap((x) => x.rows).filter((r) => r.unitId && r.state !== "released" && r.mode === "live" && !r.here);
+          const rows = res.sections.flatMap((x) => x.rows).filter((r) => r.unitId && r.state !== "released" && r.mode === "live" && !r.resolved && !r.here);
           ids = rows.map((r) => r.unitId);
           named = rows.map((r) => r.studentNumber).sort();
         }

@@ -144,6 +144,8 @@ export type ListRowOut = {
   notHere: boolean;
   /** Check-off (owner, 2026-10-12): the room checked this student Here (screen only, never printed). */
   here: boolean;
+  /** Decided by an administrator in review: the room takes no attendance for it (reflectionRules.roomTakes). */
+  resolved?: boolean;
   /**
    * Who an MS pull slip goes to: the class before lunch (owner, 10/9), in the
    * words a screen from before 10/9 already prints on a slip (teacher, and
@@ -257,6 +259,7 @@ export async function rowsOfMadeList(ctx: Ctx, date: string, tz: string, gradeOf
       notHere: !!u.roomNotHere,
       ...lunchFields(u.division, lunch),
       here: !!u.roomHere,
+      resolved: !!u.resolvedAt,
     });
   }
   return out;

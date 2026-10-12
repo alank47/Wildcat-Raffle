@@ -42965,9 +42965,13 @@
             return !!(res && res.room && res.room.mode === 'checkin');
         }
 
-        /** A row the room takes attendance for: a live division's detention still on the list (the server's roomTakes). */
+        /**
+         * A row the room takes attendance for: a live division's detention
+         * still on the list, not decided by an administrator in review (the
+         * server's roomTakes).
+         */
         function rrRoomRow(r) {
-            return !!r && !!r.unitId && !r.released && r.state !== 'released' && r.mode === 'live';
+            return !!r && !!r.unitId && !r.released && r.state !== 'released' && r.mode === 'live' && r.resolved !== true;
         }
 
         /** Checked Here: the server's word, or a tap still on its way. */

@@ -2345,12 +2345,14 @@ export const CHECKIN_NEEDS_UPDATE = "This list now uses check-off: the Hub is up
 /**
  * Is this row of a list one the room takes attendance for? A LIVE division's
  * detention that is still on the list: not released, not dismissed in
- * review (both are shown as released), and not a row of a list not yet made.
- * The screen's boxes, the "N of M here" count, the number "Attendance done"
- * names and the server's check of that number all use this one test.
+ * review (both are shown as released), not a row of a list not yet made, and
+ * not one an administrator has decided in review ("Add to next list": the
+ * carry is theirs, and no check can change it -- review, 2026-10-12).
+ * The screen's boxes, the "N of M here" count, the students "Attendance
+ * done" names and the server's check of them all use this one test.
  */
-export function roomTakes(row: { unitId: string | null; state: string; mode: string }): boolean {
-  return !!row.unitId && row.state !== "released" && row.state !== "so-far" && row.mode === "live";
+export function roomTakes(row: { unitId: string | null; state: string; mode: string; resolved?: boolean }): boolean {
+  return !!row.unitId && row.state !== "released" && row.state !== "so-far" && row.mode === "live" && row.resolved !== true;
 }
 
 /**
@@ -2360,7 +2362,7 @@ export function roomTakes(row: { unitId: string | null; state: string; mode: str
  * would move); after it, and on a Not here day, the rows marked not here --
  * on a check-off day, the ones Attendance done named.
  */
-export function roomTally(rows: Array<{ unitId: string | null; state: string; mode: string; here?: boolean; notHere?: boolean }>,
+export function roomTally(rows: Array<{ unitId: string | null; state: string; mode: string; here?: boolean; notHere?: boolean; resolved?: boolean }>,
   mode: RoomMode, done = false): { of: number; here: number; notHere: number; noShows: number } {
   const mine = rows.filter(roomTakes);
   const here = mine.filter((r) => r.here === true).length;
@@ -2377,7 +2379,7 @@ export function roomTally(rows: Array<{ unitId: string | null; state: string; mo
  * check during the confirmation and move a student nobody confirmed). The
  * ids recorded are what the carries read (`named`, carryVerdict).
  */
-export function roomNoShowIds(rows: Array<{ unitId: string | null; state: string; mode: string; here?: boolean }>): string[] {
+export function roomNoShowIds(rows: Array<{ unitId: string | null; state: string; mode: string; here?: boolean; resolved?: boolean }>): string[] {
   return rows.filter((r) => roomTakes(r) && r.here !== true).map((r) => String(r.unitId)).sort();
 }
 

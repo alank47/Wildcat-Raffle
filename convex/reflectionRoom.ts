@@ -128,8 +128,8 @@ export const markRoom = mutation({
  * OPEN from Lunch & Power-Up start on the list's day until the next list is
  * made, and only while Attendance done is NOT pressed: a check can be taken
  * back until then. "Undo Attendance done" opens the checks again. Refused on
- * a list made before check-off (its room ticks Not here) and on a day the
- * room did not run.
+ * a list made before check-off (its room ticks Not here), on a day the room
+ * did not run, and on a detention an administrator has decided in review.
  */
 export const markHere = mutation({
   args: { unitId: v.id("reflectionUnits"), here: v.boolean() },
@@ -144,6 +144,12 @@ export const markHere = mutation({
     }
     if (u.mode !== "live") {
       return { ok: false as const, reason: "That detention is on a pilot list: nobody is pulled from it, so the room does not take its attendance." };
+    }
+    // DECIDED IN ADMIN REVIEW (review, 2026-10-12): "Add to next list" made
+    // the carry, and the carries never re-decide it, so a check here would
+    // show the student Here while they still moved to the next day.
+    if (u.resolvedAt) {
+      return { ok: false as const, reason: "An administrator has already decided this detention in admin review, so a Here check cannot change it." };
     }
     const { row, w } = await roomStateOf(ctx, u.serveDay, nowIso, tz);
     if (!row || roomModeOf(row) !== "checkin") {

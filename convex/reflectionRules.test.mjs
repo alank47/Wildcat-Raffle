@@ -771,6 +771,10 @@ console.log("\n3.8 CARRY-OVER\n");
   const tally = R.roomTally(rows, "checkin");
   check("check-off: the room counts a live division's rows still on the list -- never a released row, a shadow row or one not yet made",
     J(tally) === J({ of: 4, here: 2, notHere: 0, noShows: 2 }), J(tally));
+  const decided = { unitId: "u8", state: "carried", mode: "live", resolved: true };
+  check("check-off: a detention decided in admin review is not the room's: no box, not counted, never named by Attendance done",
+    R.roomTakes(decided) === false && J(R.roomTally([...rows, decided], "checkin")) === J(tally)
+      && J(R.roomNoShowIds([...rows, decided])) === J(["u2", "u3"]), J(R.roomTally([...rows, decided], "checkin")));
   check("...and on a Not here day the rows that would carry are the ticked ones",
     R.roomTally([{ unitId: "a", state: "listed", mode: "live", notHere: true }, { unitId: "b", state: "listed", mode: "live" },
       { unitId: "c", state: "listed", mode: "shadow", notHere: true }], "notHere").noShows === 1);

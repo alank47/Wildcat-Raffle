@@ -69,6 +69,8 @@
 //      the morning after, and leaves the day's review item to a read.
 //  30. A Here check never rides a detention onto the next list: a carry
 //      released before its pull and sent back to wait loses it.
+//  31. A detention decided in admin review cannot be checked Here, and the
+//      room does not count it.
 //
 // TEETH: scripts/reflection-teeth.mjs breaks the direct id confirmation, the
 // natural key, the lease expiry, the "unconfirmed changes nothing" rule,
@@ -2270,7 +2272,7 @@ try {
     const carryOf = (sn, from) => w.units(sn).find((u) => u.kind === "carry" && u.carriedFromDay === from);
     const done = async (day) => {
       const res = await as("granted").run("reflectionList.listForDay", { day, lunchOk: true, checkinOk: true });
-      const ids = res.sections.flatMap((x) => x.rows).filter((r) => r.unitId && r.state !== "released" && r.mode === "live" && !r.here).map((r) => r.unitId);
+      const ids = res.sections.flatMap((x) => x.rows).filter((r) => r.unitId && r.state !== "released" && r.mode === "live" && !r.resolved && !r.here).map((r) => r.unitId);
       return as("granted").run("reflectionRoom.roomAttendanceDone", { day, noShowIds: ids });
     };
     for (const sn of ["A", "B", "C"]) w.mark(TUE, sn, 3, "T");
@@ -2380,6 +2382,60 @@ try {
     await drive(w, la(THU, "13:05"), la(THU, "15:45"), [[la(THU, "13:30"), () => { for (const slot of [8, 6, 7]) w.mark(THU, "Y", slot, "A"); }]]);
     check("rides: ...so Y is PowerSchool's on Thursday, and carries -- never served by a check made on another list",
       byId(carry._id).state === "carried" && byId(carry._id).carryBasis === "powerschool", J([byId(carry._id).state, byId(carry._id).carryBasis]));
+  }
+
+  // ==========================================================================
+  console.log("\n31. A DETENTION DECIDED IN ADMIN REVIEW CANNOT BE CHECKED HERE\n");
+  // ==========================================================================
+  // (review, 2026-10-12) MS live. E is on a 6th list (carried 5 times) and
+  // absent at Power-Up and P4; nothing is pressed on Tuesday, so the
+  // after-school read sends E to review ("Carried 5 times"). At 07:00
+  // Wednesday PBIS adds E to the next list. At 07:10 the room's paper check
+  // for E is typed in: it was taken, E showed Here and counted in "N of M
+  // here" -- and E still moved, because the carries never re-decide a
+  // review decision.
+  {
+    const TUE = "2026-10-13", WED = "2026-10-14";
+    const ms = { grade: 7, sections: MS };
+    const staff = {
+      pbis: { email: "pbis@school.test", role: "pbis" },
+      granted: { email: "granted@school.test", role: "campusaide", reflectionList: true, reflectionListUntil: "2026-12-18" },
+    };
+    const w = await world({
+      students: { A: ms, E: ms },
+      days: [{ date: TUE, slots: TUE_SLOTS }, { date: WED, slots: WED_SLOTS }],
+      settings: { modeByDivision: { ms: "live", hs: "off" }, countFromDateByDivision: { ms: "2026-10-12", hs: null } },
+    });
+    for (const t of Object.values(staff)) await w.store.db.insert("teachers", { name: "Staff", ticketsAwarded: 0, ...t });
+    const as = (who) => { w.rt.signIn({ issuer: STAFF_ISSUER, email: staff[who].email }); return w.rt; };
+    const unitOf = (sn, day) => w.units(sn).find((u) => u.serveDay === day);
+    w.mark(TUE, "A", 3, "T"); w.mark(TUE, "E", 3, "T");
+    for (const slot of [5, 9]) w.mark(TUE, "E", slot, "A");
+    await drive(w, la(TUE, "07:30"), la(TUE, "11:45"));
+    await w.store.db.patch(unitOf("E", TUE)._id, { carryCount: 5 });
+    await drive(w, la(TUE, "11:50"), la(TUE, "15:45"));
+    clock.set(la(WED, "07:00"));
+    const add = await as("pbis").run("reflectionRoom.resolveReview", { kind: "detention", id: unitOf("E", TUE)._id, action: "add" });
+    clock.set(la(WED, "07:10"));
+    const late = await as("granted").run("reflectionRoom.markHere", { unitId: unitOf("E", TUE)._id, here: true });
+    const view = await as("granted").run("reflectionList.listForDay", { day: TUE, lunchOk: true, checkinOk: true });
+    const rowE = view.sections.flatMap((x) => x.rows).find((r) => r.studentNumber === "E");
+    check("decided: E, added to the next list in review, cannot be checked Here afterwards: refused in words, and nothing recorded",
+      add.ok && unitOf("E", TUE).state === "carried" && late.ok === false && /already decided this detention in admin review/.test(late.reason)
+        && !unitOf("E", TUE).roomHere, J({ add, late }));
+    check("...and the room does not count it: 0 of 1 here (A alone), and E's row is not the room's",
+      rowE?.resolved === true && view.room.of === 1 && view.room.here === 0 && view.room.noShows === 1, J({ room: view.room, rowE: rowE && { resolved: rowE.resolved } }));
+    const scr = screenWorld(read("./script.js"), {
+      query: (args, path) => as("granted").run(path.replace(":", "."), { ...args, day: TUE }),
+      mutation: (args, path) => as("granted").run(path.replace(":", "."), args),
+    }, [["A", "Ann", "Avila"], ["E", "Eve", "Ellis"]].map(([studentNumber, firstName, lastName]) => ({ studentNumber, firstName, lastName })));
+    await scr.app.loadReflectionList();
+    const boxes = [...scr.fixed.rrList.innerHTML.matchAll(/data-rr-here="([^"]*)"/g)].map((m) => m[1]);
+    check("...and this build's screen gives E's row no Here box: one box (A's), 0 of 1 here",
+      J(boxes) === J([String(unitOf("A", TUE)._id)]) && /0 of 1 here/.test(scr.fixed.rrList.innerHTML), J(boxes));
+    await drive(w, la(WED, "07:30"), la(WED, "11:20"));
+    check("...so E moves to Wednesday as the review decided, and no list says E was Here",
+      w.listed(WED).includes("E") && !unitOf("E", TUE).roomHere, J(w.listed(WED)));
   }
 
   // ==========================================================================
