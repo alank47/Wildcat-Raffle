@@ -420,7 +420,7 @@ The developer also keeps a calendar reminder for the first week of January.
 ## Automatic perfect-day award (Wildcat Cash for perfect attendance)
 
 Added 2026-10-12 (server half, then the site half: the student card line,
-the staff screens and the admin card ship with the site stamped `20261012c`). Each school morning the server reads the last ten school days
+the staff screens and the admin card ship with the site stamped `20261012c`). Each school morning the server reads the last fifteen school days
 from PowerSchool, finds every student who had a **perfect day** (no absence,
 excused ones included, no unexcused tardy, no ditching, in any block, Promise
 Time and Power-Up included; an excused tardy and a field trip do not break
@@ -472,7 +472,10 @@ the student as pending) is paid on the next payday that money moves, whatever
 the switch did since: off and on again, live to pilot, or a student taken out
 of the pilot. Payday does not ask today's start date again. While off, the
 status counts those days as waiting ("off"); a control's days wait until the
-controls are cleared. What a pause does lose is any school day not yet
+controls are cleared. And the days decided before a pause are still re-read
+by every run while they are in the lookback, exactly like any other: a late
+absence is applied before payday (or puts a paid day on the paid-then-broken
+list), and a day held for the second check is released once it agrees. What a pause does lose is any school day not yet
 decided when it went off: the run decides each day the next morning, so
 switching off before Monday's run means Friday is never decided. After a false
 alarm the same morning, switch back on with `"countFromDate":"<that Friday>"`
@@ -518,14 +521,35 @@ npx convex run --prod perfectDay:resolveHeld '{"studentNumber":"...","date":"...
 npx convex run --prod perfectDay:removeDays '{"studentNumber":"...","dates":["..."],"reason":"...","actorName":"Your Name"}'
 npx convex run --prod perfectDay:correctPayout '{"txnId":"txn_...","removeDates":["..."],"reason":"...","actorName":"Your Name"}'
 npx convex run --prod perfectDay:forfeitPending '{"from":"...","to":"...","reason":"...","actorName":"Your Name"}'   # counts; "apply":true forfeits
+npx convex run --prod perfectDay:releaseUnchecked '{"date":"...","reason":"...","actorName":"Your Name"}'   # a date's days held only for the second check; counts; "apply":true releases
 ```
 
 - **Held dates** (a read that would not hold still, far fewer students marked
   than usual, a block far below its usual level, or the Perfect Attendance
   screen disagreeing about more than 1% of the school) are tried again every
-  run and expire unpaid once they leave the ten-school-day lookback. A block
-  counts as expected only if it met on most days of the same weekday pattern,
-  so a day when all ten blocks met does not make a normal day look short.
+  run and expire unpaid once they leave the fifteen-school-day lookback (8/28's
+  Promise Time PM was entered 7-12 school days late). The status lists every
+  held date (`heldDates`) with its reason before it expires. A day that ran
+  exactly the blocks of a day already decided (a Monday on the Tue/Fri bell,
+  a normal day after stack or minimum days) is not short of a block; otherwise
+  a block counts as expected only if it met on most days of the same weekday
+  pattern. PowerSchool cannot tell "not entered yet" from "did not meet", so a
+  day held for a missing block says both: if the block did not meet (an
+  assembly without Power-Up), `decideAnyway` decides it.
+- **Held only for the second check** (the attendance rebuild was down or
+  writing): a run that can check releases them. They never expire, so an
+  outage longer than the lookback forfeits nothing; they wait on the status's
+  held list for `releaseUnchecked`, one call per date.
+- **A date already decided whose re-read fails**, or that PowerSchool or the
+  calendar now calls no school while days are pending, held or paid for it,
+  stays decided with a note (the run tries a failed read again); its days
+  stand until an admin takes them out. Once none is pending, held or paid,
+  an admin's `markNoSchool` sticks.
+- **A student who left and came back**: PowerSchool's students row holds the
+  current enrolment only, so the days before they left are judged on their
+  class records. A day already decided stands (and is paid) if those show a
+  class that day; with no class record either it is held for an admin, never
+  broken. Only an exit on or before the day breaks it.
 - **A date already decided whose re-read is held** stays decided, with the
   re-read's reason: its days stand, but nothing is paid over what the read
   shows. A pending day for a student the read shows absent or tardy becomes
