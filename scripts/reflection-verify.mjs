@@ -489,7 +489,20 @@ export function judge({ day, days, sch, exp, snap, salt }) {
         else c.excluded++;
         continue;
       }
-      if (!sys) { c.missing++; continue; }
+      if (!sys) {
+        // BEFORE THE LIST STARTED COUNTING, NOTHING IS HELD. The reader never
+        // reads a day before countFromDate, so a tardy from then has no row --
+        // that is the design, not a dropped tardy. On the first live day
+        // (10/9) this put 118 pre-trial tardies under "missing" and made a
+        // clean day read NOT CLEAN. Agrees, like any other rule exclusion.
+        // PowerSchool's row carries no division here, so the cut is the
+        // EARLIEST start of any division: before it, no division counted.
+        // (Between two different starts it stays "missing" -- the cautious
+        // side: a false alarm, never a hidden drop.)
+        const starts = Object.values(exp.settings?.countFromDateByDivision ?? {}).filter(Boolean).sort();
+        if (starts.length && t.date < starts[0]) { c.excluded++; continue; }
+        c.missing++; continue;
+      }
       if (sys.unitServeDay === day) { c.onList++; continue; }
       if (sys.unitServeDay && sys.unitServeDay < day) { c.earlierList++; continue; }
       if (sys.unitServeDay && sys.unitServeDay > day) { c.enteredLate++; continue; }

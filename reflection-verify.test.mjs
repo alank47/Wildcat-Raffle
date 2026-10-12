@@ -260,6 +260,24 @@ try {
       fake.log.some((l) => l.kind === "count" && l.q === `schoolid==${SCHOOL};yearid==${YEAR};att_date==${MON};periodid==851`)
       && fake.log.filter((l) => l.kind === "table" && l.table === "attendance" && /att_date==2026-10-12/.test(l.q)).length >= 2);
   }
+  // A tardy from before the list started counting has no row in the system
+  // by design (the reader never reads those days): it agrees, never "missing".
+  {
+    const FRI = "2026-10-09";
+    const w = world();
+    for (const slot of TUE_SLOTS) {
+      w.mark(FRI, "CM", slot, "A");
+      for (let i = 0; i < 20; i++) if (String(slot) in MS) w.mark(FRI, `F${i}`, slot, "A");
+    }
+    w.mark(FRI, SN.A, 3, "T");                    // Friday, before countFromDate (Monday): the system never read it
+    const fake = fakePowerSchool(w.tables);
+    const ps = V.powerSchool({ host: "ps.test", clientId: "id", clientSecret: "secret", fetch: fake.fetch });
+    const r = await V.compare({ ps, env: ENV, day: TUE, dir, exportFn: async () => exportOf({ good: false }), say: () => {},
+      now: new Date(la(TUE, "16:00")) });
+    check("a tardy dated before countFromDate, never stored by the system, agrees (excluded), not missing",
+      r.counts.missing === 1 && r.controls.missing === 1 && r.counts.excluded === 2, J(r.counts));
+  }
+
 
   // ==========================================================================
   console.log("\n5. THE SECOND REVIEW (2026-10-08): WHAT THE VERIFY MUST NOT CALL A FAULT, AND WHAT IT MUST\n");
