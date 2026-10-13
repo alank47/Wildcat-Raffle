@@ -855,6 +855,17 @@ const CASES = [
   { guard: "the screen has no Room column", file: SCREEN, test: ROOMS_TEST,
     from: "            { label: 'Room', type: 'text', text: r => rrRoomOf(r) },\n", to: "",
     mustFail: "this build's screen: a sortable Room column beside the class, the room in each row, a dash where none is known" },
+
+  // ---- Review of the room numbers (2026-10-13): an owner with no room.
+  { guard: "an owner with no room loses their address to another record's psEmail", file: ROOMS, test: ROOMS_TEST,
+    from: "    if (e && !own.has(e)) own.set(e, room);", to: "    if (e && room && !own.has(e)) own.set(e, room);",
+    mustFail: "...even when that record has no room: its owner shows a dash, never the other record's room" },
+  { guard: "an owner with no room loses their address on the whole staff table, so the TEST list names a room the real list does not", file: ROOMS, test: ROOMS_TEST,
+    from: "    if (e && !own.has(e)) own.set(e, room);", to: "    if (e && room && !own.has(e)) own.set(e, room);",
+    mustFail: "a TEST list built for the same day names the same rooms as the real list made that day, and stores them on its rows" },
+  { guard: "a PowerSchool address goes to the first record with a room, not the first record with that address", file: ROOMS, test: ROOMS_TEST,
+    from: "    if (p && p !== e && !alt.has(p)) alt.set(p, room);", to: "    if (p && p !== e && room && !alt.has(p)) alt.set(p, room);",
+    mustFail: "every address gets its own record's room, looked up alone, beside every other address, or from the whole staff table (the TEST list): owner with no room, two records sharing a PowerSchool address, and the rest" },
 ];
 
 // A builder's shortcut, never set in npm test: REFLECTION_TEETH_ONLY=<text>

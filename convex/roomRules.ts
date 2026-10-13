@@ -96,26 +96,38 @@ export function staffRoomVerdict(req: { actorRole: unknown; current: unknown; re
 
 /**
  * THE ROOM ON FILE FOR EACH TEACHER ADDRESS, from staff records: normalized
- * email -> room. A record's own `email` wins over another record's `psEmail`
- * (the address PowerSchool files a renamed teacher's sections under,
- * teachers.psEmail): the roster names a teacher by the PowerSchool address,
- * so without it a renamed teacher's classes would show no room at all. A
- * psEmail that is another staff member's email is refused where it is set
- * (views_app), so the two never compete for real.
+ * email -> room. The `psEmail` counts too (the address PowerSchool files a
+ * renamed teacher's sections under, teachers.psEmail): the roster names a
+ * teacher by the PowerSchool address, so without it a renamed teacher's
+ * classes would show no room at all.
+ *
+ * ONE RECORD PER ADDRESS, ROOM OR NO ROOM -- the record
+ * reflection.teacherRoomsFor reads for it:
+ *   - the record whose own `email` it is, over any record's psEmail, even
+ *     when that owner has no room. setPowerSchoolEmail refuses a psEmail that
+ *     is a staff email, but an account made later can take the address
+ *     (views_app.rosterEmailFor refuses it on every read for that reason);
+ *     the owner's class is then a dash, never the renamed teacher's room;
+ *   - otherwise the first record with it as psEmail (the oldest, as both
+ *     reads return them).
+ * So a TEST list (this over the whole staff table) and the real list (one
+ * record per address it names) give every address the same room.
  */
 export function roomByTeacherEmail(rows: Array<{ email?: unknown; psEmail?: unknown; room?: unknown } | null | undefined>):
   Record<string, string> {
-  const own: Record<string, string> = {};
-  const alt: Record<string, string> = {};
+  const own = new Map<string, string | null>();
+  const alt = new Map<string, string | null>();
   for (const r of rows || []) {
     const room = cleanRoom(r?.room, ROOM_MAX);
-    if (!room) continue;
     const e = norm(r?.email);
     const p = norm(r?.psEmail);
-    if (e && !(e in own)) own[e] = room;
-    if (p && p !== e && !(p in alt)) alt[p] = room;
+    if (e && !own.has(e)) own.set(e, room);
+    if (p && p !== e && !alt.has(p)) alt.set(p, room);
   }
-  return { ...alt, ...own };
+  const out: Record<string, string> = {};
+  for (const [p, room] of alt) if (room && !own.has(p)) out[p] = room;
+  for (const [e, room] of own) if (room) out[e] = room;
+  return out;
 }
 
 // ---------------------------------------------------------------------------

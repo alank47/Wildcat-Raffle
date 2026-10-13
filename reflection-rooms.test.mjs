@@ -30,6 +30,10 @@
 //   6. AN OPEN TAB FROM BEFORE BREAKS. The rooms are additive fields; the
 //      screen open tabs run today (492e557) must draw and print the list as
 //      it always did.
+//   7. ANOTHER RECORD'S ROOM. A renamed teacher's PowerSchool address can be
+//      another staff member's own; when that owner has no room, the class is
+//      a dash -- on the real list and the TEST list alike -- never the
+//      renamed teacher's room.
 //
 // IT RUNS THE SHIPPED CODE: roomRules, the sync (sisAction), the staff
 // mutation (staffInvites), the reader, tick and freeze, listForDay, the TEST
@@ -114,6 +118,11 @@ try {
       map["ortiz@school.test"] === "104" && map["new.name@school.test"] === "777" && map["old.name@school.test"] === "777"
         && !("nobody@school.test" in map), J(map));
     check("...a record's own email wins over another record's PowerSchool address", map["clash@school.test"] === "1", J(map));
+    const roomless = RM.roomByTeacherEmail([
+      { email: "owner@school.test", room: null }, { email: "renamed@school.test", psEmail: "owner@school.test", room: "214" },
+    ]);
+    check("...even when that record has no room: its owner shows a dash, never the other record's room",
+      !("owner@school.test" in roomless) && roomless["renamed@school.test"] === "214", J(roomless));
     check("PowerSchool's answer to the room read: 403 is not granted (today), 2xx granted, anything else an error",
       RM.sectionRoomStatus(403) === "not-granted" && RM.sectionRoomStatus(200) === "granted"
         && [400, 404, 500, 503, 0].every((s) => RM.sectionRoomStatus(s) === "error"));
@@ -124,6 +133,39 @@ try {
       J(RM.sectionRoomsQuery({ schoolid: SCHOOL, termid: "3601" })) === J({ q: "schoolid==1817;termid==3601", projection: "id,room" }));
     check("roomRules imports nothing, so the sync's own harness can load it as it is",
       !/^import /m.test(read("./convex/roomRules.ts")));
+  }
+
+  // ==========================================================================
+  console.log("\n1b. THE TEST LIST'S ROOMS ARE THE REAL LIST'S\n");
+  // ==========================================================================
+  // The real list reads one staff record per address it names
+  // (reflection.teacherRoomsFor: the address's owner by email, else the
+  // oldest record with it as psEmail). The TEST list runs roomByTeacherEmail
+  // over the whole staff table. An address's room must be that one record's,
+  // room or no room, however many other addresses are looked up beside it --
+  // or a TEST list, or a list that happens to name both teachers, shows a
+  // room the address's own record does not have.
+  {
+    const store = makeDb(schemaSrc);
+    const staff = [
+      { email: "owner@school.test", name: "Owner, no room" },
+      { email: "renamed@school.test", psEmail: "owner@school.test", room: "214" },
+      { email: "has@school.test", room: "105" }, { email: "renamed2@school.test", psEmail: "has@school.test", room: "215" },
+      { email: "first@school.test", psEmail: "old@school.test" }, { email: "second@school.test", psEmail: "old@school.test", room: "216" },
+      { email: "plain@school.test", room: "B-12" }, { email: "self@school.test", psEmail: "self@school.test", room: "9" },
+    ];
+    for (const t of staff) await store.db.insert("teachers", { name: "Staff", ticketsAwarded: 0, ...t });
+    const addresses = [...new Set(staff.flatMap((t) => [t.email, t.psEmail]).filter(Boolean)), "nobody@school.test"];
+    const ctx = { db: store.db };
+    const alone = {};
+    for (const a of addresses) alone[a] = (await mods.reflection.teacherRoomsFor(ctx, [a]))[a] ?? null;
+    const together = await mods.reflection.teacherRoomsFor(ctx, addresses);
+    const whole = RM.roomByTeacherEmail(store.rows("teachers"));
+    check("every address gets its own record's room, looked up alone, beside every other address, or from the whole staff table (the TEST list): owner with no room, two records sharing a PowerSchool address, and the rest",
+      addresses.every((a) => (whole[a] ?? null) === alone[a] && (together[a] ?? null) === alone[a])
+        && alone["owner@school.test"] === null && alone["renamed@school.test"] === "214" && alone["has@school.test"] === "105"
+        && alone["old@school.test"] === null && alone["plain@school.test"] === "B-12" && alone["self@school.test"] === "9",
+      J({ alone, together, whole }));
   }
 
   // ==========================================================================
@@ -351,8 +393,9 @@ try {
   // through Tuesday (Tue/Fri: MS from P4), Wednesday (P4) and Thursday
   // (Mon/Thu: MS from P3). Rooms: P3-A Ms Ortiz 104; P4-A Ms Park 105; P4-B
   // Mr Bell 205, which PowerSchool rooms in PS-215; P4-C Ms Cole, no room
-  // anywhere; Power-Up 7 Ms Ruiz 109 (never an MS row's room); HS Power-Up
-  // PU-10 Ms Cruz 110, PowerSchool PS-310; PU-11 Mr Lam 111.
+  // anywhere (Mr Ng's 299 is filed under her address, and is not hers);
+  // Power-Up 7 Ms Ruiz 109 (never an MS row's room); HS Power-Up PU-10 Ms
+  // Cruz 110, PowerSchool PS-310; PU-11 Mr Lam 111.
   const TUE_SLOTS = [1, 3, 5, 7, 8, 9, 10], WED_SLOTS = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10], THU_SLOTS = [1, 2, 4, 6, 8, 9, 10];
   const MS = { 1: "PT-A", 2: "P1-A", 3: "P2-A", 4: "P3-A", 5: "P4-A", 6: "P5-A", 7: "P6-A", 9: "PU-7", 10: "PM-A" };
   const HS = { 1: "PT-H", 2: "P1-H", 3: "P2-H", 4: "P3-H", 5: "P4-H", 6: "P5-H", 7: "P6-H", 8: "PU-10", 10: "PM-H" };
@@ -402,6 +445,10 @@ try {
     ruiz: { email: "pu-7@school.test", role: "teacher", name: "Ria Ruiz", room: "109" },
     cruz: { email: "pu-10@school.test", role: "teacher", name: "Cam Cruz", room: "110" },
     lam: { email: "pu-11@school.test", role: "teacher", name: "Lu Lam", room: "111" },
+    // Renamed, filed in PowerSchool under an address that is now Ms Cole's
+    // own (her account came later). The roster refuses that psEmail, and so
+    // must the rooms: P4-C is Ms Cole's class, and she has no room.
+    ng: { email: "ng@school.test", role: "teacher", name: "Nu Ng", psEmail: "p4-c@school.test", room: "299" },
   };
   const NAMES = { M1: ["Anouk", "Quarles"], M2: ["Bea", "Vasquezz"], M3: ["Cyprian", "Mossberg"], M4: ["Delphine", "Zanetti"],
     M5: ["Edda", "Pruitt"], M6: ["Fen", "Okafor"], H1: ["Xiomara", "Lindqvist"], H2: ["Yusuf", "Brannigan"] };
