@@ -183,6 +183,7 @@ export const writeRosterSnapshot = internalMutation({
       termName: a.termName ?? meta.termName ?? null,
       lastRefusal: null,
       classBySlot: a.rows.every((r) => !!r.classBySlot),
+      rooms: a.rows.every((r) => !!r.classBySlot && Object.values(r.classBySlot).every((c) => c.teacherEmail !== undefined)),
     } satisfies RosterMeta);
     return { taken: true, reason: "", students: a.studentCount };
   },

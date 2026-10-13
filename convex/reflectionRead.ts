@@ -313,8 +313,10 @@ export const read = internalAction({
     // one refused (a sync mid-run, say) is tried again by the retry. And
     // whatever the read, whatever the day: a snapshot taken by the code
     // before 10/9 (no classBySlot, so it cannot see a second class in the
-    // slot before lunch) is replaced by the next read, not the next morning.
-    if ((a.reads.roster && c.rosterMeta?.snapDay !== a.date) || !c.rosterMeta?.classBySlot) {
+    // slot before lunch), or before 10/13 (no rooms: it does not know whose
+    // room an MS class meets in, so the list would copy a dash onto every MS
+    // row), is replaced by the next read, not the next morning.
+    if ((a.reads.roster && c.rosterMeta?.snapDay !== a.date) || !c.rosterMeta?.classBySlot || !c.rosterMeta?.rooms) {
       const term = tok ? await readTerm(host, tok, schoolid, yearid, process.env.PS_TERM_ID, deadline) : { termId: process.env.PS_TERM_ID };
       try {
         stats.roster = await takeRosterSnapshot(ctx, term);

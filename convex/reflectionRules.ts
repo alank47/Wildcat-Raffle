@@ -462,7 +462,8 @@ export type RosterSnap = {
  * One slot's class. `teacherEmail` (whose own room the class meets in) and
  * `room` (PowerSchool's room for the section, once granted) were added
  * 2026-10-13 for the room an MS student is pulled from; a snapshot taken
- * before has neither, and its rows show no room until the next one.
+ * before has neither, and its rows show no room until the next one -- which
+ * the next read of any kind takes (RosterMeta.rooms).
  */
 export type SlotClass = {
   sectionId: string | null; teacher: string | null; course: string | null; flag: string | null; sections: number;
@@ -685,6 +686,13 @@ export type RosterMeta = {
    * from a snapshot that can only guess between two classes in a slot.
    */
   classBySlot?: boolean | null;
+  /**
+   * Every slot's class says whose room it meets in (SlotClass.teacherEmail,
+   * 2026-10-13). Missing on one taken by the code before, which already says
+   * classBySlot: the next read of any kind takes a new one, the same day, so
+   * a list made that day does not copy a dash onto every MS row for good.
+   */
+  rooms?: boolean | null;
 };
 
 const monthDay = (dateKey: string) => {

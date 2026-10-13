@@ -390,6 +390,8 @@ tick carries on.
   `reflection:rosterStatus` shows `classBySlot: true` on a whole one. One
   without it is replaced by the next read of any kind, the same day, once:
   on the day this ships, the list made at the close is never made from it.
+  The same for rooms (10/13): a snapshot that does not know whose room each
+  MS class meets in has no `rooms: true`, and is replaced the same way.
 - **The PowerSchool sync no longer empties the roster on a bad read.** When
   the roster query comes back empty, or with under half the rows already here,
   the sync keeps the roster it has and records `rosterKept: true` and the
@@ -426,8 +428,10 @@ the room on the outside of each slip. Where it comes from, first match wins:
 changed later shows on the next list (and on "so far" views) but never
 changes a list already on paper. Lists made before rooms shipped show a dash.
 On the day this ships, the morning's roster snapshot does not yet know whose
-room each MS class meets in, so MS rows show a dash until the next morning's
-snapshot; HS rows show the Power-Up teacher's room at once.
+room each MS class meets in, so the next read of any kind (within about an
+hour, and always the closing read before the list is made) takes a new one
+that does. MS rows on the screen show a dash until then; HS rows show the
+Power-Up teacher's room at once.
 
 ### January term switch (do this the first week of January)
 

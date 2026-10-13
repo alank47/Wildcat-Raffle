@@ -34,6 +34,10 @@
 //      another staff member's own; when that owner has no room, the class is
 //      a dash -- on the real list and the TEST list alike -- never the
 //      renamed teacher's room.
+//   8. THE DAY IT SHIPS, MS ROOMS ARE DASHES FOR GOOD. The morning's roster
+//      snapshot, taken by the code before, does not know whose room an MS
+//      class meets in. The next read must take a new one, so the list made
+//      that day, and its slips, name the rooms.
 //
 // IT RUNS THE SHIPPED CODE: roomRules, the sync (sisAction), the staff
 // mutation (staffInvites), the reader, tick and freeze, listForDay, the TEST
@@ -635,6 +639,49 @@ try {
   await testWorld.app.loadReflectionList();
   check("...and the screen draws a TEST list's rooms like a real list's",
     testWorld.app.data?.demo === true && /data-rr-classroom="PS-215"/.test(testWorld.fixed.rrList.innerHTML), testWorld.app.why);
+
+  // ==========================================================================
+  console.log("\n5b. THE DAY THIS SHIPS: THE MORNING'S SNAPSHOT WAS TAKEN BY THE CODE BEFORE ROOMS\n");
+  // ==========================================================================
+  // The deploy lands after the 07:30 opening read. That snapshot came from
+  // 492e557: it keeps each MS class (classBySlot, 10/9) but not whose room
+  // it meets in, and its meta already says classBySlot, so the 10/9 retake
+  // does not fire. Without more, every MS row on the list made at 11:45 --
+  // and on its pull slips -- is a dash for good, typed rooms or not. The
+  // next read of any kind takes a new one instead, once.
+  {
+    const ship = await school(LIVE);
+    await drive(ship, la(TUE, "07:30"), la(TUE, "07:30"));
+    for (const r of ship.store.rows("reflectionRoster")) {
+      const classBySlot = Object.fromEntries(Object.entries(r.classBySlot).map(([k, { teacherEmail, room, ...c }]) => [k, c]));
+      await ship.store.db.patch(r._id, { classBySlot, puRoom: undefined });
+    }
+    const metaRow = ship.store.rows("appState").find((r) => r.key === "reflection:roster");
+    const { rooms: marker, ...oldMeta } = metaRow.value;
+    await ship.store.db.patch(metaRow._id, { value: oldMeta });
+    clock.set(la(TUE, "07:32"));
+    const early = await ship.tryRun("admin", "reflectionList.listForDay", { day: "today", ...ASK });
+    check("the control: from this morning's snapshot as 492e557 took it, every MS row is a dash; HS rows have the Power-Up teacher's room",
+      marker === true && oldMeta.classBySlot === true && oldMeta.snapDay === TUE
+        && J(roomsOf(early)) === J({ H1: "110", H2: "111", M1: null, M2: null, M3: null, M4: null }), J({ marker, rooms: roomsOf(early) }));
+
+    const readsBefore = ship.log.filter((l) => l.path === "reflectionRead.read").length;
+    await drive(ship, la(TUE, "07:35"), la(TUE, "11:45"));
+    const later = ship.log.filter((l) => l.path === "reflectionRead.read").slice(readsBefore);
+    clock.set(la(TUE, "11:46"));
+    const shipped = await ship.tryRun("admin", "reflectionList.listForDay", { day: TUE, ...ASK });
+    const shipUnits = ship.store.rows("reflectionUnits").filter((u) => u.serveDay === TUE);
+    check("the next read takes a new snapshot the same day, so the list made at 11:45 names every room the real list does, MS included, and each detention keeps it",
+      shipped.view === "made" && J(roomsOf(shipped)) === J(EXPECT)
+        && J(shipUnits.find((u) => u.studentNumber === "M1")?.roomSnapshot) === J({ room: "105", source: "teacher" })
+        && J(shipUnits.find((u) => u.studentNumber === "M2")?.roomSnapshot) === J({ room: "PS-215", source: "powerschool" }),
+      J({ view: shipped.view, rooms: roomsOf(shipped) }));
+    const m = ship.store.rows("appState").find((r) => r.key === "reflection:roster")?.value;
+    check("...taken ONCE: the snapshot says it knows the rooms, and the reads after the first do not take it again",
+      later.length >= 2 && m?.rooms === true && m.classBySlot === true && m.snapDay === TUE && m.snapAt === later[0].at
+        && ship.store.rows("reflectionRoster").every((r) => r.snapAt === m.snapAt),
+      J({ reads: later.length, snapAt: m?.snapAt, first: later[0]?.at, marker: m?.rooms }));
+  }
 
   // ==========================================================================
   console.log("\n6. THE CLASSROOMS LIST ON THE TEACHERS TAB\n");

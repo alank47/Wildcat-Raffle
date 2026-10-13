@@ -626,8 +626,8 @@ const CASES = [
 
   // ---- Review of the class-before-lunch change (2026-10-09): the day it ships, open tabs, the stored TEST list.
   { guard: "a snapshot taken by the code before 10/9 is kept until the next morning's opening read", file: READER, test: READER_TEST,
-    from: "    if ((a.reads.roster && c.rosterMeta?.snapDay !== a.date) || !c.rosterMeta?.classBySlot) {",
-    to: "    if ((a.reads.roster && c.rosterMeta?.snapDay !== a.date) || !c.rosterMeta) {",
+    from: " || !c.rosterMeta?.classBySlot || !c.rosterMeta?.rooms) {",
+    to: " || !c.rosterMeta || !c.rosterMeta?.rooms) {",
     mustFail: "the next read takes a whole snapshot the same day, so the list made at 11:45 says 'Check PowerSchool: 2 classes in P3' for B3, and names B5's RSP class" },
   { guard: "the snapshot never says it is whole, so every read takes it again", file: SERVER, test: READER_TEST,
     from: "      classBySlot: a.rows.every((r) => !!r.classBySlot),\n", to: "",
@@ -856,7 +856,7 @@ const CASES = [
     from: "            { label: 'Room', type: 'text', text: r => rrRoomOf(r) },\n", to: "",
     mustFail: "this build's screen: a sortable Room column beside the class, the room in each row, a dash where none is known" },
 
-  // ---- Review of the room numbers (2026-10-13): an owner with no room.
+  // ---- Review of the room numbers (2026-10-13): an owner with no room, and the day it ships.
   { guard: "an owner with no room loses their address to another record's psEmail", file: ROOMS, test: ROOMS_TEST,
     from: "    if (e && !own.has(e)) own.set(e, room);", to: "    if (e && room && !own.has(e)) own.set(e, room);",
     mustFail: "...even when that record has no room: its owner shows a dash, never the other record's room" },
@@ -866,6 +866,12 @@ const CASES = [
   { guard: "a PowerSchool address goes to the first record with a room, not the first record with that address", file: ROOMS, test: ROOMS_TEST,
     from: "    if (p && p !== e && !alt.has(p)) alt.set(p, room);", to: "    if (p && p !== e && room && !alt.has(p)) alt.set(p, room);",
     mustFail: "every address gets its own record's room, looked up alone, beside every other address, or from the whole staff table (the TEST list): owner with no room, two records sharing a PowerSchool address, and the rest" },
+  { guard: "a snapshot taken by the code before rooms is kept until the next morning's opening read", file: READER, test: ROOMS_TEST,
+    from: " || !c.rosterMeta?.classBySlot || !c.rosterMeta?.rooms) {", to: " || !c.rosterMeta?.classBySlot) {",
+    mustFail: "the next read takes a new snapshot the same day, so the list made at 11:45 names every room the real list does, MS included, and each detention keeps it" },
+  { guard: "the snapshot never says it knows the rooms, so every read takes it again", file: SERVER, test: ROOMS_TEST,
+    from: "      rooms: a.rows.every((r) => !!r.classBySlot && Object.values(r.classBySlot).every((c) => c.teacherEmail !== undefined)),\n", to: "",
+    mustFail: "...taken ONCE: the snapshot says it knows the rooms, and the reads after the first do not take it again" },
 ];
 
 // A builder's shortcut, never set in npm test: REFLECTION_TEETH_ONLY=<text>
