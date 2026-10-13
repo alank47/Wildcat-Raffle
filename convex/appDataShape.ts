@@ -260,6 +260,44 @@ function pick(source: Record<string, any>, keys: readonly string[]): Record<stri
 export const MAX_CASH_DELTA = 5000;
 
 /**
+ * MONEY ONLY THE SERVER MAKES (2026-10-12): the automatic perfect-day award.
+ *
+ * The scheduled job (perfectDay.ts) writes one Wildcat Cash row per student
+ * per week, kind "attendance", behaviour "system:perfect-day", given by
+ * "system:attendance". Every staff analytic leaves a kind other than
+ * award/deduct out (script.js isCashBehaviourRow), so a row carrying these
+ * marks is money no praise number will ever show.
+ *
+ * WHICH IS EXACTLY WHY NO BROWSER MAY WRITE ONE (review M2). Before this, any
+ * staff sign-in could send such a row through any of the four history write
+ * paths -- a movement on appData:save, a row in a student's history array, a
+ * ledger row through legacyData:mergeSlice or saveSlice -- and mint money
+ * credited to "Wildcat Hub (attendance)" that no report would ever show. The
+ * award command already refused a kind other than award/deduct; guarding one
+ * path of four guards nothing. So every browser path refuses a NEW row or
+ * movement that carries any of the three marks, and the copies of the
+ * server's own rows that every tab sends back are dropped as the duplicates
+ * they are (the stored copy always wins).
+ *
+ * HERE, because this file is the pure save-shape module with no imports, and
+ * legacyData.ts, cashAwardRules.ts and perfectDayRules.ts import it from here,
+ * so there is one rule and not four.
+ */
+export const SYSTEM_CASH_KIND = "attendance";
+export const SYSTEM_ID_PREFIX = "system:";
+
+/** A cash row or movement only the server may write: kind "attendance", or a behaviour or giver id "system:...". */
+export function isSystemCashRow(row: unknown): boolean {
+  if (!row || typeof row !== "object") return false;
+  const r = row as Record<string, unknown>;
+  const low = (x: unknown) => String(x ?? "").trim().toLowerCase();
+  if (low(r.kind) === SYSTEM_CASH_KIND) return true;
+  if (low(r.behaviorId).startsWith(SYSTEM_ID_PREFIX)) return true;
+  if (low(r.teacherId).startsWith(SYSTEM_ID_PREFIX)) return true;
+  return false;
+}
+
+/**
  * Per-student history arrays: written once per movement, never edited.
  *
  * THE THIRD WRITE PATH, and I missed it. On 2026-09-14 a history cutoff was
@@ -584,6 +622,10 @@ export function planCashMovements(
     // movement twice in the same record. First occurrence wins.
     if (seenInRecord.has(id)) { refused.push({ id, why: "duplicate_in_record" }); continue; }
     seenInRecord.add(id);
+    // MONEY ONLY THE SERVER MAKES. See isSystemCashRow: a browser never
+    // moves a counter by an "attendance" movement; the perfect-day job does,
+    // in its own transaction. Refused before it can be claimed or applied.
+    if (isSystemCashRow(m)) { refused.push({ id, why: "reserved_kind" }); continue; }
     accepted.push({ id, at: String((m && m.at) || ""), amount, kind: String(m.kind) });
   }
 
@@ -803,7 +845,12 @@ export function planPatch(
   for (const f of HISTORY_ARRAY_FIELDS) {
     const incoming = fields[f];
     if (!Array.isArray(incoming)) continue;
-    const pruned = pruneHistoryArray(incoming, historyCutoff) as unknown[];
+    // A browser never ADDS a row only the server makes (isSystemCashRow).
+    // The copy of the server's own perfect-day row that every tab sends back
+    // is dropped here too, harmlessly: the stored copy is unioned in below and
+    // is the one that stays, so nothing the server wrote is ever lost.
+    const pruned = (pruneHistoryArray(incoming, historyCutoff) as unknown[])
+      .filter((r) => !isSystemCashRow(r));
 
     // A NON-EMPTY HISTORY IS UNIONED, NEVER REPLACED. THE COUNTERS' RULE,
     // APPLIED TO HISTORY: a browser may ADD to a student's history and may not

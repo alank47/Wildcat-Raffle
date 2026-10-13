@@ -2175,4 +2175,132 @@ export default defineSchema({
     })),
     counts: v.record(v.string(), v.number()),
   }).index("by_day", ["day"]),
+
+  // =========================================================================
+  // THE AUTOMATIC PERFECT-DAY AWARD (2026-10-12). See perfectDay.ts.
+  //
+  // Server-only: no public function reads or writes these four tables except
+  // the student's own pending days, read by views_app.myStudentView for the
+  // student signed in. Nothing here holds a name.
+  // =========================================================================
+
+  /**
+   * THE REGISTER: one row per student per school day the job ever found
+   * perfect (or held, or later broken). Keyed (studentNumber, date), and read
+   * and written in the same transaction as the money, so a day can be paid
+   * once and only once.
+   *
+   * `payable` and `amount` are STAMPED when the row is first decided and never
+   * change: a day decided in shadow mode, outside the pilot or before the
+   * start date is never paid, whatever the switch says later (review H2), and
+   * a change to the amount affects only days decided after it.
+   *
+   *   pending    perfect, payable, not paid yet
+   *   unpayable  perfect, but decided where no money moves (shadow, outside
+   *              the pilot, before the start): final
+   *   held       the job could not agree it with the Perfect Attendance
+   *              screen, or its second check was unavailable: not paid until
+   *              a later run (or an admin) settles it
+   *   broken     was perfect, a later read says not: not paid
+   *   paid       paid, in the movement `paidTxnId`
+   *   removed    taken out by an admin: never paid automatically again
+   *   expired    still held when it left the lookback: not paid
+   */
+  perfectDays: defineTable({
+    studentNumber: v.string(),
+    date: v.string(),
+    status: v.union(
+      v.literal("pending"), v.literal("unpayable"), v.literal("held"), v.literal("broken"),
+      v.literal("paid"), v.literal("removed"), v.literal("expired"),
+    ),
+    payable: v.boolean(),
+    amount: v.number(),
+    /** Why it was stamped unpayable when first decided: shadow, outside-pilot, before-start, control. */
+    stampWhy: v.optional(v.string()),
+    division: v.optional(v.string()),
+    why: v.optional(v.string()),
+    decidedAt: v.string(),
+    updatedAt: v.string(),
+    runId: v.string(),
+    paidTxnId: v.optional(v.string()),
+    paidAt: v.optional(v.string()),
+    /** A PAID day a later read says was not perfect: on the admin list, never taken back automatically. */
+    afterPayBroken: v.optional(v.boolean()),
+    afterPayWhy: v.optional(v.string()),
+    afterPayAt: v.optional(v.string()),
+  })
+    .index("by_date", ["date", "studentNumber"])
+    .index("by_student_date", ["studentNumber", "date"])
+    .index("by_status_date", ["status", "date"])
+    .index("by_afterPayBroken", ["afterPayBroken", "date"]),
+
+  /**
+   * One Wildcat Cash movement: one per student per payday week (`part` > 0
+   * only when a week passes the $5,000 a movement may be, so Reverse can
+   * still undo each). `payoutKey` = studentNumber|payWeek|part is what makes
+   * the payment once per student-week.
+   */
+  perfectDayPayouts: defineTable({
+    payoutKey: v.string(),
+    studentNumber: v.string(),
+    /** The Monday of the payday's week, YYYY-MM-DD. */
+    payWeek: v.string(),
+    part: v.number(),
+    txnId: v.string(),
+    /** The ledger week document it was written into, e.g. "2026_W43". */
+    weekKey: v.string(),
+    amount: v.number(),
+    dates: v.array(v.string()),
+    status: v.union(v.literal("paid"), v.literal("corrected")),
+    paidAt: v.string(),
+    runId: v.string(),
+    replaces: v.optional(v.string()),
+    replacedBy: v.optional(v.string()),
+    correctedBy: v.optional(v.string()),
+    correctedAt: v.optional(v.string()),
+    correctionReason: v.optional(v.string()),
+  })
+    .index("by_payoutKey", ["payoutKey"])
+    .index("by_txnId", ["txnId"])
+    .index("by_student_week", ["studentNumber", "payWeek"])
+    .index("by_payWeek", ["payWeek"]),
+
+  /** What each school date came to: decided, no school, held (and why), or expired. Counts only. */
+  perfectDayDates: defineTable({
+    date: v.string(),
+    state: v.union(v.literal("school"), v.literal("no-school"), v.literal("held"), v.literal("expired")),
+    reason: v.string(),
+    retryable: v.optional(v.boolean()),
+    runId: v.string(),
+    firstDecidedAt: v.string(),
+    updatedAt: v.string(),
+    counts: v.optional(v.any()),
+    rowCounts: v.optional(v.any()),
+    adminNoSchool: v.optional(v.object({ by: v.string(), at: v.string(), reason: v.string() })),
+    adminDecideAnyway: v.optional(v.object({ by: v.string(), at: v.string(), reason: v.string() })),
+  })
+    .index("by_date", ["date"])
+    .index("by_state_date", ["state", "date"]),
+
+  /** One row per run of the job: when, what it decided and paid (counts only), and how it ended. */
+  perfectDayRuns: defineTable({
+    runId: v.string(),
+    trigger: v.string(),
+    today: v.string(),
+    startedAt: v.string(),
+    finishedAt: v.optional(v.string()),
+    ok: v.optional(v.boolean()),
+    reason: v.optional(v.string()),
+    summary: v.optional(v.any()),
+  })
+    .index("by_runId", ["runId"])
+    .index("by_startedAt", ["startedAt"]),
+
+  /** Every admin act on the award (switch, corrections, calendar), append-only. Never appAuditLog: every browser downloads that. */
+  perfectDayAudit: defineTable({
+    at: v.string(),
+    by: v.string(),
+    action: v.string(),
+    detail: v.any(),
+  }).index("by_at", ["at"]),
 });

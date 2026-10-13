@@ -208,8 +208,12 @@ async function existingReversal(ctx: any, txnId: string) {
 /**
  * The shared body, so the public admin mutation and the internal CLI variant
  * cannot drift. The only difference between them is who is allowed to call.
+ *
+ * EXPORTED (2026-10-12), unchanged, for perfectDay.correctPayout: taking one
+ * day back out of a weekly perfect-day payment reverses the weekly row with
+ * exactly this body and re-pays the days that stand, in one transaction.
  */
-async function doReverse(
+export async function doReverse(
   ctx: any,
   args: { originalTxnId: string; reason: string; weekHint?: string | null },
   actor: { name: string; id: string; email: string },

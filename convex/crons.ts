@@ -215,4 +215,31 @@ crons.cron(
   {},
 );
 
+/**
+ * THE AUTOMATIC PERFECT-DAY AWARD (build spec 2026-10-12). See perfectDay.ts.
+ *
+ * At :42 past 14, 15, 16 and 17 UTC. That is 07:42-10:42 in Los Angeles in
+ * daylight time and 06:42-09:42 in standard time: always after the 13:30 UTC
+ * attendance rebuild and its 13:45 retry (the second check reads what it
+ * wrote), clear of the 13:25-14:00 and 19:25-20:00 UTC sync windows, never
+ * in the Reflection Room's 11:15-12:05 cutoff, and on a minute no other job
+ * uses. The first firing does the day's work; the later three only run again
+ * when a PowerSchool read failed (a holiday is not a failure).
+ *
+ * THE HANDLER NEVER TRUSTS THE HOUR IT FIRED AT. It turns now into the
+ * school's wall clock (perfectDayRules.decideTick) and acts only on a weekday
+ * between 06:30 and 11:00, so the 1 November clock change cannot move it.
+ *
+ * IT DOES NOTHING UNTIL IT IS TURNED ON, from the command line:
+ *   npx convex run --prod perfectDay:configure '{"mode":"shadow","actorName":"..."}'
+ * Switched off (the default, and what a missing settings row means), each
+ * firing reads one settings row and stops.
+ */
+crons.cron(
+  "perfect day award",
+  "42 14,15,16,17 * * *",
+  internal.perfectDay.tick,
+  {},
+);
+
 export default crons;

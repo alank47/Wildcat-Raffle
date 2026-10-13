@@ -213,6 +213,7 @@ function loadApp(src, G) {
     function renderPager() {}
     function loadCashArrivalAlerts() {}
     function renderCashDriftPanel() {}
+    function renderPerfectDayPanel() {}
     ${CONSTS.map((n) => liftConst(src, n)).join("\n")}
     ${FNS.map((n) => liftFn(src, n)).join("\n")}
     return {

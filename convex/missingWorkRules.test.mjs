@@ -242,6 +242,10 @@ const student = {
     "./gradeProjection": gradeProjection,
     "./studentStore": { storeSignal: stub },
     "./gradeScopeRead": { readGradeScopeBlock: stub },
+    // The perfect-day award's pending days (2026-10-12): a database read,
+    // stubbed as "no money moves for this student"; perfect-day.test.mjs
+    // runs the real one.
+    "./perfectDay": { perfectDaysForStudent: async () => null },
     "./missingWorkRules": rules,
   });
   const db = makeDb({

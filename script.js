@@ -1031,8 +1031,14 @@
          * together passing the per-save cap, each of which alone would land.
          * `stated_no_change` and `cancelled_by_residual` are not either: they
          * describe an incoherent payload, which the next save repairs.
+         *
+         * `reserved_kind` (2026-10-12): a movement carrying the marks only the
+         * perfect-day job may write (kind 'attendance', a 'system:' id). The
+         * server will never apply one from a browser, so it leaves the list
+         * like the others. Silently: no screen here makes one, so only a forged
+         * movement can earn it, and there is nothing to tell a teacher.
          */
-        const CASH_TERMINAL_REFUSALS = new Set(['before_cutoff', 'coverage_lost', 'undated', 'bad_shape']);
+        const CASH_TERMINAL_REFUSALS = new Set(['before_cutoff', 'coverage_lost', 'undated', 'bad_shape', 'reserved_kind']);
         /**
          * Of those, the ones the tab can SAY were not applied. coverage_lost is
          * not one: it means the server can no longer prove the movement is
@@ -1488,12 +1494,26 @@
          *
          * Money is not this function's business. A balance, a receipt and the
          * Cash Audit Log's list of movements still count every row.
+         *
+         * THE PERFECT-DAY AWARD (2026-10-12) IS NOT A BEHAVIOUR EITHER. The
+         * server pays each student one movement a week for perfect attendance:
+         * kind 'attendance', which the kind rule above already leaves out on
+         * every tab, this one and any older one still open. The system marks
+         * are checked as well, so a row that ever carried them under another
+         * kind -- or none -- would still never count as an adult's praise in
+         * the Staff table, the 5 to 1 ratio, one-to-one praise or whole-class
+         * detection. The same three marks as the server's isSystemCashRow
+         * (convex/appDataShape.ts), pinned by perfect-day-browser.test.mjs.
+         * Written out here rather than called, so every harness that lifts
+         * this function still runs it whole.
          */
         function isCashBehaviourRow(t, reversedIds) {
             if (!t) return false;
             if (t.kind === 'reversal' || t.reversesTxnId) return false;
             const kind = String(t.kind || '');
             if (kind && kind !== 'award' && kind !== 'deduct') return false;
+            if (/^system:/i.test(String(t.behaviorId || '').trim())
+                || /^system:/i.test(String(t.teacherId || '').trim())) return false;
             if (t.behaviorId === 'system_reset') return false;
             if (String(t.behaviorId || '').startsWith('reward-refund:')) return false;
             const ids = reversedIds || reversedCashIds();
@@ -10362,6 +10382,7 @@
 
         function updateCashAuditLogTable(keepPage) {
             if (!keepPage) loadCashArrivalAlerts();   // throttled inside
+            renderPerfectDayPanel();
             renderCashDriftPanel();
             const tbody = document.getElementById('cashAuditLogTable');
             const CA = window.WildcatCashAudit;
@@ -20295,6 +20316,62 @@
             return (v === null || v === undefined) ? null : '$' + Number(v).toFixed(2);
         }
 
+        /**
+         * "PERFECT DAY – PENDING": the automatic perfect-day award, as a student
+         * sees it before the money arrives (2026-10-12).
+         *
+         * Each school morning the server decides who had a perfect day (no
+         * absence, excused ones too, no unexcused tardy, in any block), and on
+         * Monday pays one movement for last week. myStudentView sends
+         * wildcatCash.perfectDays = { days: ['2026-10-12', ...], amount,
+         * payday: '2026-10-19' } from the morning a day is decided, or null
+         * when no money will move for this student at all (switched off, the
+         * shadow trial, outside the pilot, a control).
+         *
+         * THE SERVER LISTS ONLY DAYS THAT WILL BE PAID, so this words a
+         * promise and never makes one: no list, an empty one, a malformed one,
+         * or a server that does not send the field yet, and nothing is shown.
+         * No reason is ever given for a day that is NOT here -- "Illness" does
+         * not belong on a card a friend can see over a shoulder.
+         *
+         * PURE AND SELF-CONTAINED (no wcIsoDay), because both the desk
+         * dashboard and the wallet card draw it, and each is tested lifted out
+         * on its own. Today is the device's calendar day, which for a student
+         * is the school's.
+         */
+        function wpPerfectDayPending(pd, now) {
+            if (!pd || typeof pd !== 'object' || !Array.isArray(pd.days)) return null;
+            const isDay = (d) => typeof d === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(d);
+            const days = pd.days.filter(isDay).slice().sort();
+            if (!days.length) return null;
+            const NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+            // "Mon 10/12", the way the weekly payment's own note names its days.
+            const md = (d) => Number(d.slice(5, 7)) + '/' + Number(d.slice(8, 10));
+            const short = (d) => NAMES[new Date(d + 'T12:00:00Z').getUTCDay()] + ' ' + md(d);
+            const t = (now instanceof Date && !isNaN(now.getTime())) ? now : new Date();
+            const today = t.getFullYear() + '-' + String(t.getMonth() + 1).padStart(2, '0') + '-' +
+                String(t.getDate()).padStart(2, '0');
+            const payday = isDay(pd.payday) ? pd.payday : null;
+            // Payday is the first good run on or after the Monday, so a Monday
+            // morning before it ran says "today", and a day after says only
+            // that it is coming: never a date that has already gone by.
+            const when = !payday ? 'Arrives on Monday'
+                : payday > today ? 'Arrives Monday ' + md(payday)
+                : payday === today ? 'Arrives today'
+                : 'On its way';
+            const amount = (typeof pd.amount === 'number' && isFinite(pd.amount) && pd.amount > 0)
+                ? pd.amount : null;
+            return {
+                count: days.length,
+                title: days.length === 1 ? 'Perfect day – pending'
+                    : days.length + ' perfect days – pending',
+                days: days.map(short).join(', '),
+                amount: amount,
+                amountText: amount === null ? '—' : '+$' + amount.toLocaleString('en-US'),
+                when: when,
+            };
+        }
+
         // =====================================================================
         // WILDCAT CASH LEADERBOARD
         //
@@ -20311,6 +20388,10 @@
         // RANKED ON EARNED, NOT BALANCE. Balance falls when a student spends,
         // so a board built on it would quietly punish using the store -- the
         // one behaviour the whole economy exists to produce.
+        //
+        // EARNED INCLUDES THE PERFECT-DAY AWARD (owner, 2026-10-12): it counts
+        // toward the board, with no separate counter. Both boards rank on
+        // wildcatCashEarned, which the weekly payment moves like any award.
         // =====================================================================
         let _wpBoardBand = 'academy';
         let _wpBoardData = null;
@@ -21291,6 +21372,24 @@
             // wording of that reversal lives with the board, once, so a search
             // for the old claim finds the explanation and not a live promise.
             const recent = Array.isArray(cash.recent) ? cash.recent : [];
+            // PERFECT DAYS NOT YET PAID (2026-10-12) lead the list, as one
+            // pending row: what is coming, ahead of what has happened. See
+            // wpPerfectDayPending -- nothing at all unless the server says
+            // these days will be paid.
+            const pend = wpPerfectDayPending(cash.perfectDays);
+            const pendingRow = !pend ? '' :
+                '<div class="wp-rows wp-rows-nested wp-pending-rows">' +
+                    '<div class="wp-row wp-row-nested wp-row-pending">' +
+                        '<span class="wp-rowmain">' +
+                            '<span class="wp-rowtitle">' + wpEsc(pend.title) + '</span>' +
+                            '<span class="wp-rowsub">' + wpEsc(pend.days) + '</span>' +
+                            '<span class="wp-rownote">' + wpEsc(pend.when) + '</span>' +
+                        '</span>' +
+                        '<span class="wp-rowmain wp-rowright">' +
+                            '<span class="wp-rowend wp-amt-pending">' + wpEsc(pend.amountText) + '</span>' +
+                        '</span>' +
+                    '</div>' +
+                '</div>';
             const money = wpPanel('Your money', 'Wildcat Cash', '',
                 '<div class="wp-cash">' +
                     '<div class="wp-cash-hero">' +
@@ -21319,8 +21418,9 @@
                 '</div>' +
                 '<div class="wp-cash-activity">' +
                     '<p class="wp-cash-heading">Recent activity</p>' +
+                    pendingRow +
                     (!recent.length
-                        ? wpEmpty('Nothing yet. When a teacher awards you Wildcat Cash, it will show up here.')
+                        ? (pendingRow ? '' : wpEmpty('Nothing yet. When a teacher awards you Wildcat Cash, it will show up here.'))
                         : '<div class="wp-rows wp-rows-nested">' +
                             recent.slice(0, 8).map(function (r) {
                                 const amt = (typeof r.amount === 'number')
@@ -22417,9 +22517,13 @@
             // reversal fell through to the literal string 'Wildcat Cash' on
             // their own phone -- a line that moved their balance and did not
             // say why. views_app.ts:444 passes `kind` straight through.
+            // 'attendance' (2026-10-12): the weekly perfect-day payment. The
+            // server always names it ("Perfect attendance -- 4 days"); this is
+            // the fallback if a row ever arrives without its reason.
             const KIND = { award: 'Wildcat Cash awarded', deduct: 'Wildcat Cash deducted',
                            redeem: 'Reward purchase',
-                           reversal: 'Correction by a teacher' };
+                           reversal: 'Correction by a teacher',
+                           attendance: 'Perfect attendance' };
 
             const hist = (cash && Array.isArray(cash.recent)) ? cash.recent : [];
             const txRows = hist.map(function (t) {
@@ -22439,11 +22543,26 @@
                     '</span></div>';
             }).join('');
 
+            // PERFECT DAYS NOT YET PAID lead the list as one pending line
+            // (2026-10-12; see wpPerfectDayPending). Asked for by name because
+            // this card is also built on its own, away from the dashboard.
+            const pend = (typeof wpPerfectDayPending === 'function')
+                ? wpPerfectDayPending(cash && cash.perfectDays) : null;
+            const pendingTx = !pend ? '' :
+                '<div class="wp-tx is-pending">' +
+                    '<span class="wp-tx-main">' +
+                      '<span class="wp-tx-title">' + wpEsc(pend.title) + '</span>' +
+                      '<span class="wp-tx-sub">' + wpEsc(pend.days) + '</span>' +
+                      '<span class="wp-tx-sub">' + wpEsc(pend.when) + '</span>' +
+                    '</span>' +
+                    '<span class="wp-tx-amt is-pending">' + wpEsc(pend.amountText) + '</span>' +
+                '</div>';
+
             // An empty list has two meanings and they need different sentences:
             // nothing has happened yet, or the history has not reached this
             // account. A balance with no history is the second one.
-            const cashBody = txRows
-                ? '<div class="wp-txs">' + txRows + '</div>'
+            const cashBody = (pendingTx || txRows)
+                ? '<div class="wp-txs">' + pendingTx + txRows + '</div>'
                 : wpEmpty(bal ? 'Your history has not reached your account yet. Your balance above is current.'
                               : 'No activity yet. This fills in as staff award and you spend.');
 
@@ -30272,6 +30391,32 @@
             return list.sort(byName);
         }
 
+        /**
+         * The server's own cash rows this tab holds (the weekly perfect-day
+         * payment): from the ledger, then from each student record's copy, as
+         * a row can reach a record before its week is pulled. Only those rows,
+         * so the Accounts grid does not copy the whole ledger to find a few.
+         * WildcatCashAudit.systemRowsByStudent keeps each id once.
+         */
+        function systemCashRowsHeld() {
+            const CA = window.WildcatCashAudit;
+            if (!CA || typeof CA.isSystemCashRow !== 'function') return [];
+            const out = [];
+            if (typeof cashTransactions !== 'undefined' && Array.isArray(cashTransactions)) {
+                cashTransactions.forEach(t => { if (CA.isSystemCashRow(t)) out.push(t); });
+            }
+            const add = (list) => (Array.isArray(list) ? list : []).forEach(st => {
+                (Array.isArray(st && st.wildcatCashTransactions) ? st.wildcatCashTransactions : []).forEach(t => {
+                    if (!CA.isSystemCashRow(t)) return;
+                    // The record's copy may omit studentId: the record is the student.
+                    out.push(t.studentId ? t : Object.assign({}, t, { studentId: st.id }));
+                });
+            });
+            if (typeof students !== 'undefined') add(students);
+            if (typeof nonEnrolledStudents !== 'undefined') add(nonEnrolledStudents);
+            return out;
+        }
+
         function updateStudentAccounts() {
             const container = document.getElementById('studentAccountsGrid');
             if (!container) return;
@@ -30318,6 +30463,12 @@
                 return;
             }
 
+            // THE SERVER'S OWN PAYMENTS, ONCE FOR THE WHOLE GRID (2026-10-12).
+            // The weekly perfect-day payment writes no audit entry per student,
+            // so it is read off the ledger and the student records instead and
+            // merged into each card's activity. See WildcatCashAudit.mergeHistory.
+            const systemRows = CA.systemRowsByStudent(systemCashRowsHeld());
+
             list.forEach(student => {
                 ensureCashFields(student);
 
@@ -30329,9 +30480,10 @@
                 // The audit log, not student.wildcatCashTransactions: the audit
                 // entry is the one that records WHO did it, and "which teacher"
                 // is the question this screen is opened to answer.
-                const recent = CA.forStudent(auditLog, student.id)
+                const recent = CA.mergeHistory(CA.forStudent(auditLog, student.id)
                     .slice(0, 3)
-                    .map(e => CA.describe(e));
+                    .map(e => CA.describe(e)), systemRows[String(student.id)])
+                    .slice(0, 3);
 
                 const recentHTML = recent.length ? (
                     '<div style="margin-top:15px;padding-top:15px;border-top:1px solid #e0e0e0;">' +
@@ -30421,7 +30573,10 @@
             const student = students.find(s => String(s.id) === String(studentId));
             if (!student) return;
 
-            const rows = CA.forStudent(auditLog, studentId).map(e => CA.describe(e));
+            // With the server's own payments (the weekly perfect-day award),
+            // which have no audit entry per student: see updateStudentAccounts.
+            const rows = CA.mergeHistory(CA.forStudent(auditLog, studentId).map(e => CA.describe(e)),
+                CA.systemRowsByStudent(systemCashRowsHeld())[String(studentId)]);
 
             // A LIST, NOT A TABLE.
             //
@@ -30552,7 +30707,13 @@
                                        data-wc-reverse="${escapeHtml(String(r.txnId))}"
                                        data-wc-student="${escapeHtml(String(studentId))}"
                                        data-wc-reverse-label="${escapeHtml(
-                                           (r.behaviorName || r.kind || 'cash') + '  ' + amt)}"
+                                           (r.behaviorName || r.kind || 'cash') + '  ' + amt +
+                                           // A WEEK, NOT A DAY (2026-10-12). Reverse takes the
+                                           // whole perfect-day payment back; the runbook's
+                                           // correctPayout takes out one day and re-pays the rest.
+                                           (r.kind === 'attendance'
+                                               ? '\nThis takes back every day in this payment. To take out one day and keep the rest, use correctPayout (runbook).'
+                                               : ''))}"
                                 >Reverse</button>`
                             : `<span class="chr-why">${escapeHtml(String(r.why || ''))}</span>`;
                         const already = r.reversal
@@ -34503,10 +34664,18 @@
                 const isPurchase = txn.kind === 'redeem';
                 const isRefund = String(txn.behaviorId || '').startsWith('reward-refund:');
                 const isReset = txn.behaviorId === 'system_reset';
+                // THE PERFECT-DAY PAYMENT (2026-10-12) is the school paying for
+                // attendance, not an adult's praise: kind 'attendance', given by
+                // "Wildcat Hub (attendance)". It is positive by sign, so it wore
+                // a green "Positive" badge in this list -- the one place on the
+                // Staff tab it appears at all. A grey badge of its own, like
+                // the other rows no adult chose.
+                const isAttendance = !isReversalRow && !!(window.WildcatCashAudit
+                    && window.WildcatCashAudit.isSystemCashRow(txn));
                 const wasReversed = !isReversalRow
                     && _detailReversedIds.has(String(txn.id || ''));
                 const typeColor = isReversalRow ? '#2F67A7'
-                    : (wasReversed || isPurchase || isRefund || isReset) ? '#6E7885'
+                    : (wasReversed || isPurchase || isRefund || isReset || isAttendance) ? '#6E7885'
                     : txn.type === 'positive' ? '#2E7D52' : '#B3392F';
                 const typeBadge = !amountOk ? 'Incomplete'
                     : isReversalRow ? 'Reversal'
@@ -34514,6 +34683,7 @@
                     : isPurchase ? 'Purchase'
                     : isRefund ? 'Refund'
                     : isReset ? 'Reset'
+                    : isAttendance ? 'Attendance'
                     : txn.type === 'positive' ? 'Positive' : 'Negative';
                 // A self-serve purchase names the CHILD in teacherName (there
                 // was no adult), which put a student in the Teacher column.
@@ -49696,6 +49866,171 @@
             }
         }
 
+        // =====================================================================
+        // THE PERFECT-DAY AWARD, FOR ADMINS (2026-10-12)
+        //
+        // The server pays every student one Wildcat Cash movement a week for
+        // last week's perfect days (convex/perfectDay.ts). Everything about it
+        // is switched and corrected from the command line (docs/runbook.md,
+        // "Automatic perfect-day award"); this card is the same status, read
+        // only, on the screen an admin already opens for cash that needs a
+        // look. Admins and superadmins only, as the server insists.
+        //
+        // COUNTS, NOT DOLLARS, for anyone: the owner's rule is no dollar figure
+        // for this award per student or per group in any report. The one sum is
+        // the school's next payday, because the spec asks for it. Names are
+        // joined here, from the roster this tab already holds: the server sends
+        // student numbers only, and only in the two lists an admin acts on.
+        // =====================================================================
+        let _perfectDayStatus = null;
+        let _perfectDayAskedAt = 0;
+        async function fetchPerfectDayStatus(force) {
+            if (!cashReversalIsAdmin()) return;
+            if (force !== true && Date.now() - _perfectDayAskedAt < 60000) return;
+            _perfectDayAskedAt = Date.now();
+            const auth = window.WildcatAuth;
+            const session = auth && auth.getSession && auth.getSession();
+            if (!session) return;
+            try {
+                const res = await auth.convexQuery('perfectDay:adminStatus', {}, session.idToken);
+                _perfectDayStatus = (res && typeof res === 'object') ? res : null;
+            } catch (e) {
+                // A backend without the query yet, or a refusal: no card. The
+                // command line's status is the same answer.
+                _perfectDayStatus = null;
+                console.warn('[cash] could not read the perfect-day status:', e && e.message);
+            }
+            renderPerfectDayPanel();
+        }
+
+        /** "Mon 10/12" for a YYYY-MM-DD date, as the weekly payment names its days. */
+        function perfectDayShort(d) {
+            if (typeof d !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(d)) return '—';
+            return ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][new Date(d + 'T12:00:00Z').getUTCDay()] + ' ' +
+                Number(d.slice(5, 7)) + '/' + Number(d.slice(8, 10));
+        }
+
+        /** A student number, as the admin knows them: the name from this tab's roster, and the number. */
+        function perfectDayNameOf(sn) {
+            const key = String(sn == null ? '' : sn);
+            const all = [].concat(typeof students !== 'undefined' && Array.isArray(students) ? students : [],
+                typeof nonEnrolledStudents !== 'undefined' && Array.isArray(nonEnrolledStudents) ? nonEnrolledStudents : []);
+            const st = key ? all.find(s => s && String(s.studentNumber || '') === key) : null;
+            const name = st ? `${st.firstName || ''} ${st.lastName || ''}`.trim() : '';
+            return name ? name + ' (' + key + ')' : 'Student #' + key;
+        }
+
+        /** The card, as markup. PURE but for nameOf. Empty when the award has never been used. */
+        function perfectDayPanelHtml(st, nameOf) {
+            if (!st || typeof st !== 'object') return '';
+            const s = st.settings || {};
+            const mode = String(s.mode || 'off');
+            const runs = Array.isArray(st.runs) ? st.runs : [];
+            const dates = Array.isArray(st.dates) ? st.dates : [];
+            const held = st.held || { count: 0, list: [] };
+            const broke = st.paidThenBroken || { count: 0, list: [], handled: 0 };
+            const pay = st.nextPayday || {};
+            const ctl = st.controls || { count: 0, paidMovements: 0 };
+            if (mode === 'off' && !st.invalid && !runs.length && !dates.length && !held.count && !broke.count) return '';
+
+            const n = (x) => Number(x || 0).toLocaleString('en-US');
+            const sum = (o) => (o && typeof o === 'object') ? (Number(o.ms) || 0) + (Number(o.hs) || 0) + (Number(o.other) || 0) : null;
+            const nm = (sn) => escapeHtml(typeof nameOf === 'function' ? nameOf(sn) : 'Student #' + sn);
+            const MODE = {
+                off: 'Off',
+                shadow: 'Shadow trial: deciding, paying nobody',
+                pilot: 'Pilot: ' + n(s.pilot) + ' student' + (Number(s.pilot) === 1 ? '' : 's') +
+                    (Number(s.controls) ? ', ' + n(s.controls) + ' control' + (Number(s.controls) === 1 ? '' : 's') : ''),
+                live: 'On for the whole school'
+            };
+            const STATE = { school: 'Decided', 'no-school': 'No school', held: 'Held', expired: 'Expired unpaid' };
+            const WHY = { off: 'switched off', shadow: 'shadow trial', control: 'controls', 'before-start': 'before the start',
+                'outside-pilot': 'outside the pilot', 'not-in-scope': 'not in scope', unpayable: 'not payable' };
+            const line = (k, v) => '<div class="wc-pd-line"><span class="wc-pd-k">' + k + '</span><span class="wc-pd-v">' + v + '</span></div>';
+
+            const parts = [];
+            parts.push('<h4 style="margin:0 0 4px;">Perfect-day award &middot; ' + escapeHtml(MODE[mode] || mode) + '</h4>');
+            if (st.invalid) parts.push('<p class="wc-uv-hint wc-pd-warn">' + escapeHtml(String(st.invalid)) + ' It is treated as off.</p>');
+            if (mode !== 'off') {
+                parts.push('<p class="wc-uv-hint">$' + n(s.amount) + ' a perfect day' +
+                    (s.countFromDate ? ', counting from ' + escapeHtml(perfectDayShort(s.countFromDate)) : '') + '.</p>');
+            }
+
+            const r = runs[0];
+            if (st.lease) parts.push(line('Last run', 'running now'));
+            else if (r) {
+                const t = new Date(String(r.startedAt || ''));
+                const when = isNaN(t.getTime()) ? '—'
+                    : t.toLocaleDateString(undefined, { weekday: 'short', month: 'numeric', day: 'numeric' }) + ', ' +
+                      t.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+                parts.push(line('Last run', escapeHtml(when) + ' &middot; ' +
+                    (r.ok === true ? 'finished' : r.finishedAt ? 'did not finish: ' + escapeHtml(String(r.reason || 'no reason recorded')) : 'did not finish')));
+            }
+
+            if (dates.length) {
+                parts.push('<div class="wc-att-list">' + dates.slice(0, 5).map(d => {
+                    const enrolled = sum(d.enrolled), perfect = sum(d.perfect);
+                    // A decided date with a caveat (no second check yet) says so after its counts.
+                    const caveat = d.reason && d.reason !== 'Decided.'
+                        ? ' &middot; <span class="wc-pd-why">' + escapeHtml(String(d.reason)) + '</span>' : '';
+                    const figs = d.state === 'school' && perfect !== null && enrolled !== null
+                        ? n(perfect) + ' of ' + n(enrolled) + ' perfect' +
+                          (d.classesNoMarks != null ? ' &middot; ' + n(d.classesNoMarks) + ' class' + (Number(d.classesNoMarks) === 1 ? '' : 'es') + ' with no marks' : '') +
+                          caveat
+                        : escapeHtml(String(d.reason || ''));
+                    return '<div class="wc-att-row wc-pd-date">' +
+                        '<span class="wc-att-name">' + escapeHtml(perfectDayShort(d.date)) + '</span>' +
+                        '<span class="wc-att-figs"><span class="wc-att-days">' + figs + '</span></span>' +
+                        '<span class="wc-att-badge">' + escapeHtml(STATE[d.state] || String(d.state || '')) + '</span>' +
+                    '</div>';
+                }).join('') + '</div>');
+            }
+
+            // Ten by name; the rest counted against the TOTAL, not the page the server sent.
+            const list = (items, total) => '<ul class="wc-pd-list">' + items.slice(0, 10).map(x =>
+                '<li>' + nm(x.studentNumber) + ' &middot; ' + escapeHtml(perfectDayShort(x.date)) +
+                (x.why ? ' &middot; <span class="wc-pd-why">' + escapeHtml(String(x.why)) + '</span>' : '') + '</li>').join('') +
+                (Math.max(Number(total) || 0, items.length) > 10
+                    ? '<li>and ' + n(Math.max(Number(total) || 0, items.length) - 10) + ' more</li>' : '') + '</ul>';
+            if (Number(held.count) > 0) {
+                parts.push(line('Held students', n(held.count) + ' &middot; waiting for a person or for a later read'));
+                if (Array.isArray(held.list) && held.list.length) parts.push(list(held.list, held.count));
+            }
+            if (Number(broke.count) > 0) {
+                parts.push(line('Paid, then broken', n(broke.count) + ' day' + (Number(broke.count) === 1 ? '' : 's') +
+                    ' &middot; nothing is taken back by itself; correctPayout takes one day out and re-pays the rest'));
+                if (Array.isArray(broke.list) && broke.list.length) parts.push(list(broke.list, broke.count));
+            }
+            if (st.lastPayWeek) parts.push(line('Last payday', escapeHtml(perfectDayShort(st.lastPayWeek))));
+
+            if (pay.payWeek) {
+                const notPaid = Object.entries(pay.earnedNotPaid || {}).filter(([, c]) => Number(c) > 0)
+                    .map(([k, c]) => n(c) + ' ' + escapeHtml(WHY[k] || k)).join(', ');
+                parts.push(line('Next payday', escapeHtml(perfectDayShort(pay.payWeek)) + ' &middot; ' +
+                    n(pay.students) + ' student' + (Number(pay.students) === 1 ? '' : 's') + ', ' +
+                    n(pay.days) + ' day' + (Number(pay.days) === 1 ? '' : 's') + ', $' + n(pay.total) + ' in all' +
+                    (notPaid ? ' &middot; not paid: ' + notPaid : '')));
+            }
+            if (Number(ctl.count) > 0) {
+                parts.push(Number(ctl.paidMovements) > 0
+                    ? '<p class="wc-uv-hint wc-pd-warn"><strong>A control was paid</strong> (' + n(ctl.paidMovements) +
+                      ' payment' + (Number(ctl.paidMovements) === 1 ? '' : 's') + '). Switch it off and look.</p>'
+                    : line('Controls', n(ctl.count) + ', none paid'));
+            }
+
+            parts.push('<p class="wc-uv-hint"><strong>Nothing here changes anything.</strong> The switch and every correction ' +
+                'are made from the command line: see the runbook, &ldquo;Automatic perfect-day award&rdquo;.</p>');
+            return '<div class="wc-card panel-card wc-drift wc-pd">' + parts.join('') + '</div>';
+        }
+
+        function renderPerfectDayPanel() {
+            const host = document.getElementById('perfectDayPanel');
+            if (!host) return;
+            if (!cashReversalIsAdmin()) { host.innerHTML = ''; return; }
+            fetchPerfectDayStatus();   // at most once a minute; repaints when it lands
+            host.innerHTML = perfectDayPanelHtml(_perfectDayStatus, perfectDayNameOf);
+        }
+
         let _cashDrift = null;
         let _cashDriftAsked = false;
         async function fetchCashDrift(force) {
@@ -49948,7 +50283,13 @@
             // both did not complete (sisStats.finishAttendanceRebuild).
             'attendance_rebuild_refused':    'system',
             'cash_refund_withdrawn':         'undo',
-            'school_year_rollover':          'system'
+            'school_year_rollover':          'system',
+            // Written by the server once per perfect-day payday, for the whole
+            // school, counts only (perfectDay.finishPayday). System, not Cash
+            // Earned: no adult gave it. It is also a cash entry
+            // (wildcat-cashaudit.js), so dashFeedEntriesFor keeps it off a
+            // teacher's feed and shows it to admins and the PBIS team.
+            'perfect_day_paid':              'system'
         };
 
         function wcFeedCat(entry) {

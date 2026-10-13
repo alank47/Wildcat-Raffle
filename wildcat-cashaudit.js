@@ -35,7 +35,8 @@
     'cash_drift_detected',
     'cash_refund_withdrawn',
     'cash_reversal_credit',
-    'cash_reversal_debit'
+    'cash_reversal_debit',
+    'perfect_day_paid'
   ];
 
   var LABELS = {
@@ -69,10 +70,109 @@
     // reversing a deduction hands money back (credit), reversing an award takes
     // it back (debit).
     cash_reversal_credit:   { label: 'Reversed (refunded)', icon: '↩️', cls: 'act-award',  sign: 1 },
-    cash_reversal_debit:    { label: 'Reversed (taken back)', icon: '↩️', cls: 'act-deduct', sign: -1 }
+    cash_reversal_debit:    { label: 'Reversed (taken back)', icon: '↩️', cls: 'act-deduct', sign: -1 },
+    // THE PERFECT-DAY PAYDAY'S ONE SUMMARY (2026-10-12): written by the server
+    // (perfectDay.finishPayday) for the whole school, counts only, given by
+    // "Wildcat Hub (attendance)". It is a CASH entry so that every rule about
+    // cash entries applies to it -- above all cashAuditEntriesFor, which keeps
+    // it off a teacher's Activity feed (it names no teacher of theirs) while
+    // admins and the PBIS team see it. No amount: the owner's rule is no
+    // dollar figure for this award in any report, and the entry carries no
+    // money of its own (each student's payment is its own ledger row), so it
+    // must read as a dash, never as "+$0".
+    perfect_day_paid:       { label: 'Perfect Attendance Paid', icon: '📅', cls: 'act-other', sign: 0, noAmount: true }
   };
 
   function str(v) { return String(v == null ? '' : v).trim(); }
+
+  // =====================================================================
+  // MONEY ONLY THE SERVER MAKES: the automatic perfect-day award.
+  //
+  // Once a week the server pays each student one movement for last week's
+  // perfect days: kind 'attendance', behaviour 'system:perfect-day', given by
+  // 'system:attendance' ("Wildcat Hub (attendance)"). This is the browser's
+  // copy of the server's rule (convex/appDataShape.ts isSystemCashRow; the
+  // two are pinned together by perfect-day-browser.test.mjs).
+  //
+  // WHY THE HISTORY NEEDS THEM SEPARATELY. A student's staff-facing history
+  // (Accounts, "View full history") is built from AUDIT entries, because the
+  // audit entry is what names the adult. The perfect-day payment writes no
+  // audit entry per student -- 370 a day would nearly double the log every
+  // staff page downloads -- so without these rows a child's Earned figure
+  // would jump by $400 on a Monday with no line saying why. The ledger row is
+  // the record, and it is shown as one.
+  // =====================================================================
+  var SYSTEM_CASH_KIND = 'attendance';
+  var SYSTEM_ID_PREFIX = 'system:';
+
+  /** A cash row only the server may write: kind 'attendance', or a behaviour or giver id 'system:...'. */
+  function isSystemCashRow(row) {
+    if (!row || typeof row !== 'object') return false;
+    var low = function (x) { return String(x == null ? '' : x).trim().toLowerCase(); };
+    if (low(row.kind) === SYSTEM_CASH_KIND) return true;
+    if (low(row.behaviorId).indexOf(SYSTEM_ID_PREFIX) === 0) return true;
+    if (low(row.teacherId).indexOf(SYSTEM_ID_PREFIX) === 0) return true;
+    return false;
+  }
+
+  /** One server-made ledger row, in the same shape describe() gives an audit entry. */
+  function describeSystemRow(row) {
+    var t = row || {};
+    var raw = Number(t.amount);
+    var ok = t.amount !== null && t.amount !== undefined && t.amount !== '' && isFinite(raw);
+    return {
+      entryId: str(t.id),
+      timestamp: str(t.timestamp),
+      action: 'perfect_day_payment',
+      actionLabel: 'Perfect Attendance',
+      actionIcon: '📅',
+      actionClass: 'act-award',
+      teacher: str(t.teacherName) || 'Wildcat Hub (attendance)',
+      studentId: str(t.studentId),
+      studentName: str(t.studentName) || (str(t.studentId) ? 'Student #' + str(t.studentId) : 'Unknown'),
+      behavior: str(t.behaviorName) || 'Perfect attendance',
+      notes: str(t.notes),
+      amount: ok ? Math.abs(raw) : null,
+      sign: ok && raw < 0 ? -1 : 1,
+      // null, never 0: a row whose amount will not read is a dash.
+      signed: ok ? raw : null,
+      system: true
+    };
+  }
+
+  /**
+   * Every server-made row in the ledger, described, by student id, newest
+   * first. ONE PASS over the ledger for a whole screen of students (the
+   * Accounts grid draws hundreds of cards), and each id once however many
+   * copies the caller passes (the ledger and the student records both hold
+   * one).
+   */
+  function systemRowsByStudent(rows) {
+    var out = {};
+    var seen = {};
+    (Array.isArray(rows) ? rows : []).forEach(function (t) {
+      if (!isSystemCashRow(t)) return;
+      var sid = str(t.studentId);
+      if (!sid) return;
+      var id = str(t.id);
+      if (id) {
+        if (seen[id]) return;
+        seen[id] = true;
+      }
+      (out[sid] = out[sid] || []).push(describeSystemRow(t));
+    });
+    Object.keys(out).forEach(function (k) {
+      out[k].sort(function (a, b) { return String(b.timestamp).localeCompare(String(a.timestamp)); });
+    });
+    return out;
+  }
+
+  /** Described audit entries and described server rows, as one list, newest first. */
+  function mergeHistory(described, systemRows) {
+    return (described || []).concat(systemRows || []).slice().sort(function (a, b) {
+      return String((b && b.timestamp) || '').localeCompare(String((a && a.timestamp) || ''));
+    });
+  }
 
   function isCashEntry(entry) {
     return Boolean(entry) && CASH_ACTIONS.indexOf(str(entry.action)) !== -1;
@@ -123,7 +223,9 @@
     var bn = behaviorAndNotes(e);
 
     var raw = Number(e.ticketCount);
-    var amount = isFinite(raw) ? Math.abs(raw) : null;
+    // An action that carries no money of its own has no amount, whatever a
+    // writer put in ticketCount: a dash, not "+$0" (perfect_day_paid).
+    var amount = (!meta.noAmount && isFinite(raw)) ? Math.abs(raw) : null;
 
     var name = str(e.studentName);
     if (!name && typeof lookupStudentName === 'function') name = str(lookupStudentName(e.studentId));
@@ -271,6 +373,10 @@
     arrivalLeftForRecount: arrivalLeftForRecount,
     CASH_ACTIONS: CASH_ACTIONS.slice(),
     isCashEntry: isCashEntry,
+    isSystemCashRow: isSystemCashRow,
+    describeSystemRow: describeSystemRow,
+    systemRowsByStudent: systemRowsByStudent,
+    mergeHistory: mergeHistory,
     behaviorAndNotes: behaviorAndNotes,
     describe: describe,
     forStudent: forStudent,
