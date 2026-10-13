@@ -342,6 +342,7 @@ erroring.
 |---|---|
 | 1.0.0 | Initial access request. Rejected by PowerSchool validation. The PowerQuery file declared a namespace on its root element, and SECTIONMEETING, STOREDGRADES.ID and USERS.ID are invalid in this instance |
 | 1.0.1 | Fixed the PowerQuery schema (no namespace, real TABLE.COLUMN references, no summary or args elements). Removed SECTIONMEETING, PERIOD and CYCLE_DAY. STOREDGRADES.ID becomes DCID. USERS.ID removed. 105 fields, all ViewOnly |
+| 1.4.3 | Prepared 2026-10-13, not installed (the instance runs 1.4.2). Adds one read only field, `Sections.Room`, so the Reflection Room list and its pull slips can name the room each class meets in. It answered 403 on 2026-10-13 (the column exists, the grant is missing). No named query uses it; the sync reads it from the table endpoint and carries on without it while it is refused. 165 fields, all ViewOnly. The request: `docs/admin-ask-1.4.3.md` |
 
 ### What the 1.0.0 rejection taught us
 

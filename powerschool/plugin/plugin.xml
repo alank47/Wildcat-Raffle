@@ -19,7 +19,7 @@
         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
         xsi:schemaLocation="http://plugin.powerschool.pearson.com plugin.xsd"
         name="Wildcat Hub Sync"
-        version="1.4.2"
+        version="1.4.3"
         description="Read only student and staff data sync for the Wildcat Hub teacher and admin dashboard at Westbrook Academy.">
 
   <publisher name="LA Promise Fund">
@@ -139,6 +139,17 @@
       <field table="Sections" field="Teacher"        access="ViewOnly"/>
       <field table="Sections" field="TermID"         access="ViewOnly"/>
       <field table="Sections" field="SchoolID"       access="ViewOnly"/>
+
+      <!-- Sections.Room, added at 1.4.3 (2026-10-13). Read only, like
+           everything here. The room each class meets in, so the Reflection
+           Room list and its pull slips can say which door to go to. Until it
+           is granted the Hub uses a room an administrator types for each
+           teacher. The sync reads it from the table endpoint (projection
+           id,room), and a 403 there leaves the sync exactly as it was.
+           It answered 403 on 2026-10-13: the column exists, only the grant
+           is missing. No named query references it, so an instance still on
+           1.4.2 loses nothing. See docs/admin-ask-1.4.3.md. -->
+      <field table="Sections" field="Room"           access="ViewOnly"/>
 
       <!-- Period comes from SECTIONS.EXPRESSION and CC.EXPRESSION.
            SECTIONMEETING, PERIOD and CYCLE_DAY were requested in 1.0.0 and

@@ -244,9 +244,14 @@ console.log("\n1. The real plugin grant blocks every write, read not attempted")
   // on the instance on 2026-09-08. INSTALLED_PLUGIN_VERSION below still says
   // 1.0.6 on purpose: that pin gates WRITES, and moving it is a decision about
   // what a human verified was granted, not a side effect of a test.
-  check("plugin version is 1.4.2", grants.pluginVersion === "1.4.2", String(grants.pluginVersion));
-  check("164 fields declared", grants.counts.total === 164, String(grants.counts.total));
-  check("every one of them is ViewOnly", grants.counts.viewOnly === 164, String(grants.counts.viewOnly));
+  //
+  // 1.4.3 (2026-10-13) adds one read only field, Sections.Room, for the
+  // rooms on the Reflection Room list. PREPARED, NOT INSTALLED: the instance
+  // runs 1.4.2 until an administrator installs it (docs/admin-ask-1.4.3.md).
+  // Same 27 tables: Sections is already granted.
+  check("plugin version is 1.4.3", grants.pluginVersion === "1.4.3", String(grants.pluginVersion));
+  check("165 fields declared", grants.counts.total === 165, String(grants.counts.total));
+  check("every one of them is ViewOnly", grants.counts.viewOnly === 165, String(grants.counts.viewOnly));
   check("ZERO FullAccess grants exist", grants.counts.fullAccess === 0, String(grants.counts.fullAccess));
   check("27 tables declared", grants.counts.tables === 27, String(grants.counts.tables));
 
@@ -1252,7 +1257,7 @@ console.log("\n24. REGRESSION: the grant check cannot be answered with a file of
     grantSourceProblems(installedGrant()).join(" | "),
   );
   check("the recorded installed version is still 1.0.6", INSTALLED_PLUGIN_VERSION === "1.0.6", INSTALLED_PLUGIN_VERSION);
-  check("the working tree has moved ahead of it", installedGrant().pluginVersion === "1.4.2", String(installedGrant().pluginVersion));
+  check("the working tree has moved ahead of it", installedGrant().pluginVersion === "1.4.3", String(installedGrant().pluginVersion));
 
   // And the loopback carve-out is genuinely narrow: an override is honoured
   // only for a target that cannot be a PowerSchool instance.
