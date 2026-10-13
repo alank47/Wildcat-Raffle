@@ -158,6 +158,10 @@ const mustBeCalled = [
   // The Student groups chart (2026-10-12): its one read. Uncalled, the card
   // would be a tab of nothing for the grant holder it was opened for.
   "attendanceGroupRunChart:groupWeeks",
+  // Rooms (owner, 2026-10-13): the one way a room reaches a teacher's record,
+  // from Edit Teacher and the Classrooms list. Uncalled, every row of the
+  // Reflection Room list would say a dash for good.
+  "staffInvites:setStaffRoom",
 ];
 for (const n of mustBeCalled) {
   check(`${n} has a caller`, called.has(n), server.has(n) ? "exported, never called" : "not exported at all");

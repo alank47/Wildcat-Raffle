@@ -156,10 +156,10 @@ console.log("\n2. EVERY PAGE SAYS WHAT IT IS\n");
   const w = makeWorld(scriptSrc, { query: () => RES(), mutation: () => ({ ok: true }) });
   const html = w.app.reflectionSheetHtml(RES(), { byNumber: w.app.rrStudentIndex(), printedBy: "Pat Supervisor", printedAt: "2026-10-13T18:31:07.000Z" });
   const pages = sheetPages(html);
-  const marks = pages.map((p) => (/<th colspan="8" class="rr-watermark">([^<]*)<\/th>/.exec(p) || [])[1] || "");
+  const marks = pages.map((p) => (/<th colspan="9" class="rr-watermark">([^<]*)<\/th>/.exec(p) || [])[1] || "");
   check("PILOT and NOT FINAL watermarks: a pilot list not yet final says both on every MS page, NOT FINAL on HS",
     pages.length === 2 && marks[0] === "PILOT: do not assign · NOT FINAL: do not pull" && marks[1] === "NOT FINAL: do not pull"
-      && pages.every((p) => /<thead><tr><th colspan="8" class="rr-watermark">/.test(p)), J(marks));
+      && pages.every((p) => /<thead><tr><th colspan="9" class="rr-watermark">/.test(p)), J(marks));
   const finalHtml = w.app.reflectionSheetHtml(RES({ frozen: true, frozenAt: "2026-10-13T18:45:20.000Z", view: "made",
     sections: RES().sections.map((s) => ({ ...s, mode: "live" })) }), { byNumber: {}, printedBy: "Pat" });
   check("...and a final live list carries neither", !/rr-watermark/.test(finalHtml) && /Final/.test(finalHtml));
@@ -167,8 +167,8 @@ console.log("\n2. EVERY PAGE SAYS WHAT IT IS\n");
     /Middle school/.test(pages[0]) && /High school/.test(pages[1])
       && /As of 11:31 AM · NOT FINAL · 4 students \(MS 3, HS 1 of 12\) · pull at about 12:31/.test(pages[0])
       && /pull at about 12:57/.test(pages[1]), pages.map((p) => (/<p class="print-sub">([^<]*)</.exec(p) || [])[1]).join(" | "));
-  check("the columns: an empty Here box (owner, 10/12: check-off), then student, number, grade, Power-Up, violations with dates, tag, absent this morning",
-    /<th>Here<\/th><th>Student<\/th><th>Student #<\/th><th>Grade<\/th><th>Power-Up<\/th><th>Violations<\/th><th>Tag<\/th><th>Absent this morning: check if arrived<\/th>/.test(pages[0])
+  check("the columns: an empty Here box (owner, 10/12: check-off), then student, number, grade, Power-Up, room (owner, 10/13), violations with dates, tag, absent this morning",
+    /<th>Here<\/th><th>Student<\/th><th>Student #<\/th><th>Grade<\/th><th>Power-Up<\/th><th>Room<\/th><th>Violations<\/th><th>Tag<\/th><th>Absent this morning: check if arrived<\/th>/.test(pages[0])
       && /Tue 10\/13: Tardy P2 \(Ms Ng\)<\/div><div>Tue 10\/13: Uniform 7:52 AM/.test(pages[0]));
   check("an RSP student is pulled like anyone, and the row tells the runner which room",
     /Mr Abel <div class="print-note">RSP A<\/div> <span class="rr-flag">RSP: pull from this class<\/span>/.test(pages[0]));
@@ -579,7 +579,7 @@ console.log("\n11. A TEST LIST: SAID IN RED, ON SCREEN AND ON EVERY PAGE, AND NE
   const pages = sheetPages(p.sheet || "");
   check("Print prints the TEST copy from a fresh read, and records nothing (the server refuses a TEST list's print)",
     w.prints.length === 1 && w.calls.map((c) => c.path).join() === "reflectionList:listForDay" && recorded.length === 0, J(w.calls.map((c) => c.path)));
-  const thead = (pg) => (/<th colspan="8" class="rr-watermark">([^<]*)<\/th>/.exec(pg) || [])[1] || "";
+  const thead = (pg) => (/<th colspan="9" class="rr-watermark">([^<]*)<\/th>/.exec(pg) || [])[1] || "";
   check("printed TEST pages carry the watermark and the banner: 'TEST — not for assignment' across every page, in every page's header row, and the red banner under every heading",
     pages.length === 2 && (p.sheet.match(/class="rr-test-watermark" aria-hidden="true" data-rr-test-watermark>TEST — not for assignment<\/div>/g) || []).length === 1
       && pages.every((pg) => thead(pg) === "TEST — not for assignment" && /^ rr-print-page rr-test"/.test(pg)
@@ -670,8 +670,8 @@ console.log("\n12. MIDDLE SCHOOL IS PULLED FROM THE CLASS BEFORE LUNCH (owner, 2
   await w.app.printReflectionList();
   const pages = sheetPages(w.prints[0]?.sheet || "");
   check("the printed MS page: the 'Class before lunch' column, the class in each row, and its pull time; the HS page Power-Up",
-    pages.length === 2 && /<th>Grade<\/th><th>Class before lunch<\/th><th>Violations<\/th>/.test(pages[0])
-      && /<th>Grade<\/th><th>Power-Up<\/th><th>Violations<\/th>/.test(pages[1]) && /P3 · Ms Ortiz/.test(pages[0]) && !/Ms Ruiz/.test(pages[0])
+    pages.length === 2 && /<th>Grade<\/th><th>Class before lunch<\/th><th>Room<\/th><th>Violations<\/th>/.test(pages[0])
+      && /<th>Grade<\/th><th>Power-Up<\/th><th>Room<\/th><th>Violations<\/th>/.test(pages[1]) && /P3 · Ms Ortiz/.test(pages[0]) && !/Ms Ruiz/.test(pages[0])
       && /· pull at 12:29 PM from the class before lunch<\/p>/.test(pages[0]) && /· pull at 12:57 PM, 5 minutes before the end of Power-Up<\/p>/.test(pages[1])
       && J(namesIn(pages[0])) === J(["Zane, Dee", "Moss, Cy", "Diaz, Ana", "Alvarez, Ben", "Comer, New"]),
     pages.map((p) => (/<p class="print-sub">([^<]*)</.exec(p) || [])[1]).join(" | "));

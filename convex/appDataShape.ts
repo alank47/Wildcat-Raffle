@@ -137,6 +137,10 @@ export function toAppTeacher(row: Record<string, any>): AppTeacher {
     // TEACHER_WRITABLE, so no save can carry them back.
     reflectionList: row.reflectionList === true,
     reflectionListUntil: typeof row.reflectionListUntil === "string" ? row.reflectionListUntil : null,
+    // The room they teach in (2026-10-13), for the Edit dialog and the
+    // Classrooms list. Set only by staffInvites:setStaffRoom (admin); not in
+    // TEACHER_WRITABLE, so no save can carry it back.
+    room: typeof row.room === "string" && row.room ? row.room : null,
   };
 }
 

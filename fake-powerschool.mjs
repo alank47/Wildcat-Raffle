@@ -288,6 +288,9 @@ export function fakePowerSchool(tablesIn, opts = {}) {
 //   marks         [{ sn, slot, code, date? }] the rows under test
 //   futureRows    rows per slot (1, 2, 4, 6, 9, 10) dated the next day, code
 //                 X: PowerSchool's absences entered ahead of time
+//   rooms         { sectionId: room }: the room PowerSchool holds for a
+//                 section, on its psRoster rows as the sync stores it once
+//                 Sections.Room is granted (2026-10-13); none by default
 // Students: [{ sn, grade, sections: { slot: sectionId }, teachers?, courses? }].
 // Returns PowerSchool's tables (attendance, attendance_code, students), the
 // matching psRoster rows (period "8(A-E)" etc.), the code ids by letter,
@@ -304,7 +307,7 @@ export const REFLECTION_CODES = [
 ];
 
 export function reflectionDay({
-  date, schoolid = "1817", yearid = "36", students = [], marks = [], meet = [], sectionMarks = [], futureRows = 0,
+  date, schoolid = "1817", yearid = "36", students = [], marks = [], meet = [], sectionMarks = [], futureRows = 0, rooms = {},
 } = {}) {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(String(date))) throw new Error("reflectionDay needs a YYYY-MM-DD date");
   const codeId = Object.fromEntries(REFLECTION_CODES.map((c) => [c.att_code || "P", c.id]));
@@ -321,6 +324,7 @@ export function reflectionDay({
         studentNumber: sn, gradeLevel: String(grade), period: `${slot}(A-E)`, sectionId,
         courseName: courses[slot] ?? `Course ${sectionId}`, teacherFirstName: first, teacherLastName: last ?? "",
         teacherEmail: `${String(sectionId).toLowerCase()}@school.test`, syncedAt: "2026-10-08T13:00:00Z",
+        ...(rooms[sectionId] ? { sectionRoom: rooms[sectionId] } : {}),
       });
     }
   };

@@ -48,6 +48,7 @@ import * as accessRules from "./accessRules.ts";
 import * as identityRules from "./identityRules.ts";
 import * as rosterEmail from "./rosterEmail.ts";
 import * as rosterGuardRules from "./rosterGuardRules.ts";
+import * as roomRules from "./roomRules.ts";
 import * as raceRollup from "./raceRollup.ts";
 
 const { isMissingWork, onlyMissingWork, teacherMarkedMissing, scoredExactlyZero, markedMissingButScored } = rules;
@@ -546,6 +547,9 @@ console.log("\n-- the cron writes every row it fetched, flag and score as given 
     "./rosterEmail": rosterEmail,
     "./missingWorkRules": rules,
     "./rosterGuardRules": rosterGuardRules,
+    // The sections' rooms (2026-10-13): pure, imports nothing. This fetch
+    // answers no table read, so the sync reads no rooms, as on 1.4.2.
+    "./roomRules": roomRules,
   });
   const run = async (missingWork) => {
     const calls = [];

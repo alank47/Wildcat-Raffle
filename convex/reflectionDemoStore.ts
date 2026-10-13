@@ -3,6 +3,7 @@ import type { QueryCtx } from "./_generated/server";
 import { v } from "convex/values";
 import { getDay, loadRoster, loadSettings, markedOf, readState, ROSTER_KEY, schoolTimeZone } from "./reflection";
 import { countingDivision, DEMO_ROW_KEYS } from "./reflectionDemoRules";
+import { roomByTeacherEmail } from "./roomRules";
 import {
   clockText, dayLabel, wallClock,
   type Marked, type ReflectionSettings, type RosterMeta, type RosterSnap,
@@ -17,8 +18,9 @@ import {
  * may only hold actions. Its queries and mutations are here.
  *
  * WHAT THE TEST LIST MAY TOUCH: reflectionDemoLists, and nothing else. It
- * READS the settings, the bell schedule, the day row and the roster snapshot,
- * to know whether a TEST list may be built and who is in which Power-Up. It
+ * READS the settings, the bell schedule, the day row, the roster snapshot and
+ * the rooms typed for teachers, to know whether a TEST list may be built, who
+ * is in which Power-Up and which room each is pulled from. It
  * never writes reflectionTardies, reflectionUnits, reflectionDays,
  * reflectionPrints, reflectionAudit, the settings, the lease or a uniform
  * entry, so the real list -- in its pilot from Friday 10/9 -- cannot tell it
@@ -81,7 +83,7 @@ export const context = internalQuery({
     | { ok: false; reason: string }
     | {
       ok: true; today: string; tz: string; settings: ReflectionSettings; marked: Marked; noSchool: string[];
-      roster: RosterSnap[]; rosterMeta: RosterMeta | null;
+      roster: RosterSnap[]; rosterMeta: RosterMeta | null; teacherRooms: Record<string, string>;
     }
   > => {
     const { tz, today } = await schoolToday(ctx);
@@ -96,6 +98,10 @@ export const context = internalQuery({
       noSchool: marks.filter((m) => m.noSchool).map((m) => m.date),
       roster: Object.values(await loadRoster(ctx)),
       rosterMeta: await readState(ctx, ROSTER_KEY),
+      // The rooms typed for each teacher (owner, 10/13). The whole staff
+      // table: this runs from the command line, once, and the build does not
+      // know yet which teachers its rows will name.
+      teacherRooms: roomByTeacherEmail(await ctx.db.query("teachers").collect()),
     };
   },
 });

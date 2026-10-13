@@ -4382,6 +4382,34 @@
                         </tbody>
                     </table>
                 </div>
+
+                <!-- CLASSROOMS (owner, 2026-10-13): every teacher's room on one
+                     screen, so an admin can fill them in one sitting -- type,
+                     Enter, next. The Reflection Room list and its pull slips
+                     show the room a student is pulled from. Admins only, and
+                     the server checks the caller's own role on every save
+                     (staffInvites:setStaffRoom). -->
+                <div class="panel-head admin-only" style="margin-top: 26px;">
+                    <span class="panel-icon">&#128682;</span>
+                    <h3>Classrooms</h3>
+                </div>
+                <div class="wc-card panel-card admin-only" id="staffRoomsCard">
+                    <p class="panel-hint" style="margin: 0 0 12px 0;">
+                        The room each teacher teaches in. The Reflection Room list and its pull slips
+                        show the room each student is pulled from, using this until PowerSchool shares
+                        each class's own room. Type a room and press <strong>Enter</strong>: it saves and
+                        moves to the next teacher. Leave a box blank for no room.
+                    </p>
+                    <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:center; margin-bottom:10px;">
+                        <select id="staffRoomsFilter" class="wc-select" aria-label="Which staff to show" onchange="renderStaffRooms(true)">
+                            <option value="teachers">Teachers</option>
+                            <option value="missing">Teachers with no room</option>
+                            <option value="all">All staff</option>
+                        </select>
+                        <span class="wu-chip" id="staffRoomsCount"></span>
+                    </div>
+                    <div class="wu-scroll-x" id="staffRoomsList"></div>
+                </div>
             </div>
 
             <!-- ========================================
@@ -5827,6 +5855,16 @@
             <div class="form-group">
                 <label>Email</label>
                 <input type="email" id="editTeacherEmail" placeholder="e.g., teacher@westbrook.edu">
+            </div>
+
+            <!-- THE ROOM THEY TEACH IN (owner, 2026-10-13): shown on the
+                 Reflection Room list and its pull slips for the classes they
+                 teach. Admin only; the server decides
+                 (staffInvites:setStaffRoom). Blank clears it. -->
+            <div class="form-group">
+                <label for="editTeacherRoom">Room</label>
+                <input type="text" id="editTeacherRoom" maxlength="24" placeholder="e.g., 214" autocomplete="off">
+                <p class="panel-hint" id="editTeacherRoomHint" style="margin:6px 0 0 0;"></p>
             </div>
             
             <div class="form-group">

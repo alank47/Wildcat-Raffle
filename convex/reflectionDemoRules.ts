@@ -40,8 +40,8 @@
  */
 import {
   absentThisMorning, admitState, beforeLunchSlot, claimAtFreeze, divisionOfGrade, hasEvidence, initialTardyState, lunchClassOf,
-  PERIOD_ID_BASE, reconcileDate, scheduleKindFor, servesSameDay, summarizeDay, tardyCandidates, weekdayOf,
-  type AttRow, type CodeBook, type Division, type LunchClass, type Marked, type ReflectionSettings, type RosterSnap,
+  PERIOD_ID_BASE, pullRoomOf, reconcileDate, scheduleKindFor, servesSameDay, summarizeDay, tardyCandidates, weekdayOf,
+  type AttRow, type CodeBook, type Division, type LunchClass, type Marked, type PullRoom, type ReflectionSettings, type RosterSnap,
   type ScheduleKind, type TardyItem,
 } from "./reflectionRules";
 
@@ -75,12 +75,14 @@ export type DemoRow = {
   slipTo: null;
   /** MS: the class before lunch on the day, as a made list copies it (owner, 10/9). Null on an HS row. */
   lunch: LunchClass | null;
+  /** The room the student is pulled from, as a made list copies it (owner, 10/13): a room number, never a name. */
+  room: PullRoom;
 };
 
 /** The only keys a stored TEST row may have: numbers, grades and the list's own words, never a name. */
 export const DEMO_ROW_KEYS = [
   "key", "unitId", "studentNumber", "grade", "division", "mode", "state", "pu", "notOnRoster", "lines", "tags", "owes",
-  "absentMorning", "released", "cleared", "voided", "after", "notHere", "slipTo", "lunch",
+  "absentMorning", "released", "cleared", "voided", "after", "notHere", "slipTo", "lunch", "room",
 ];
 
 /**
@@ -160,6 +162,8 @@ export function demoListRows(input: {
   day: string; previousDay: string | null; tz: string; builtAt: string; settings: ReflectionSettings;
   codes: Extract<CodeBook, { ok: true }>; roster: Record<string, RosterSnap>; gradeOf: Record<string, string>;
   marked: Marked; dayRows: AttRow[]; previousRows: AttRow[] | null; unmatched?: number;
+  /** The rooms typed for teachers, by address (roomRules.roomByTeacherEmail), as the real freeze looks them up. */
+  teacherRooms?: Record<string, string>;
 }): { rows: DemoRow[]; counts: DemoCounts; kind: ScheduleKind } {
   const { day, previousDay, roster, gradeOf, codes } = input;
   const settings = demoSettings(input.settings, previousDay ?? day);
@@ -244,6 +248,7 @@ export function demoListRows(input: {
       notHere: false,
       slipTo: null,
       lunch: r.division === "ms" ? lunchClassOf(snap, lunchSlot) : null,
+      room: pullRoomOf(r.division, snap, lunchSlot, input.teacherRooms ?? {}),
     };
   });
   counts.total = rows.length;

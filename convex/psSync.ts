@@ -38,6 +38,9 @@ export const upsertRoster = internalMutation({
         termId: v.optional(v.string()),
         termAbbreviation: v.optional(v.string()),
         schoolId: v.optional(v.string()),
+        // PowerSchool's room for the section, only once the plugin grants
+        // Sections.Room (sisAction.readSectionRooms). Absent otherwise.
+        sectionRoom: v.optional(v.string()),
       }),
     ),
   },

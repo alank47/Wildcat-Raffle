@@ -6,13 +6,15 @@ import { v } from "convex/values";
 import {
   absentThisMorning, admitState, beforeLunchSlot, blankSections, buildCodeBook, carriedUnit, carryVerdict, claimAtFreeze,
   dayTimes, decideTick, decodeRows, divisionOfGrade, fallbackDayReview, freezeBanner, freezeVerdict, idSetHash,
-  initialTardyState, LEASE_MS, listsBeforeSeen, lunchClassOf, nextSchoolDayGuess, noListBanner, provesNoSchool, pullInstant, QUEUED_TAG,
+  initialTardyState, LEASE_MS, listsBeforeSeen, lunchClassOf, nextSchoolDayGuess, NO_ROOM, noListBanner, provesNoSchool, pullClassOf,
+  pullInstant, pullRoomOf, QUEUED_TAG,
   reclassify, reconcileDate, reflectionSettingsOrDefault, rejoinsReleasedDetention, removalVerdict, ROOM_MODE_FOR_NEW_LISTS,
   roomModeOf, rosterAgeBanner, rosterSnapshotVerdict, SCHEDULE_KINDS, scheduleKindFor, schoolDayVerdict, studentMap, summarizeDay, tardyCandidates,
   tardyKey, termBanner, unitReleased, wallClock,
   type CarryVerdict, type DayState, type DaySummary, type Division, type LunchClass, type Marked, type ReflectionSettings,
-  type RosterMeta, type RosterSnap, type ScheduleKind, type TardyItem, type UniformItem, type UnitItem,
+  type PullRoom, type RosterMeta, type RosterSnap, type ScheduleKind, type TardyItem, type UniformItem, type UnitItem,
 } from "./reflectionRules";
+import { roomByTeacherEmail } from "./roomRules";
 
 /**
  * THE DAILY REFLECTION ROOM LIST: the server side that reads and writes.
@@ -76,6 +78,7 @@ export const rosterPage = internalQuery({
         courseName: r.courseName ?? null, courseNumber: r.courseNumber ?? null,
         teacherFirstName: r.teacherFirstName ?? null, teacherLastName: r.teacherLastName ?? null,
         teacherEmail: r.teacherEmail ?? null, termId: r.termId ?? null, syncedAt: r.syncedAt,
+        sectionRoom: r.sectionRoom ?? null,
       })),
       isDone: page.isDone,
       continueCursor: page.continueCursor,
@@ -94,6 +97,7 @@ const snapRow = v.object({
   puCourse: v.union(v.string(), v.null()),
   puFlag: v.union(v.string(), v.null()),
   puCheck: v.boolean(),
+  puRoom: v.optional(v.union(v.string(), v.null())),
   enrolledSlots: v.array(v.number()),
   sectionBySlot: v.record(v.string(), v.string()),
   teacherBySlot: v.record(v.string(), v.string()),
@@ -103,6 +107,8 @@ const snapRow = v.object({
     course: v.union(v.string(), v.null()),
     flag: v.union(v.string(), v.null()),
     sections: v.number(),
+    teacherEmail: v.optional(v.union(v.string(), v.null())),
+    room: v.optional(v.union(v.string(), v.null())),
   }))),
 });
 
@@ -159,6 +165,7 @@ export const writeRosterSnapshot = internalMutation({
         studentNumber: r.studentNumber, grade: r.grade, division: or(r.division),
         puSlot: or(r.puSlot), puSectionId: or(r.puSectionId), puTeacherName: or(r.puTeacherName),
         puTeacherEmail: or(r.puTeacherEmail), puCourse: or(r.puCourse), puFlag: or(r.puFlag), puCheck: r.puCheck,
+        puRoom: or(r.puRoom),
         enrolledSlots: r.enrolledSlots, sectionBySlot: r.sectionBySlot, teacherBySlot: r.teacherBySlot,
         ...(r.classBySlot ? { classBySlot: r.classBySlot } : {}),
         snapAt: now, rosterSyncedAt: rosterSyncedAt!, termId: a.termId,
@@ -266,6 +273,7 @@ const rosterSnapOf = (r: Doc<"reflectionRoster">): RosterSnap => ({
   puTeacherEmail: r.puTeacherEmail ?? null, puCourse: r.puCourse ?? null, puFlag: r.puFlag ?? null,
   puCheck: r.puCheck, enrolledSlots: r.enrolledSlots, sectionBySlot: r.sectionBySlot, teacherBySlot: r.teacherBySlot,
   ...(r.classBySlot ? { classBySlot: r.classBySlot } : {}),
+  ...(r.puRoom ? { puRoom: r.puRoom } : {}),
 });
 
 export async function loadRoster(ctx: Ctx): Promise<Record<string, RosterSnap>> {
@@ -307,6 +315,45 @@ export function lunchSnapshotOf(c: LunchClass): NonNullable<Doc<"reflectionUnits
     slot: or(c.slot), period: or(c.period), sectionId: or(c.sectionId), teacherName: or(c.teacher),
     course: or(c.course), flag: or(c.flag), problem: or(c.problem),
   };
+}
+
+/**
+ * THE ROOM, as copied onto a detention when its list is made (owner,
+ * 2026-10-13): `{}` when no room could be named, so "made with no room" and
+ * "made before rooms" (no copy at all) both show a dash and never a room
+ * looked up later.
+ */
+export function roomSnapshotOf(p: PullRoom): NonNullable<Doc<"reflectionUnits">["roomSnapshot"]> {
+  return p.room ? { room: p.room, ...(p.source ? { source: p.source } : {}) } : {};
+}
+
+/** A detention's room as the list shows it: its copy, or none (a list made before rooms). */
+export function roomOfSnapshot(s: Doc<"reflectionUnits">["roomSnapshot"]): PullRoom {
+  return s?.room ? { room: s.room, source: s.source ?? null } : NO_ROOM;
+}
+
+/**
+ * THE ROOMS ON FILE FOR THE TEACHERS THESE ADDRESSES NAME: one indexed read
+ * each (two for a renamed teacher, whose PowerSchool address is their
+ * psEmail), never a scan of every staff record -- the list screen reads this
+ * every 30 seconds while it is open.
+ */
+export async function teacherRoomsFor(ctx: Ctx, emails: Array<string | null | undefined>): Promise<Record<string, string>> {
+  const rows: Array<Doc<"teachers">> = [];
+  for (const e of new Set(emails.map((x) => String(x ?? "").trim().toLowerCase()).filter(Boolean))) {
+    const own = await ctx.db.query("teachers").withIndex("by_email", (q) => q.eq("email", e)).first();
+    const row = own ?? await ctx.db.query("teachers").withIndex("by_psEmail", (q) => q.eq("psEmail", e)).first();
+    if (row) rows.push(row);
+  }
+  return roomByTeacherEmail(rows);
+}
+
+/** The rooms the rows' students are pulled from, by student number: MS the class before lunch, HS Power-Up. */
+export async function pullRoomsFor(ctx: Ctx, rows: Array<{ studentNumber: string; division: Division }>,
+  roster: Record<string, RosterSnap>, lunchAt: { slot: number; period: string } | null): Promise<Record<string, PullRoom>> {
+  const teacherRooms = await teacherRoomsFor(ctx,
+    rows.map((r) => pullClassOf(r.division, roster[r.studentNumber] ?? null, lunchAt)?.teacherEmail));
+  return Object.fromEntries(rows.map((r) => [r.studentNumber, pullRoomOf(r.division, roster[r.studentNumber] ?? null, lunchAt, teacherRooms)]));
 }
 
 /** A detention's copy back as the list shows it. */
@@ -435,14 +482,18 @@ async function freezeDay(ctx: MutationCtx, f: {
 
   // MS is pulled from the class before lunch (owner, 10/9): copied now, with
   // the Power-Up class, so a past list still names the right room after the
-  // semester changes.
+  // semester changes. And the ROOM each student is pulled from (owner,
+  // 10/13), copied the same way: a room typed or changed after the list is
+  // made never silently changes it.
   const { lunch } = await dayKindOf(ctx, date, f.settings);
+  const rooms = await pullRoomsFor(ctx, claim.rows, f.roster, lunch);
   let ms = 0, hs = 0;
   for (const row of claim.rows) {
     const snap = f.roster[row.studentNumber] ?? null;
     const shown = {
       puSnapshot: puSnapshotOf(snap),
       lunchSnapshot: row.division === "ms" ? lunchSnapshotOf(lunchClassOf(snap, lunch)) : undefined,
+      roomSnapshot: roomSnapshotOf(rooms[row.studentNumber] ?? NO_ROOM),
       absentMorning: f.summary ? absentThisMorning(f.summary, row.studentNumber, snap) : undefined,
       listedAt: nowIso,
       owes: row.owes > 1 ? row.owes : undefined,
@@ -819,6 +870,7 @@ async function rejoinDetention(ctx: MutationCtx, unitId: Id<"reflectionUnits"> |
   await unrelease(ctx, u._id, u.releasedAt);
   await ctx.db.patch(last._id, {
     state: "pending", serveDay: undefined, listedAt: undefined, owes: undefined, puSnapshot: undefined, lunchSnapshot: undefined,
+    roomSnapshot: undefined,
     absentMorning: undefined, ...NO_ROOM_MARKS,
     tags: last.tags.filter((tag) => !/^Owes \d+$/.test(tag)),
   });

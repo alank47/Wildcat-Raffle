@@ -10255,6 +10255,16 @@ body:has(.wc-preview-bar) .app-content { padding-bottom: 64px; }
 .rr-slip { border-bottom: 1px dashed #64748b; padding: 10px 0 12px; break-inside: avoid; page-break-inside: avoid; }
 .rr-slip-out { font-size: 18px; font-weight: 700; padding-bottom: 8px; margin-bottom: 8px; border-bottom: 1px dotted #CBD5E1; }
 .rr-slip-extra { font-size: 13px; font-weight: 600; color: #1F4E79; }
+/* ROOMS (owner, 2026-10-13): the room a student is pulled from, a column on
+   the list and boxed on the outside of each slip, which run in room order. */
+.rr-classroom { font-weight: 700; white-space: nowrap; }
+.rr-slip-room { display: inline-block; font-size: 15px; font-weight: 800; padding: 0 8px; margin-left: 4px;
+    border: 2px solid #1F4E79; border-radius: 6px; color: #1F4E79; white-space: nowrap; }
+/* The Classrooms list on the Teachers tab: one box per teacher, typed down the column. */
+.staff-rooms-table .staff-room-input { width: 9.5em; padding: 6px 8px; }
+.staff-rooms-table tr.staff-room-missing td { background: #FFFAEF; }
+.staff-room-saved { font-size: 12.5px; font-weight: 600; color: #1B7F3B; }
+.staff-room-error { font-size: 12.5px; font-weight: 600; color: #B91C1C; }
 .rr-slip-in { width: 100%; border-collapse: collapse; font-size: 14px; table-layout: fixed; }
 .rr-slip-in td { padding: 3px 8px 3px 0; }
 .rr-release-list { margin: 4px 0 12px; padding-left: 18px; }

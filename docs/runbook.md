@@ -397,6 +397,38 @@ tick carries on.
   investigate (a stale `PS_TERM_ID` is the likeliest cause), not a failure to
   re-run: re-running gets the same answer until the cause is fixed.
 
+### Rooms on the list (owner, 2026-10-13)
+
+Every row says the **room** the student is pulled from: in middle school the
+class before lunch, in high school Power-Up. The printed list has a Room
+column, and the pull slips are printed **in room order** (then teacher), with
+the room on the outside of each slip. Where it comes from, first match wins:
+
+1. **PowerSchool's room for the section** (`Sections.Room`), once an
+   administrator installs plugin 1.4.3 (`docs/admin-ask-1.4.3.md`). Until
+   then PowerSchool answers 403 and the sync records
+   `sectionRooms: "not-granted"` in its summary (`syncLog:latest`), which is
+   expected and harmless. After the install the next sync records
+   `"granted"` with `sectionRoomsFound` and `rosterRowsWithRoom`, and the list
+   uses those rooms from the next morning's roster snapshot. `"error"` names
+   what went wrong in `sectionRoomsError`; the roster is written all the
+   same, and the list uses the teachers' rooms that day.
+2. **The teacher's own room**, typed by an admin on the Teachers tab: Edit
+   (Room), or the **Classrooms** list at the bottom of the tab (type, Enter,
+   next; "Teachers with no room" shows what is left). From the command line:
+   `npx convex run --prod staffInvites:setStaffRoomFromCli '{"email":"...","room":"214"}'`
+   (`"room": null` clears it). Only admins and superadmins can set a room.
+3. Otherwise a **dash**: never a guess. A dash also appears where the row
+   already says to check PowerSchool (two classes in the period, two Power-Up
+   classes, class before lunch not found).
+
+**A list already made keeps the rooms it was made with.** A room typed or
+changed later shows on the next list (and on "so far" views) but never
+changes a list already on paper. Lists made before rooms shipped show a dash.
+On the day this ships, the morning's roster snapshot does not yet know whose
+room each MS class meets in, so MS rows show a dash until the next morning's
+snapshot; HS rows show the Power-Up teacher's room at once.
+
 ### January term switch (do this the first week of January)
 
 S1 ends 12/18 and S2 starts 1/11; `PS_TERM_ID` is pinned to S1 (3601). From
@@ -425,8 +457,8 @@ The developer also keeps a calendar reminder for the first week of January.
 - **At the ready time (12:00, or 11:30 Wednesdays and Minimum days):** the
   PBIS lead or the room supervisor prints the master list and the slips once
   the screen says Final. A staff runner, never a student aide, delivers the
-  slips. If the screen says "No list today", nobody is pulled; everything moves
-  to the next list by itself.
+  slips, which are printed in room order. If the screen says "No list today",
+  nobody is pulled; everything moves to the next list by itself.
 - **The room runs during lunch** (owner, 10/8): MS eats first, so MS serves in
   the first half of Lunch & Power-Up and HS in the second half (pulled from
   Power-Up 5 minutes before the swap). **MS is pulled a couple of minutes

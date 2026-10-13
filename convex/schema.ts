@@ -89,12 +89,33 @@ export default defineSchema({
     reflectionListSetBy: v.optional(v.string()),
     reflectionListSetAt: v.optional(v.string()),
     reflectionListUntil: v.optional(v.string()),
+    /**
+     * THE ROOM THIS PERSON TEACHES IN (owner, 2026-10-13), typed by an
+     * administrator on the Teachers tab: Edit, or the Classrooms list. Most
+     * teachers keep one room all day, so the Reflection Room list shows it
+     * for every class they teach -- until PowerSchool grants Sections.Room
+     * (plugin 1.4.3), whose own room per section is preferred
+     * (reflectionRules.pullRoomOf). Display only: it opens nothing.
+     *
+     * Set only by staffInvites:setStaffRoom (admin and superadmin, checked on
+     * the caller's stored role) or its CLI twin -- it is NOT in
+     * TEACHER_WRITABLE, so no browser save can carry it. A role change keeps
+     * it: a room is where somebody teaches, not what they may see.
+     */
+    room: v.optional(v.string()),
+    roomSetBy: v.optional(v.string()),
+    roomSetAt: v.optional(v.string()),
     // NOTE: no `password` field, deliberately. The cleartext password column is
     // what this whole migration exists to delete. Do not carry it across.
   })
     .index("by_email", ["email"])
     // Same reason as students.by_legacyId: a save reads only its own rows.
-    .index("by_legacyId", ["legacyId"]),
+    .index("by_legacyId", ["legacyId"])
+    // ROOMS (2026-10-13): the roster names a teacher by the address
+    // PowerSchool files their sections under, which for a renamed teacher is
+    // their psEmail, not their email. Looking their room up must be an
+    // indexed read, not a scan of every staff record per list read.
+    .index("by_psEmail", ["psEmail"]),
 
   // Students. Joined to Google by email once PowerSchool manifest field 19
   // (Student Email) is approved and syncing. Optional until then: records exist
@@ -384,6 +405,14 @@ export default defineSchema({
     termId: v.optional(v.string()),
     termAbbreviation: v.optional(v.string()),
     schoolId: v.optional(v.string()),
+
+    // THE SECTION'S ROOM, from PowerSchool's Sections.Room (2026-10-13).
+    // Absent until an administrator installs plugin 1.4.3, which asks for
+    // it: the sync reads it only when PowerSchool grants it, and a 403 (as
+    // today) leaves it absent rather than failing the sync
+    // (sisAction.readSectionRooms). The Reflection Room list prefers it to
+    // the teacher's own room (teachers.room).
+    sectionRoom: v.optional(v.string()),
 
     syncedAt: v.string(),
   })
@@ -1949,6 +1978,17 @@ export default defineSchema({
       flag: v.optional(v.string()),
       problem: v.optional(v.string()),
     })),
+    // THE ROOM THE STUDENT IS PULLED FROM (owner, 2026-10-13), copied when
+    // the list is made like the two above, so a room typed or changed later
+    // never silently changes a list already on paper. MS: the class before
+    // lunch; HS: Power-Up. `source` says whose room it is: PowerSchool's for
+    // the section, or the teacher's own. `{}` is "made, and no room could be
+    // named" (shown as a dash); a list made before rooms has no copy at all,
+    // and shows a dash too -- never a room looked up today.
+    roomSnapshot: v.optional(v.object({
+      room: v.optional(v.string()),
+      source: v.optional(v.union(v.literal("powerschool"), v.literal("teacher"))),
+    })),
     absentMorning: v.optional(v.boolean()),
     puAbsent: v.optional(v.boolean()),
     roomNotHere: v.optional(v.boolean()),
@@ -2100,17 +2140,24 @@ export default defineSchema({
     puCourse: v.optional(v.string()),
     puFlag: v.optional(v.string()),
     puCheck: v.boolean(),
+    // The Power-Up section's room in PowerSchool (2026-10-13), once the
+    // plugin grants Sections.Room; absent until then.
+    puRoom: v.optional(v.string()),
     enrolledSlots: v.array(v.number()),
     sectionBySlot: v.record(v.string(), v.string()),
     teacherBySlot: v.record(v.string(), v.string()),
     // Each slot's class whole (10/9: the MS class before lunch). Absent on a
-    // snapshot taken before then.
+    // snapshot taken before then. `teacherEmail` and `room` (2026-10-13):
+    // whose room the class meets in, and PowerSchool's own room for the
+    // section once granted; absent on a snapshot taken before then.
     classBySlot: v.optional(v.record(v.string(), v.object({
       sectionId: v.union(v.string(), v.null()),
       teacher: v.union(v.string(), v.null()),
       course: v.union(v.string(), v.null()),
       flag: v.union(v.string(), v.null()),
       sections: v.number(),
+      teacherEmail: v.optional(v.union(v.string(), v.null())),
+      room: v.optional(v.union(v.string(), v.null())),
     }))),
     snapAt: v.string(),
     rosterSyncedAt: v.string(),
@@ -2172,6 +2219,12 @@ export default defineSchema({
         flag: v.union(v.string(), v.null()),
         problem: v.union(v.string(), v.null()),
       }))),
+      // Built from 10/13 on: the room the student is pulled from, as a made
+      // list copies it. A TEST list built before has none, and shows a dash.
+      room: v.optional(v.object({
+        room: v.union(v.string(), v.null()),
+        source: v.union(v.literal("powerschool"), v.literal("teacher"), v.null()),
+      })),
     })),
     counts: v.record(v.string(), v.number()),
   }).index("by_day", ["day"]),

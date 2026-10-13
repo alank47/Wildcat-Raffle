@@ -10521,6 +10521,9 @@
             const listUntil = document.getElementById('editTeacherReflectionListUntil');
             if (listUntil) listUntil.value = teacher.reflectionList === true ? (teacher.reflectionListUntil || '') : '';
             syncReflectionListControl();
+            const roomInput = document.getElementById('editTeacherRoom');
+            if (roomInput) roomInput.value = teacher.room || '';
+            syncRoomControl();
             const roleSel = document.getElementById('editTeacherRole');
             if (roleSel) roleSel.onchange = function () { syncGradeScopeControl(); syncAttendanceWatchControl(); syncReflectionListControl(); };
             
@@ -10601,6 +10604,33 @@
                         : 'Lets them view and print the list and take the room\'s attendance, until the last day shown ' +
                           '(blank: the end of this term). It applies the next time they load the app.';
             }
+        }
+
+        /**
+         * THE ROOM THEY TEACH IN (owner, 2026-10-13), for the Reflection Room
+         * list and its pull slips. Any role may have one; only an admin may
+         * change it (the server checks the caller's own role again).
+         */
+        function syncRoomControl() {
+            const input = document.getElementById('editTeacherRoom');
+            const hint = document.getElementById('editTeacherRoomHint');
+            const admin = currentUser && (currentUser.role === 'admin' || currentUser.role === 'superadmin');
+            if (!input) return;
+            input.disabled = !admin;
+            if (hint) {
+                hint.style.color = '';
+                hint.textContent = !admin
+                    ? 'Only an admin can change a staff member\'s room.'
+                    : 'Shown on the Reflection Room list and its pull slips for the classes they teach. Leave blank if they have no room. '
+                        + 'Once PowerSchool shares each class\'s own room, that is used instead.';
+            }
+        }
+
+        /** What Edit Teacher sends for the room -- the room, '' to clear it -- or null when nothing changed. */
+        function staffRoomRequest(teacher, wanted) {
+            if (wanted === undefined || !teacher) return null;
+            const next = String(wanted || '').replace(/\s+/g, ' ').trim();
+            return next === String(teacher.room || '') ? null : next;
         }
 
         /**
@@ -10782,6 +10812,37 @@
                 }
             }
 
+            // THE ROOM (owner, 2026-10-13), through its own admin-gated
+            // mutation, same reasons as the access settings: it is not in
+            // TEACHER_WRITABLE, and the value shown is only ever the server's.
+            // Sent whatever happened above -- a room grants nothing, so a
+            // refused role change is no reason to drop it.
+            let roomResult = null;
+            let roomError = null;
+            const roomEl = document.getElementById('editTeacherRoom');
+            const roomRequest = staffRoomRequest(teacher, roomEl && !roomEl.disabled ? roomEl.value : undefined);
+            if (roomRequest !== null) {
+                const auth = window.WildcatAuth;
+                const session = auth && auth.getSession && auth.getSession();
+                if (!auth || !session) {
+                    roomError = 'Rooms are stored on the server, which needs a Microsoft sign-in.';
+                } else {
+                    try {
+                        roomResult = await auth.convexMutation('staffInvites:setStaffRoom',
+                            { email: teacher.email || '', room: roomRequest || null }, session.idToken);
+                        teacher.room = roomResult.room || null;
+                    } catch (e) {
+                        roomError = (e && e.message) || String(e);
+                    }
+                }
+            }
+            if (roomError) {
+                const hint = document.getElementById('editTeacherRoomHint');
+                if (hint) { hint.textContent = roomError; hint.style.color = '#b91c1c'; }
+                if (roomEl) roomEl.value = teacher.room || '';
+            }
+            const roomNote = roomError ? `\n\nTheir room did NOT change either: ${roomError}` : '';
+
             saveData();
             updateTeachersTable();
             updateAllDisplays(); // Refresh all displays including period filter
@@ -10791,7 +10852,7 @@
                 if (hint) { hint.textContent = listError; hint.style.color = '#b91c1c'; }
                 if (listBox) listBox.checked = teacher.reflectionList === true;
                 if (listUntilEl) listUntilEl.value = teacher.reflectionList === true ? (teacher.reflectionListUntil || '') : '';
-                alert(`Saved, but their Reflection Room list access did NOT change.\n\n${listError}`);
+                alert(`Saved, but their Reflection Room list access did NOT change.\n\n${listError}${roomNote}`);
                 return;
             }
 
@@ -10799,7 +10860,7 @@
                 const hint = document.getElementById('editTeacherAttendanceWatchHint');
                 if (hint) { hint.textContent = watchError; hint.style.color = '#b91c1c'; }
                 if (watchBox) watchBox.checked = teacher.attendanceWatch === true;
-                alert(`Saved, but their Attendance Watch access did NOT change.\n\n${watchError}`);
+                alert(`Saved, but their Attendance Watch access did NOT change.\n\n${watchError}${roomNote}`);
                 return;
             }
 
@@ -10812,7 +10873,7 @@
                 if (watchBox) watchBox.checked = teacher.attendanceWatch === true;
                 alert(`Saved, but their student access did NOT change` +
                     (wantedWatch !== undefined && wantedWatch !== (teacher.attendanceWatch === true) ? ', and neither did their Attendance Watch access' : '') +
-                    `.\n\n${scopeError}`);
+                    `.\n\n${scopeError}${roomNote}`);
                 return;
             }
 
@@ -10834,7 +10895,13 @@
                 if (listBox) listBox.checked = teacher.reflectionList === true;
                 if (listUntilEl) listUntilEl.value = teacher.reflectionList === true ? (teacher.reflectionListUntil || '') : '';
                 syncReflectionListControl();
-                alert(`Name and email saved, but the access level did NOT change.\n\n${roleError}`);
+                alert(`Name and email saved, but the access level did NOT change.\n\n${roleError}${roomNote}`);
+                return;
+            }
+
+            if (roomError) {
+                // NOT closed: the dialog shows the room the server still holds, and why.
+                alert(`Saved, but their room did NOT change.\n\n${roomError}`);
                 return;
             }
 
@@ -10859,7 +10926,10 @@
                                   (listResult.until ? `, until ${listResult.until}.` : ', with no end date.')
                                 : 'no longer sees the Reflection Room list.') +
                               `\n\nIt applies the next time they load the app.`
-                            : `✅ Teacher updated!\n\n${name}'s information has been saved.`);
+                            : roomResult && roomResult.changed
+                                ? `✅ ${roomResult.name}'s room is now ` + (roomResult.room || 'blank (no room)') + '.' +
+                                  `\n\nThe Reflection Room list uses it from its next list.`
+                                : `✅ Teacher updated!\n\n${name}'s information has been saved.`);
         }
 
         async function deleteTeacher(teacherId) {
@@ -14330,6 +14400,147 @@
             } catch (error) {
                 console.error('Error updating teachers table:', error);
                 tbody.innerHTML = '<tr><td colspan="6" style="text-align: center; padding: 20px; color: #dc3545;">Error loading teachers. Please refresh the page.</td></tr>';
+            }
+            // Its own failure is its own: the staff table above is drawn either way.
+            try { renderStaffRooms(); } catch (e) { console.warn('[rooms] the Classrooms list could not be drawn:', (e && e.message) || e); }
+        }
+
+        // =====================================================================
+        // CLASSROOMS (owner, 2026-10-13): every teacher's room on one screen.
+        //
+        // The Reflection Room list and its pull slips show the room each
+        // student is pulled from. PowerSchool holds each class's room but
+        // does not share it yet (Sections.Room answers 403 until plugin 1.4.3
+        // is installed), and most teachers keep one room all day -- so an
+        // admin types each teacher's room here, about thirty of them in one
+        // sitting: type, Enter, and the next box is ready.
+        //
+        // EVERY SAVE IS THE SERVER'S: staffInvites:setStaffRoom checks the
+        // caller's own stored role (admin or superadmin) and answers with the
+        // room it stored, which is what this list shows. The box is greyed for
+        // anyone else, which is a courtesy, not the check.
+        //
+        // NEVER REDRAWN UNDER THE ADMIN'S FINGERS. The Teachers tab redraws on
+        // every data refresh; while a room box has the focus this list keeps
+        // what is typed and only its count moves.
+        // =====================================================================
+        /** email -> the room being saved now, so Enter and the change that follows it save once. */
+        const _staffRoomPending = new Map();
+        /** email -> 'saved' | an error, shown beside the box until the next redraw. */
+        const _staffRoomStatus = new Map();
+
+        function staffRoomAdmin() {
+            return !!(currentUser && (currentUser.role === 'admin' || currentUser.role === 'superadmin'));
+        }
+
+        /** The staff the list shows: teachers (default), teachers with no room, or everyone. */
+        function staffRoomsRows(filter) {
+            const list = (teachers || []).filter(t => t && t.email);
+            if (filter === 'all') return list;
+            const mine = list.filter(t => t.role === 'teacher');
+            return filter === 'missing' ? mine.filter(t => !t.room) : mine;
+        }
+
+        const STAFF_ROOM_ROLE = { superadmin: 'Super Admin', admin: 'Admin', campusaide: 'Campus Aide', pbis: 'PBIS Team', teacher: 'Teacher' };
+
+        function staffRoomsCountText() {
+            const mine = (teachers || []).filter(t => t && t.email && t.role === 'teacher');
+            const missing = mine.filter(t => !t.room).length;
+            return !mine.length ? 'No teachers yet'
+                : missing ? missing + ' of ' + mine.length + ' teacher' + (mine.length === 1 ? '' : 's') + ' with no room'
+                    : 'Every teacher has a room';
+        }
+
+        function renderStaffRooms(force) {
+            const box = document.getElementById('staffRoomsList');
+            const count = document.getElementById('staffRoomsCount');
+            if (count) count.textContent = staffRoomsCountText();
+            if (!box) return;
+            const active = document.activeElement;
+            if (!force && active && active.classList && active.classList.contains('staff-room-input') && box.contains(active)) return;
+            _wcSortRedraw.set('staffRooms', () => renderStaffRooms(true));
+            const filterEl = document.getElementById('staffRoomsFilter');
+            const filter = filterEl ? filterEl.value : 'teachers';
+            const admin = staffRoomAdmin();
+            const COLS = [
+                { label: 'Name', text: t => t.name || t.email },
+                { label: 'Role', text: t => STAFF_ROOM_ROLE[t.role] || String(t.role || '') },
+                { label: 'Room', text: t => t.room || '' }
+            ];
+            const byName = staffRoomsRows(filter).slice()
+                .sort((a, b) => String(a.name || a.email).localeCompare(String(b.name || b.email), undefined, { sensitivity: 'base' }));
+            const rows = wcSortItems('staffRooms', byName, (t, col) => (COLS[col] ? COLS[col].text(t) : ''));
+            if (!rows.length) {
+                box.innerHTML = '<p class="wu-absent">' + (filter === 'missing' ? 'Every teacher has a room.' : 'No staff to show.') + '</p>';
+                return;
+            }
+            box.innerHTML = '<table class="wc-table staff-rooms-table"><thead><tr>'
+                + COLS.map((c, i) => wcSortTh('staffRooms', i, escapeHtml(c.label), { type: 'text' })).join('')
+                + '<th></th></tr></thead><tbody>'
+                + rows.map(t => {
+                    const st = _staffRoomStatus.get(t.email);
+                    const note = !st ? '' : st === 'saved' ? '<span class="staff-room-saved">Saved</span>'
+                        : '<span class="staff-room-error">' + escapeHtml(st) + '</span>';
+                    return '<tr' + (t.room ? '' : ' class="staff-room-missing"') + '>'
+                        + '<td class="wc-name">' + escapeHtml(t.name || t.email) + '</td>'
+                        + '<td class="cell-muted">' + escapeHtml(STAFF_ROOM_ROLE[t.role] || String(t.role || '')) + '</td>'
+                        + '<td><input type="text" class="wc-input staff-room-input" maxlength="24" autocomplete="off"'
+                            + ' aria-label="' + escapeHtml('Room for ' + (t.name || t.email)) + '"'
+                            + ' placeholder="' + (t.room ? '' : 'no room') + '" value="' + escapeHtml(t.room || '') + '"'
+                            + ' data-staff-room-email="' + escapeHtml(t.email) + '"'
+                            + (admin ? '' : ' disabled')
+                            + ' onkeydown="staffRoomKey(event, this)" onchange="saveStaffRoomFromList(this)"></td>'
+                        + '<td data-staff-room-status="' + escapeHtml(t.email) + '">' + note + '</td>'
+                        + '</tr>';
+                }).join('')
+                + '</tbody></table>';
+        }
+
+        /** Enter saves the box and moves to the next one, so a whole list is typed without the mouse. */
+        function staffRoomKey(event, input) {
+            if (!event || event.key !== 'Enter') return;
+            event.preventDefault();
+            saveStaffRoomFromList(input);
+            const all = Array.from(document.querySelectorAll('#staffRoomsList .staff-room-input'));
+            const next = all[all.indexOf(input) + 1];
+            if (next && typeof next.focus === 'function') { next.focus(); if (typeof next.select === 'function') next.select(); }
+        }
+
+        function staffRoomStatusShow(email, text, isError) {
+            _staffRoomStatus.set(email, isError ? text : 'saved');
+            const cell = Array.from(document.querySelectorAll('#staffRoomsList [data-staff-room-status]'))
+                .find(el => el.getAttribute('data-staff-room-status') === email);
+            if (cell) cell.innerHTML = isError ? '<span class="staff-room-error">' + escapeHtml(text) + '</span>' : '<span class="staff-room-saved">Saved</span>';
+        }
+
+        /** One room, to the server; the box then shows what the server stored. */
+        async function saveStaffRoomFromList(input) {
+            if (!input || typeof input.getAttribute !== 'function') return null;
+            const email = input.getAttribute('data-staff-room-email') || '';
+            const teacher = (teachers || []).find(t => t && t.email === email);
+            const request = staffRoomRequest(teacher, input.value);
+            if (request === null || _staffRoomPending.get(email) === request) return null;
+            const auth = window.WildcatAuth;
+            const session = auth && auth.getSession && auth.getSession();
+            if (!auth || !session) {
+                staffRoomStatusShow(email, 'Rooms are stored on the server, which needs a Microsoft sign-in.', true);
+                return null;
+            }
+            _staffRoomPending.set(email, request);
+            try {
+                const res = await auth.convexMutation('staffInvites:setStaffRoom', { email: email, room: request || null }, session.idToken);
+                teacher.room = res && res.room ? res.room : null;
+                if (document.activeElement !== input) input.value = teacher.room || '';
+                staffRoomStatusShow(email, '', false);
+                return res;
+            } catch (e) {
+                input.value = teacher.room || '';
+                staffRoomStatusShow(email, (e && e.message) || String(e), true);
+                return null;
+            } finally {
+                _staffRoomPending.delete(email);
+                const count = document.getElementById('staffRoomsCount');
+                if (count) count.textContent = staffRoomsCountText();
             }
         }
 
@@ -42825,12 +43036,17 @@
          */
         const RR_STALE_MS = 60000;
 
-        /** The column headings, and each column's sort text. Shared by the screen and the sheet. */
+        /**
+         * The column headings, and each column's sort text. Shared by the
+         * screen and the sheet. ROOM (owner, 2026-10-13) sits beside the
+         * class it belongs to: the room the student is pulled from.
+         */
         const RR_COLS = [
             { label: 'Student', type: 'text', text: (r, st) => rrSortName(st) },
             { label: 'Student #', type: 'num', text: r => r.studentNumber },
             { label: 'Grade', type: 'num', text: r => r.grade },
             { label: 'Power-Up', type: 'text', text: r => rrPullTeacher(r) },
+            { label: 'Room', type: 'text', text: r => rrRoomOf(r) },
             { label: 'Violations', type: 'text', text: r => (r.lines || []).join(' ') },
             { label: 'Tag', type: 'text', text: r => (r.tags || []).join(' ') },
             { label: 'Absent this morning: check if arrived', type: 'text', text: r => r.absentMorning ? 'Absent this morning' : '' }
@@ -42852,6 +43068,33 @@
         function rrPullTeacher(r) {
             if (r && r.lunch) return r.lunch.teacher || '';
             return (r && r.pu && r.pu.teacher) || '';
+        }
+
+        /**
+         * THE ROOM THE STUDENT IS PULLED FROM (owner, 2026-10-13), as the
+         * server names it: MS the class before lunch, HS Power-Up;
+         * PowerSchool's room for the section once it is granted, else the
+         * room typed for the teacher on the Teachers tab. '' when none could
+         * be named -- the cell then shows a dash, never a guess -- and from a
+         * server from before 10/13, which sends none.
+         */
+        function rrRoomOf(r) {
+            return r && r.room && r.room.room ? String(r.room.room) : '';
+        }
+
+        /** "Room 214" for a number, the name as it is otherwise ("Library", "Gym"). */
+        function rrRoomLabel(room) {
+            return /^\d/.test(String(room || '')) ? 'Room ' + room : String(room || '');
+        }
+
+        /** The Room cell: the room, or a dash. Whose room it is shows on hover (never on paper). */
+        function rrRoomHtml(r) {
+            const room = rrRoomOf(r);
+            if (!room) return '<span class="print-note" data-rr-classroom="">&mdash;</span>';
+            const whose = r.room.source === 'powerschool' ? 'Room from PowerSchool'
+                : r.room.source === 'teacher' ? 'The teacher\'s room, set on the Teachers tab' : '';
+            return '<span class="rr-classroom" data-rr-classroom="' + escapeHtml(room) + '"' + (whose ? ' title="' + escapeHtml(whose) + '"' : '') + '>'
+                + escapeHtml(room) + '</span>';
         }
 
         /** "pull at 12:29 PM from the class before lunch", or what a server from before says. */
@@ -43356,6 +43599,7 @@
                         + '<td>' + escapeHtml(r.studentNumber) + '</td>'
                         + '<td>' + escapeHtml(r.grade || '') + '</td>'
                         + '<td>' + rrPullFromHtml(r) + '</td>'
+                        + '<td>' + rrRoomHtml(r) + '</td>'
                         + '<td>' + rrViolationsHtml(r) + '</td>'
                         + '<td>' + rrTagHtml(r) + '</td>'
                         + '<td>' + (r.absentMorning ? 'Absent this morning: check if arrived' : '') + '</td>'
@@ -43449,6 +43693,7 @@
                         + '<td>' + escapeHtml(r.studentNumber) + '</td>'
                         + '<td>' + escapeHtml(r.grade || '') + '</td>'
                         + '<td>' + rrPullFromHtml(r) + '</td>'
+                        + '<td>' + rrRoomHtml(r) + '</td>'
                         + '<td>' + rrViolationsHtml(r) + '</td>'
                         + '<td>' + rrTagHtml(r) + '</td>'
                         + '<td>' + (r.absentMorning ? 'Absent this morning: check if arrived' : '') + '</td>'
@@ -43670,13 +43915,16 @@
 
         /**
          * THE PULL SLIPS, from one answer of listForDay -- a FINAL list only.
-         * Several teachers to a page, separated by cut lines, in alphabetical
-         * order; MS first, then HS, each headed with its pull time. Each slip
-         * folds so that only the teacher's name shows outside, and carries ONLY
-         * each student's name, student number, grade and "Reflection Room
-         * today": no violations, no other teacher, no logger and no count. A
-         * slip names a child to a classroom, so it says nothing more than the
-         * runner needs.
+         * Several teachers to a page, separated by cut lines; MS first, then
+         * HS, each headed with its pull time. IN ROOM ORDER (owner,
+         * 2026-10-13): one slip per room and teacher, sorted by room and then
+         * by teacher, so a runner walks the corridor once; a class whose room
+         * is not known comes last, with no room on it, never a guessed one.
+         * Each slip folds so that only the teacher's name and room show
+         * outside, and carries ONLY each student's name, student number, grade
+         * and "Reflection Room today": no violations, no other teacher, no
+         * logger and no count. A slip names a child to a classroom, so it says
+         * nothing more than the runner needs.
          */
         function reflectionSlipsHtml(res, opts) {
             const o = opts || {};
@@ -43687,7 +43935,7 @@
                 + '<button type="button" class="btn" onclick="printReflectionSlips()"><svg class="wc-icon" aria-hidden="true" focusable="false"><use href="#wci-printer"></use></svg> Print again</button>'
                 + '<button type="button" class="btn btn-secondary" onclick="closeReflectionSheet()">Close</button>'
                 + '</div>'
-                + '<p class="receipt-meta">Cut along the lines and fold each slip so only the teacher\'s name shows.</p>'
+                + '<p class="receipt-meta">Cut along the lines and fold each slip so only the teacher\'s name and room show. Slips run in room order.</p>'
                 + '</div>';
             if (!res.frozen) {
                 return toolbar + '<div class="print-pages"><p class="print-empty">Slips print only once the list is final.</p></div>';
@@ -43696,14 +43944,18 @@
                 const groups = new Map();
                 rrRowsInOrder(sec, byNumber).filter(r => !r.released).forEach(r => {
                     const to = rrSlipAddressee(r);
-                    const key = to.name + '|' + to.extra;
-                    if (!groups.has(key)) groups.set(key, { to: to, rows: [] });
+                    const room = rrRoomOf(r);
+                    const key = room + '|' + to.name + '|' + to.extra;
+                    if (!groups.has(key)) groups.set(key, { to: to, room: room, rows: [] });
                     groups.get(key).rows.push(r);
                 });
+                // By room (numbers in number order, an unknown room last),
+                // then teacher, then period.
                 const slips = [...groups.values()]
-                    .sort((a, b) => rrCompareWords(a.to.name, b.to.name) || rrCompareWords(a.to.extra, b.to.extra))
-                    .map(g => '<div class="rr-slip">'
+                    .sort((a, b) => rrCompareWords(a.room, b.room) || rrCompareWords(a.to.name, b.to.name) || rrCompareWords(a.to.extra, b.to.extra))
+                    .map(g => '<div class="rr-slip"' + (g.room ? ' data-rr-slip-room="' + escapeHtml(g.room) + '"' : '') + '>'
                         + '<div class="rr-slip-out">' + escapeHtml(g.to.name)
+                        + (g.room ? ' <span class="rr-slip-room">' + escapeHtml(rrRoomLabel(g.room)) + '</span>' : '')
                         + (g.to.extra ? ' <span class="rr-slip-extra">' + escapeHtml(g.to.extra) + '</span>' : '') + '</div>'
                         + '<table class="rr-slip-in"><tbody>'
                         + g.rows.map(r => '<tr data-rr-slip-row>'
@@ -43761,6 +44013,7 @@
                         + '<td>' + escapeHtml(r.studentNumber) + '</td>'
                         + '<td>' + escapeHtml(r.grade || '') + '</td>'
                         + '<td>' + rrPullFromHtml(r) + '</td>'
+                        + '<td>' + rrRoomHtml(r) + '</td>'
                         + '<td>' + rrViolationsHtml(r) + '</td>'
                         + '<td>' + rrTagHtml(r) + '</td>'
                         + '<td>' + (r.absentMorning ? 'Absent this morning: check if arrived' : '') + '</td></tr>').join('')

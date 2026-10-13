@@ -5,15 +5,15 @@ import { v } from "convex/values";
 import { requireStaff } from "./identity";
 import { canAdminReflection, canReadReflection } from "./accessRules";
 import {
-  claimInputs, dayKindOf, dayStateOf, getDay, loadSettings, lunchOfSnapshot, MAPS_KEY, markedOf, readState, ROSTER_KEY, rosterFor,
-  schoolTimeZone, tardyItemOf, uniformItemOf, unitItemOf,
+  claimInputs, dayKindOf, dayStateOf, getDay, loadSettings, lunchOfSnapshot, MAPS_KEY, markedOf, pullRoomsFor, readState, roomOfSnapshot,
+  ROSTER_KEY, rosterFor, schoolTimeZone, tardyItemOf, uniformItemOf, unitItemOf,
 } from "./reflection";
 import {
   claimAtFreeze, clockText, dayLabel, dayTimes, freezeBanner, idSetHash, lastReadBanner, lunchClassOf, minuteText, nextSchoolDayGuess,
-  CHECKIN_NEEDS_UPDATE, noListBanner, POWER_UP_MINUTE, provesNoSchool, pullTimes, pullWords, QUEUED_TAG, roomModeOf, roomTakes, roomTally,
+  CHECKIN_NEEDS_UPDATE, NO_ROOM, noListBanner, POWER_UP_MINUTE, provesNoSchool, pullTimes, pullWords, QUEUED_TAG, roomModeOf, roomTakes, roomTally,
   roomWindow, rosterAgeBanner, schoolDayVerdict,
   studentMap, tardyKey, tardyLine, termBanner, uniformLine, unitReleased, wallClock,
-  type ClaimResult, type Division, type LunchClass, type Mode, type ReflectionSettings, type RosterMeta, type RosterSnap,
+  type ClaimResult, type Division, type LunchClass, type Mode, type PullRoom, type ReflectionSettings, type RosterMeta, type RosterSnap,
   type ScheduleKind, type UnitItem,
 } from "./reflectionRules";
 import { countingDivision } from "./reflectionDemoRules";
@@ -164,6 +164,16 @@ export type ListRowOut = {
    * before 10/9. `pu` stays on every row.
    */
   lunch?: LunchClass | null;
+  /**
+   * THE ROOM THE STUDENT IS PULLED FROM (owner, 2026-10-13): MS the class
+   * before lunch, HS Power-Up; PowerSchool's room for the section when it is
+   * granted, else the teacher's room typed on the Teachers tab, else none
+   * (`room` null: the screen shows a dash). A list already made shows the
+   * room copied when it was made (reflectionUnits.roomSnapshot), never one
+   * looked up since. ADDITIVE: a screen from before 10/13 never reads it,
+   * and draws the list exactly as it did.
+   */
+  room?: PullRoom;
 };
 
 /** An MS row's class before lunch, and the slip words an older screen prints from it. */
@@ -258,6 +268,8 @@ export async function rowsOfMadeList(ctx: Ctx, date: string, tz: string, gradeOf
       released, cleared, voided, after,
       notHere: !!u.roomNotHere,
       ...lunchFields(u.division, lunch),
+      // As copied when the list was made; a list made before rooms has none.
+      room: roomOfSnapshot(u.roomSnapshot),
       here: !!u.roomHere,
       ...(u.resolvedAt ? { resolved: true } : {}),
     });
@@ -267,7 +279,8 @@ export async function rowsOfMadeList(ctx: Ctx, date: string, tz: string, gradeOf
 
 /** Rows of a list the next freeze would make, from a claim worked out read-only. */
 function rowsOfClaim(claim: ClaimResult, roster: Record<string, RosterSnap>, gradeOf: Record<string, string>,
-  uniformGrade: Record<string, string>, lunchSlot: { slot: number; period: string } | null): ListRowOut[] {
+  uniformGrade: Record<string, string>, lunchSlot: { slot: number; period: string } | null,
+  rooms: Record<string, PullRoom>): ListRowOut[] {
   return claim.rows.map((r) => {
     const snap = roster[r.studentNumber] ?? null;
     return {
@@ -280,6 +293,8 @@ function rowsOfClaim(claim: ClaimResult, roster: Record<string, RosterSnap>, gra
       lines: r.lines, tags: r.tags, owes: r.owes, absentMorning: false,
       released: null, cleared: [], voided: [], after: null, notHere: false,
       ...lunchFields(r.division, lunchClassOf(snap, lunchSlot)),
+      // Looked up now: nothing is copied until the list is made.
+      room: rooms[r.studentNumber] ?? NO_ROOM,
       here: false,
     };
   });
@@ -326,7 +341,8 @@ async function soFar(ctx: Ctx, f: {
   const claim = claimAtFreeze({
     day: f.target, tz: f.tz, settings: f.settings, divisionOf: inp.divisionOf, tardies, uniforms, units, days: inp.days,
   });
-  const rows = rowsOfClaim(claim, inp.roster, f.gradeOf, uniformGrade, f.lunchSlot)
+  const rooms = await pullRoomsFor(ctx, claim.rows, inp.roster, f.lunchSlot);
+  const rows = rowsOfClaim(claim, inp.roster, f.gradeOf, uniformGrade, f.lunchSlot, rooms)
     // A queued detention worked out above has no id yet.
     .map((r) => (r.unitId && r.unitId.startsWith("queued:") ? { ...r, key: `new:${r.studentNumber}`, unitId: null } : r));
   return { rows, roster: inp.roster };
@@ -552,9 +568,14 @@ function demoAnswer(f: {
 }) {
   // A TEST list built from 10/9 on carries each MS row's class before lunch;
   // one built before carries only the Power-Up class, and is shown as built.
+  // One built from 10/13 on carries the room each student is pulled from;
+  // one built before has none, and shows a dash.
   const rows: ListRowOut[] = f.demo.rows.map((r) => ({
-    ...r, pu: r.pu ? { ...r.pu } : null, here: false,
+    ...r, pu: r.pu ? { ...r.pu } : null,
+    ...(r.room === undefined ? {} : { room: { ...r.room } }),
+    here: false,
     ...(r.lunch === undefined ? { slipTo: null } : lunchFields(r.division, r.lunch ? { ...r.lunch } : null)),
+    ...(r.room === undefined ? { room: NO_ROOM } : {}),
   }));
   sortRows(rows);
   const modes: Record<Division, Mode> = { ms: "shadow", hs: "shadow" };

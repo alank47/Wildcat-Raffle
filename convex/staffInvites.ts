@@ -4,6 +4,7 @@ import {
   roleChangeVerdict, gradeScopeVerdict, attendanceWatchVerdict, reflectionListVerdict, roleWritePatch,
 } from "./roleChangeRules";
 import { wallClock } from "./reflectionRules";
+import { canSetRooms, ROOM_REFUSED, staffRoomVerdict } from "./roomRules";
 import { requireStaff, requireAdmin } from "./identity";
 import { normalizeEmail } from "./identityRules";
 
@@ -724,6 +725,87 @@ export const setStaffReflectionListFromCli = internalMutation({
   args: { email: v.string(), on: v.boolean(), until: v.optional(v.union(v.string(), v.null())) },
   handler: async (ctx, { email, on, until }) =>
     await applyReflectionList(ctx, { email: "command line", role: "admin", name: "command line" }, email, on, until),
+});
+
+/**
+ * THE ROOM A STAFF MEMBER TEACHES IN (owner, 2026-10-13), shown on the
+ * Reflection Room list and its pull slips for every class they teach, until
+ * PowerSchool grants each section's own room (plugin 1.4.3).
+ *
+ * ADMIN AND SUPERADMIN ONLY, decided on the CALLER'S STORED ROLE -- the row
+ * requireStaff found by their verified sign-in, never anything the browser
+ * sent -- by roomRules.staffRoomVerdict. A teacher, PBIS, a campus aide or a
+ * Reflection Room grant holder is refused, their own room included: a room
+ * is where a runner takes a child's name.
+ *
+ * The same room again writes nothing (the Classrooms list saves as an admin
+ * moves down it). A change writes one appAuditLog line naming staff only.
+ */
+async function applyStaffRoom(
+  ctx: any, actor: { email: string; role: string; name?: string | null },
+  email: string, requested: unknown,
+) {
+  // Refused on who is asking BEFORE any staff record is looked at.
+  if (!canSetRooms(actor.role)) throw new ConvexError(ROOM_REFUSED);
+  const target = normalizeEmail(email);
+  const targetRow = await ctx.db
+    .query("teachers")
+    .withIndex("by_email", (q: any) => q.eq("email", target))
+    .unique();
+  if (!targetRow) throw new ConvexError(`No staff record for ${target}.`);
+
+  const previous = typeof targetRow.room === "string" && targetRow.room ? targetRow.room : null;
+  const verdict = staffRoomVerdict({ actorRole: actor.role, current: previous, requested });
+  if (!verdict.ok) throw new ConvexError(verdict.reason);
+  const name = targetRow.name || target;
+  if (!verdict.changed) return { email: target, name, previous, room: verdict.room, changed: false };
+
+  const now = new Date().toISOString();
+  await ctx.db.patch(targetRow._id, {
+    room: verdict.room ?? undefined,
+    roomSetBy: actor.email,
+    roomSetAt: now,
+  });
+
+  const entryId = `room_${Date.now()}_${Math.random().toString(36).slice(2, 12)}`;
+  const line = `${name}: room ${previous ?? "none"} \u2192 ${verdict.room ?? "none"}`;
+  await ctx.db.insert("appAuditLog", {
+    entryId,
+    timestamp: now,
+    payload: {
+      entryId,
+      action: "Changed room",
+      teacher: actor.name || actor.email,
+      teacherName: actor.name || actor.email,
+      details: line,
+      reason: line,
+      userId: actor.email,
+      timestamp: now,
+    },
+  });
+  console.log(`[staffRoom] ${actor.email} set ${target}: ${previous ?? "none"} -> ${verdict.room ?? "none"}`);
+  return { email: target, name, previous, room: verdict.room, changed: true };
+}
+
+export const setStaffRoom = mutation({
+  args: { email: v.string(), room: v.union(v.string(), v.null()) },
+  handler: async (ctx, { email, room }) => {
+    // requireStaff, then the verdict decides on the role stored on the
+    // caller's own record: only admin and superadmin pass.
+    const actor = await requireStaff(ctx);
+    return await applyStaffRoom(ctx, actor, email, room);
+  },
+});
+
+/**
+ * The same, from a terminal (room null or "" clears it):
+ *   npx convex run --prod staffInvites:setStaffRoomFromCli \
+ *     '{"email":"someone@lapromisefund.org","room":"214"}'
+ */
+export const setStaffRoomFromCli = internalMutation({
+  args: { email: v.string(), room: v.union(v.string(), v.null()) },
+  handler: async (ctx, { email, room }) =>
+    await applyStaffRoom(ctx, { email: "command line", role: "admin", name: "command line" }, email, room),
 });
 
 /**

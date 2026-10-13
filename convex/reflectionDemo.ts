@@ -136,6 +136,7 @@ export const build = internalAction({
       day: a.day, previousDay, tz: c.tz, builtAt, settings: c.settings, codes,
       roster: Object.fromEntries(roster.map((r) => [r.studentNumber, r])), gradeOf: sm.gradeOf, marked: c.marked,
       dayRows: day.rows, previousRows: previous?.rows ?? null, unmatched: day.unmatched + (previous?.unmatched ?? 0),
+      teacherRooms: c.teacherRooms,
     });
     const counts = { ...out.counts, reads, pages, rosterStudents: roster.length };
     const saved = await ctx.runMutation(internal.reflectionDemoStore.write, {

@@ -38,6 +38,8 @@ const ACCESS_TEST = "reflection-access.test.mjs";
 const DEMO_RULES = "convex/reflectionDemoRules.ts";
 const DEMO_TEST = "reflection-demo.test.mjs";
 const SCREEN = "script.js";
+const ROOMS = "convex/roomRules.ts";
+const ROOMS_TEST = "reflection-rooms.test.mjs";
 
 const CASES = [
   // ---- step 1: the rules (spec 6, step 1 table)
@@ -815,7 +817,44 @@ const CASES = [
     mustFail: "...'yes' sends Attendance done naming exactly those 3 students, which the server checks against the list" },
   { guard: "the printed box column still says Served", file: SCREEN, test: PRINT_TEST,
     from: "                const cols = ['Here'].concat(rrCols(c.s).map(x => x.label));", to: "                const cols = ['Served'].concat(rrCols(c.s).map(x => x.label));",
-    mustFail: "the columns: an empty Here box (owner, 10/12: check-off), then student, number, grade, Power-Up, violations with dates, tag, absent this morning" },
+    mustFail: "the columns: an empty Here box (owner, 10/12: check-off), then student, number, grade, Power-Up, room (owner, 10/13), violations with dates, tag, absent this morning" },
+
+  // ---- room numbers on the list (owner, 2026-10-13)
+  { guard: "a teacher may set a room", file: ROOMS, test: ROOMS_TEST,
+    from: '  return r === "admin" || r === "superadmin";', to: '  return r === "admin" || r === "superadmin" || r === "teacher";',
+    mustFail: "a teacher cannot set a room, not even their own: refused, nothing written" },
+  { guard: "the room setter reads a staff record before it asks who is asking", file: "convex/staffInvites.ts", test: ROOMS_TEST,
+    from: "  if (!canSetRooms(actor.role)) throw new ConvexError(ROOM_REFUSED);\n", to: "",
+    mustFail: "the check is made on the caller's stored role before any staff record is read" },
+  { guard: "an MS row takes Power-Up's room, not the class before lunch's", file: RULES, test: ROOMS_TEST,
+    from: '  if (division === "ms") {\n    const lunch', to: '  if (division === "never") {\n    const lunch',
+    mustFail: "MS: the class before lunch's room on every kind of day -- P3 Mon/Thu, P4 Tue/Fri, Wednesday, Minimum and Stack -- never Power-Up's" },
+  { guard: "the teacher's room is preferred to PowerSchool's room for the section", file: RULES, test: ROOMS_TEST,
+    from: '  if (c.sectionRoom) return { room: c.sectionRoom, source: "powerschool" };\n',
+    to: '  const typed = c.teacherEmail ? textOrNull(teacherRooms?.[c.teacherEmail]) : null;\n'
+      + '  if (typed) return { room: typed, source: "teacher" };\n  if (c.sectionRoom) return { room: c.sectionRoom, source: "powerschool" };\n',
+    mustFail: "PowerSchool's room for the section is preferred to the teacher's room; the teacher's when PowerSchool has none" },
+  { guard: "a refused room read fails the sync", file: "convex/sisAction.ts", test: ROOMS_TEST,
+    from: "    const sectionRooms = await readSectionRooms(host, tok, schoolid, termid);\n",
+    to: "    const sectionRooms = await readSectionRooms(host, tok, schoolid, termid);\n"
+      + "    if (sectionRooms.status !== \"granted\") throw new Error(`Sections.Room: ${sectionRooms.status}`);\n",
+    mustFail: "a 403 on Sections.Room (plugin 1.4.2, today): the sync finishes, the roster is written whole, and the run is recorded" },
+  { guard: "the sync reads the rooms and never stamps them on the roster", file: "convex/sisAction.ts", test: ROOMS_TEST,
+    from: '        sectionRoom: sectionRooms.rooms[s(r.section_id) ?? ""],\n', to: "",
+    mustFail: "granted (plugin 1.4.3): every roster row carries its section's room, read across every page; a blank room is none" },
+  { guard: "the freeze copies no room onto the detention", file: SERVER, test: ROOMS_TEST,
+    from: "      roomSnapshot: roomSnapshotOf(rooms[row.studentNumber] ?? NO_ROOM),\n", to: "",
+    mustFail: "...and each detention keeps a copy of its room, made with the list" },
+  { guard: "a made list looks its rooms up again instead of showing its copy", file: LIST, test: ROOMS_TEST,
+    from: "      room: roomOfSnapshot(u.roomSnapshot),", to: "      room: (await pullRoomsFor(ctx, [u], roster, lunchSlot))[u.studentNumber],",
+    mustFail: "a list already made keeps the room copied when it was made: Ms Park moved to 155 at noon, Tuesday's list still says 105" },
+  { guard: "pull slips sorted by teacher alone", file: SCREEN, test: ROOMS_TEST,
+    from: ".sort((a, b) => rrCompareWords(a.room, b.room) || rrCompareWords(a.to.name, b.to.name)",
+    to: ".sort((a, b) => rrCompareWords(a.to.name, b.to.name)",
+    mustFail: "pull slips run in room order, then teacher, with the room on the outside of each; rooms not known last, never guessed" },
+  { guard: "the screen has no Room column", file: SCREEN, test: ROOMS_TEST,
+    from: "            { label: 'Room', type: 'text', text: r => rrRoomOf(r) },\n", to: "",
+    mustFail: "this build's screen: a sortable Room column beside the class, the room in each row, a dash where none is known" },
 ];
 
 // A builder's shortcut, never set in npm test: REFLECTION_TEETH_ONLY=<text>

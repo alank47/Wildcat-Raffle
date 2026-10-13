@@ -5,6 +5,7 @@ import { primaryEmailByStudentNumber } from "./identityRules";
 import { attachStudentEmail } from "./rosterEmail";
 import { markedMissingButScored } from "./missingWorkRules";
 import { rosterReplaceVerdict } from "./rosterGuardRules";
+import { sectionRoomsFromRecords, sectionRoomsQuery, sectionRoomStatus, type SectionRoomStatus } from "./roomRules";
 
 /**
  * Scheduled PowerSchool sync, run by Convex rather than by a laptop.
@@ -16,7 +17,8 @@ import { rosterReplaceVerdict } from "./rosterGuardRules";
  * Convex's environment.
  *
  * READ ONLY, structurally. The only PowerSchool calls here are the OAuth token
- * request and POSTs to named query paths. There is no code path that can write
+ * request, POSTs to named query paths, and one GET of the sections table's id
+ * and room (readSectionRooms). There is no code path that can write
  * to the SIS, which matches the plugin's ViewOnly access request. If a future
  * task appears to need a write, that is a new access request and an admin
  * re-approval, not an edit to this file.
@@ -99,6 +101,76 @@ async function namedQuery(
   return { rows, pages: page };
 }
 
+/** Pages of the room read, at most: 5,000 sections, about ten times this school's. */
+const ROOM_MAX_PAGES = 50;
+/** Each page of the room read gives up after this long, so a hung request cannot hold the sync. */
+const ROOM_READ_TIMEOUT_MS = 20_000;
+
+/** A request deadline where the runtime offers one; none where it does not (never a reason to fail). */
+function deadline(ms: number): { signal?: AbortSignal } {
+  try {
+    const t = (AbortSignal as any)?.timeout;
+    return typeof t === "function" ? { signal: t.call(AbortSignal, ms) } : {};
+  } catch {
+    return {};
+  }
+}
+
+type SectionRooms = { status: SectionRoomStatus; rooms: Record<string, string>; sections: number; error: string | null };
+
+/**
+ * EACH SECTION'S ROOM, ONLY IF POWERSCHOOL GRANTS IT (owner, 2026-10-13).
+ *
+ * Sections.Room answered HTTP 403 on 2026-10-13: the column exists and plugin
+ * 1.4.2 does not ask for it. 1.4.3 does (docs/admin-ask-1.4.3.md). So this
+ * asks every sync, and the answer decides:
+ *
+ *   403        not granted yet: no rooms, nothing reported as wrong. The
+ *              Reflection Room list uses the rooms administrators typed
+ *              for each teacher (teachers.room).
+ *   200        the rooms, by section id: stamped on the roster rows below
+ *              (psRoster.sectionRoom), and the list prefers them.
+ *   otherwise  no rooms this run, and the error in the summary.
+ *
+ * IT NEVER THROWS. Whatever PowerSchool says, or fails to say, the sync goes
+ * on to the roster exactly as before: a column for one screen must never
+ * take every class list in the school down. The TABLE endpoint, not a named
+ * query, because a PowerQuery naming SECTIONS.ROOM would fail whole while
+ * the field is not granted -- here only this one read does.
+ *
+ * READ ONLY, like everything in this file: a GET of two fields, id and room,
+ * of this term's sections.
+ */
+async function readSectionRooms(host: string, tok: string, schoolid: string, termid: string): Promise<SectionRooms> {
+  const { q, projection } = sectionRoomsQuery({ schoolid, termid });
+  const rooms: Record<string, string> = {};
+  let sections = 0;
+  try {
+    for (let page = 1; page <= ROOM_MAX_PAGES; page++) {
+      const res = await fetch(
+        `https://${host}/ws/schema/table/sections?q=${encodeURIComponent(q)}`
+          + `&projection=${encodeURIComponent(projection)}&pagesize=${PAGE_SIZE}&page=${page}`,
+        { method: "GET", headers: { Authorization: `Bearer ${tok}`, Accept: "application/json" }, ...deadline(ROOM_READ_TIMEOUT_MS) },
+      );
+      const status = sectionRoomStatus(res.status);
+      if (status !== "granted") {
+        return { status, rooms: {}, sections: 0, error: status === "not-granted" ? null : `Sections.Room read answered HTTP ${res.status}` };
+      }
+      const body = await res.json();
+      const batch: unknown[] = Array.isArray(body?.record) ? body.record : [];
+      sections += batch.length;
+      Object.assign(rooms, sectionRoomsFromRecords(batch));
+      if (batch.length < PAGE_SIZE) return { status: "granted", rooms, sections, error: null };
+    }
+    // A school ten times this size. Rooms from a read cut short are not
+    // used: every section gets the teacher's room rather than some getting
+    // PowerSchool's and some not, for no reason anyone could see.
+    return { status: "error", rooms: {}, sections, error: `Sections.Room read paged out at ${ROOM_MAX_PAGES} pages` };
+  } catch (e: unknown) {
+    return { status: "error", rooms: {}, sections: 0, error: `Sections.Room read failed: ${e instanceof Error ? e.message : String(e)}` };
+  }
+}
+
 const ne = (x: unknown) => String(x ?? "").trim().length > 0;
 const s = (x: unknown) => (ne(x) ? String(x).trim() : undefined);
 const n = (x: unknown) => {
@@ -138,6 +210,9 @@ export const syncFromPowerSchool = internalAction({
 
     // ---- enrollment ----
     const roster = await namedQuery(host, tok, `${prefix}.roster`, { schoolid, termid });
+    // Each section's room, only when PowerSchool grants Sections.Room (plugin
+    // 1.4.3). Never throws: a 403 -- today's answer -- is no rooms at all.
+    const sectionRooms = await readSectionRooms(host, tok, schoolid, termid);
     const rosterRowsWithoutEmail = roster.rows
       .map((r) => ({
         studentNumber: s(r.student_number) ?? "",
@@ -157,6 +232,7 @@ export const syncFromPowerSchool = internalAction({
         termId: s(r.term_id),
         termAbbreviation: s(r.term_abbreviation),
         schoolId: s(r.school_id),
+        sectionRoom: sectionRooms.rooms[s(r.section_id) ?? ""],
       }))
       .filter((r) => r.studentNumber);
 
@@ -613,6 +689,15 @@ export const syncFromPowerSchool = internalAction({
       // student can see a schedule at all; a small number is students whose
       // PowerSchool record has no address yet.
       rosterMissingStudentEmail,
+      // ROOMS (2026-10-13): "not-granted" until an administrator installs
+      // plugin 1.4.3 -- PowerSchool's 403, expected and harmless: the
+      // Reflection Room list uses the rooms typed for each teacher. Then
+      // "granted", with how many sections and roster rows carry a room.
+      // "error" names what went wrong; the roster was written all the same.
+      sectionRooms: sectionRooms.status,
+      sectionRoomsFound: Object.keys(sectionRooms.rooms).length,
+      rosterRowsWithRoom: rosterRows.filter((r) => !!r.sectionRoom).length,
+      sectionRoomsError: sectionRooms.error,
       students: students.length,
       studentsCreated: created,
       studentsUpdated: updated,

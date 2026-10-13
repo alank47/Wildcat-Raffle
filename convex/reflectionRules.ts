@@ -439,6 +439,12 @@ export type RosterSnap = {
   puFlag: string | null;
   /** Two Power-Up-time rows: the list says "Check PowerSchool" rather than picking one. */
   puCheck: boolean;
+  /**
+   * The Power-Up section's room in PowerSchool (2026-10-13), once the plugin
+   * grants Sections.Room. Absent or null until then, and on a snapshot taken
+   * before: the list then uses the teacher's own room (roomRules.pullRoomOf).
+   */
+  puRoom?: string | null;
   enrolledSlots: number[];
   sectionBySlot: Record<string, string>;
   teacherBySlot: Record<string, string>;
@@ -452,7 +458,22 @@ export type RosterSnap = {
   classBySlot?: Record<string, SlotClass>;
 };
 
-export type SlotClass = { sectionId: string | null; teacher: string | null; course: string | null; flag: string | null; sections: number };
+/**
+ * One slot's class. `teacherEmail` (whose own room the class meets in) and
+ * `room` (PowerSchool's room for the section, once granted) were added
+ * 2026-10-13 for the room an MS student is pulled from; a snapshot taken
+ * before has neither, and its rows show no room until the next one.
+ */
+export type SlotClass = {
+  sectionId: string | null; teacher: string | null; course: string | null; flag: string | null; sections: number;
+  teacherEmail?: string | null; room?: string | null;
+};
+
+/** A text column as the snapshot keeps it: trimmed, or null. Rooms arrive cleaned by the sync (roomRules.cleanRoom). */
+const textOrNull = (x: unknown): string | null => {
+  const t = String(x ?? "").trim();
+  return t ? t : null;
+};
 
 const teacherName = (r: any) => [r?.teacherFirstName, r?.teacherLastName]
   .map((x) => String(x ?? "").trim()).filter(Boolean).join(" ");
@@ -484,13 +505,13 @@ function courseAndFlag(r: any): { course: string | null; flag: string | null } {
  * everyone else, and the row is flagged with the class they are actually in.
  */
 export function powerUpFrom(rows: any[]): Pick<RosterSnap,
-  "puSlot" | "puSectionId" | "puTeacherName" | "puTeacherEmail" | "puCourse" | "puFlag" | "puCheck"> {
+  "puSlot" | "puSectionId" | "puTeacherName" | "puTeacherEmail" | "puCourse" | "puFlag" | "puCheck" | "puRoom"> {
   const pu = (rows || [])
     .map((r) => ({ r, slot: slotOfExpression(r?.period ?? r?.sectionExpression) }))
     .filter((x) => x.slot !== null && POWER_UP_SLOTS.includes(x.slot))
     .sort((a, b) => String(a.r?.sectionId ?? "").localeCompare(String(b.r?.sectionId ?? "")));
   if (!pu.length) {
-    return { puSlot: null, puSectionId: null, puTeacherName: null, puTeacherEmail: null, puCourse: null, puFlag: null, puCheck: false };
+    return { puSlot: null, puSectionId: null, puTeacherName: null, puTeacherEmail: null, puCourse: null, puFlag: null, puCheck: false, puRoom: null };
   }
   const { r, slot } = pu[0];
   const { course, flag } = courseAndFlag(r);
@@ -502,6 +523,7 @@ export function powerUpFrom(rows: any[]): Pick<RosterSnap,
     puCourse: course,
     puFlag: flag,
     puCheck: pu.length > 1,
+    puRoom: textOrNull(r?.sectionRoom),
   };
 }
 
@@ -540,7 +562,10 @@ export function rosterSnapshotRows(psRosterRows: any[]): RosterSnap[] {
       // folded into another and hide a second class in the slot.
       (sectionsIn[k] ??= new Set()).add(r?.sectionId ? String(r.sectionId) : `row:${i}`);
       if (!(k in classBySlot)) {
-        classBySlot[k] = { sectionId: r?.sectionId ? String(r.sectionId) : null, teacher: t || null, ...courseAndFlag(r), sections: 0 };
+        classBySlot[k] = {
+          sectionId: r?.sectionId ? String(r.sectionId) : null, teacher: t || null, ...courseAndFlag(r), sections: 0,
+          teacherEmail: textOrNull(r?.teacherEmail)?.toLowerCase() ?? null, room: textOrNull(r?.sectionRoom),
+        };
       }
     });
     for (const k of Object.keys(classBySlot)) classBySlot[k].sections = sectionsIn[k].size;
@@ -557,6 +582,65 @@ export function rosterSnapshotRows(psRosterRows: any[]): RosterSnap[] {
     });
   }
   return out;
+}
+
+// ===========================================================================
+// The room a student is pulled from (owner, 2026-10-13)
+// ===========================================================================
+
+export type RoomSource = "powerschool" | "teacher";
+/** A row's room, and whose it is. `room` null: none could be named, and the list shows a dash. */
+export type PullRoom = { room: string | null; source: RoomSource | null };
+export const NO_ROOM: PullRoom = { room: null, source: null };
+
+/**
+ * THE CLASS A ROW'S STUDENT IS PULLED FROM, as far as a room goes: the
+ * section's own room in PowerSchool (when granted) and the address of the
+ * teacher whose room is the fallback. The same class the list already names
+ * on the row:
+ *
+ *   MS  the CLASS BEFORE LUNCH on the list's day (owner, 10/9): the period
+ *       the day's schedule puts last before Lunch & Power-Up -- P3 on a
+ *       Mon/Thu, P4 on a Tue/Fri, Wednesday, Minimum or Stack day
+ *       (beforeLunchSlot) -- and the student's section in it;
+ *   HS  POWER-UP, the one class in slot 8 or 9.
+ *
+ * NULL, NEVER A GUESS, wherever the list itself could not name the class:
+ * no roster row; the class before lunch not found, or two classes in that
+ * period ("Check PowerSchool"); two Power-Up classes; no Power-Up class at
+ * all; or a snapshot taken before 10/13, which never recorded whose room an
+ * MS class meets in. In each of those the row already tells the runner to
+ * check, and a room beside it would contradict that.
+ */
+export function pullClassOf(division: Division, snap: RosterSnap | null | undefined, lunchAt: { slot: number; period: string } | null):
+  { sectionRoom: string | null; teacherEmail: string | null } | null {
+  if (!snap) return null;
+  if (division === "ms") {
+    const lunch = lunchClassOf(snap, lunchAt);
+    if (lunch.problem || lunch.slot === null) return null;
+    const c = snap.classBySlot?.[String(lunch.slot)];
+    if (!c) return null;
+    return { sectionRoom: textOrNull(c.room), teacherEmail: textOrNull(c.teacherEmail)?.toLowerCase() ?? null };
+  }
+  if (snap.puCheck || (!snap.puSectionId && !snap.puTeacherEmail)) return null;
+  return { sectionRoom: textOrNull(snap.puRoom), teacherEmail: textOrNull(snap.puTeacherEmail)?.toLowerCase() ?? null };
+}
+
+/**
+ * THE ROOM ON A ROW: PowerSchool's room for the section first -- it is the
+ * room the class is scheduled in, and it follows a teacher who teaches one
+ * period somewhere else -- then the room an administrator typed for its
+ * teacher, then none (a dash). `teacherRooms` is normalized teacher address
+ * -> room (roomRules.roomByTeacherEmail, which also finds a renamed teacher
+ * by the address PowerSchool still files their classes under).
+ */
+export function pullRoomOf(division: Division, snap: RosterSnap | null | undefined, lunchAt: { slot: number; period: string } | null,
+  teacherRooms: Record<string, string>): PullRoom {
+  const c = pullClassOf(division, snap, lunchAt);
+  if (!c) return NO_ROOM;
+  if (c.sectionRoom) return { room: c.sectionRoom, source: "powerschool" };
+  const room = c.teacherEmail ? textOrNull(teacherRooms?.[c.teacherEmail]) : null;
+  return room ? { room, source: "teacher" } : NO_ROOM;
 }
 
 /**
