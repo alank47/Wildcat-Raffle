@@ -870,6 +870,35 @@ console.log("\nM. A PAUSE NEVER STOPS THE RE-READ OF A DAY ALREADY DECIDED\n");
     fri?.status === "held" && fri?.payable === true && TEST.every((s) => paidDates(w, s.key).includes("2026-10-23")),
     J({ fri: fri?.status, now: w.reg("S1", "2026-10-23")?.status }));
 }
+{
+  // A CORRECTION AFTER AN OFF/ON (2026-10-12 final review). S3 is absent on 10/20 when it is first decided (no
+  // register row); S4 only by a late mark the next evening (a row, broken). Both are corrected to Present after a
+  // Thursday-night off/on: the same final record must be the same money, whatever order the marks came in.
+  const w = await makeWorld();
+  for (const d of weekdaysBetween("2026-10-12", "2026-11-06")) w.school(d);
+  await configure(w, "2026-10-19T13:00:00Z", { mode: "live" });
+  w.mark("S3", "2026-10-20", 3, "A");                                      // entered the same day
+  await morning(w, "2026-10-20");
+  await morning(w, "2026-10-21");                                          // decides 10/20: S3 broken (no row), S4 pending
+  clock.set("2026-10-22T02:00:00Z");
+  w.mark("S4", "2026-10-20", 5, "A");                                      // Wednesday evening: a late absence for S4 on 10/20
+  await morning(w, "2026-10-22");                                          // S4's 10/20: pending -> broken
+  await configure(w, "2026-10-23T03:00:00Z", { mode: "off" });             // Thursday 20:00 PT
+  await configure(w, "2026-10-23T13:00:00Z", { mode: "live" });            // Friday 06:00 PT: back on, counting from 10/23
+  await morning(w, "2026-10-23");
+  const before = { s3: w.reg("S3", "2026-10-20"), s4: w.reg("S4", "2026-10-20")?.status };
+  clock.set("2026-10-23T22:00:00Z");                                       // Friday afternoon: the office corrects both to Present
+  for (const r of w.fake.tables.attendance) {
+    if ((r.studentid === BY_KEY.S3.psId || r.studentid === BY_KEY.S4.psId) && r.att_date === "2026-10-20") r.attendance_codeid = C.blank;
+  }
+  await morning(w, "2026-10-26");
+  check("A CORRECTION AFTER AN OFF/ON PAYS THE SAME FINAL RECORD THE SAME: S3, broken when 10/20 was first decided, is paid it like S4",
+    before.s3 === null && before.s4 === "broken" && paidDates(w, "S3").includes("2026-10-20") && paidDates(w, "S4").includes("2026-10-20")
+    && w.reg("S3", "2026-10-20")?.payable === true && w.dateRec("2026-10-20")?.scope?.mode === "live",
+    J({ before, s3: w.reg("S3", "2026-10-20"), s4: paidDates(w, "S4"), scope: w.dateRec("2026-10-20")?.scope }));
+  check("...while Thursday 10/22, not decided when it went off, is still never decided",
+    !w.rows("perfectDays").some((r) => r.date === "2026-10-22"));
+}
 
 // ===========================================================================
 console.log("\nN. HOLDS THAT MUST NOT COST THE SCHOOL A DAY\n");

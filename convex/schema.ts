@@ -2278,6 +2278,8 @@ export default defineSchema({
     rowCounts: v.optional(v.any()),
     adminNoSchool: v.optional(v.object({ by: v.string(), at: v.string(), reason: v.string() })),
     adminDecideAnyway: v.optional(v.object({ by: v.string(), at: v.string(), reason: v.string() })),
+    /** The settings the date was first decided under as a school day (perfectDayRules.scopeSnapshot). Never rewritten. */
+    scope: v.optional(v.any()),
   })
     .index("by_date", ["date"])
     .index("by_state_date", ["state", "date"]),

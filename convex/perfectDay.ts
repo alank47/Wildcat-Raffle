@@ -240,10 +240,14 @@ const personArg = v.object({
 
 /**
  * One judged date into the register (perfectDayRules.planDateRows) and its
- * date record. A date before the start is never DECIDED: nothing is inserted
- * for it. But one decided before the switch last came on still has its days
- * that stand settled by its own stamps (existingOnly), so a pause never pays
- * over a known break nor lets a held day expire unread (2026-10-12 review).
+ * date record. A date before the start is never DECIDED: a date never decided
+ * is not read at all. But one decided before the switch last came on still has
+ * its days that stand settled by their own stamps, so a pause never pays over
+ * a known break nor lets a held day expire unread (2026-10-12 review); and a
+ * student a correction makes perfect there gets a day stamped by the settings
+ * the date was first decided under (its record's `scope`, kept from that first
+ * decision), so the order the marks arrived in never decides the money
+ * (2026-10-12 final review). A date first decided in shadow stays unpayable.
  *
  * A DATE ALREADY DECIDED STAYS DECIDED. When its re-read failed (a read or a
  * count that will be tried again), or PowerSchool or the calendar now says no
@@ -301,6 +305,12 @@ export const applyDate = internalMutation({
     }
     const state: "school" | "no-school" | "held" = a.state;
     const recheckHeld = a.state === "held" && !a.retryable && existing.length > 0;
+    // A DATE DECIDED BEFORE THE SWITCH LAST CAME ON is settled, and a student a
+    // correction makes perfect there is stamped by the settings the date was
+    // first decided under (its record's `scope`), exactly as if the mark had
+    // been right the first time (2026-10-12 final review). A date with no
+    // snapshot (decided before it was kept) still starts no day.
+    const firstScope = beforeStart && rec?.state === "school" ? R.settingsFromSnapshot(rec.scope, settings.amount) : null;
     let register: Record<string, number> | null = null;
     if (state === "school" || recheckHeld) {
       const plan = R.planDateRows({
@@ -312,7 +322,8 @@ export const applyDate = internalMutation({
           checked: a.checked,
         },
         onlyNotPayable: recheckHeld,
-        existingOnly: beforeStart,
+        existingOnly: beforeStart && !firstScope,
+        ...(firstScope ? { stampSettings: firstScope } : {}),
       });
       for (const ins of plan.inserts) await ctx.db.insert("perfectDays", ins as any);
       for (const p of plan.patches) await ctx.db.patch(p.id, p.patch as any);
@@ -334,6 +345,8 @@ export const applyDate = internalMutation({
     const fields = {
       state, reason, retryable: a.retryable, runId: a.runId, updatedAt: now,
       counts: { ...(a.counts ?? {}), ...(register ? { register } : {}) }, rowCounts: a.rowCounts ?? {},
+      // Kept from the first decision as a school day, never rewritten.
+      ...(state === "school" && !beforeStart && !rec?.scope ? { scope: R.scopeSnapshot(settings) } : {}),
     };
     if (rec) await ctx.db.patch(rec._id, fields);
     else await ctx.db.insert("perfectDayDates", { date: a.date, firstDecidedAt: now, ...fields });

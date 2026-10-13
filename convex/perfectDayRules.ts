@@ -359,6 +359,26 @@ export function scopeOf(s: Settings, sn: string, date: string): { payable: boole
 }
 
 /**
+ * THE SETTINGS A DATE WAS FIRST DECIDED UNDER, as its date record keeps them
+ * (`scope`): everything scopeOf reads. Written once, when the date is first
+ * decided as a school day, and never changed after.
+ */
+export type ScopeSnapshot = Pick<Settings, "mode" | "countFromDate" | "liveFrom" | "pilot" | "controls">;
+export function scopeSnapshot(s: Settings): ScopeSnapshot {
+  return { mode: s.mode, countFromDate: s.countFromDate, liveFrom: s.liveFrom, pilot: s.pilot.map((e) => ({ ...e })), controls: [...s.controls] };
+}
+/**
+ * A stored snapshot read back as settings, or null. Read as defensively as the
+ * switch itself: one that cannot be read stamps nothing new (the caller then
+ * starts no day on the date, as before the snapshot existed).
+ */
+export function settingsFromSnapshot(raw: unknown, amount: number): Settings | null {
+  if (!raw || typeof raw !== "object") return null;
+  const s = settingsOrDefault({ ...(raw as Record<string, unknown>), amount });
+  return s.invalid ? null : s;
+}
+
+/**
  * CAN THIS DECIDED DAY BE PAID NOW? Null for yes, else why it waits.
  *
  * scopeOf above is asked ONCE, when a day is first decided, and its answer is
@@ -955,6 +975,14 @@ export type RegRow = {
  * has no check: that label never expires and releaseUnchecked releases it,
  * so one run during a rebuild outage would turn a disputed day into one an
  * admin pays in bulk. Only a new day or a broken one becomes held for the check.
+ *
+ * STAMPED AS THE DATE WAS (`stampSettings`, 2026-10-12 final review). A date
+ * decided before the switch last came on is stamped by the settings it was
+ * first decided under, not today's: a student a correction makes perfect
+ * there is stamped exactly as they would have been had the mark been right
+ * the first time. So two students with the same final record for a day get
+ * the same money whatever order the marks arrived in, and a date first
+ * decided in shadow, or outside the pilot, stays unpayable (no back-pay).
  */
 export function planDateRows(input: {
   date: string; now: string; runId: string; settings: Settings; existing: RegRow[];
@@ -963,8 +991,11 @@ export function planDateRows(input: {
     broken: Array<{ sn: string; why: string }>; checked: boolean };
   onlyNotPayable?: boolean;
   existingOnly?: boolean;
+  /** What a NEW row is stamped by, when not today's settings: the date's own, from its first decision. */
+  stampSettings?: Settings;
 }): { inserts: RegRow[]; patches: Array<{ id: any; patch: Partial<RegRow> }>; counts: Record<string, number> } {
   const { date, now, runId, settings } = input;
+  const stampWith = input.stampSettings ?? settings;
   const inserts: RegRow[] = [];
   const patches: Array<{ id: any; patch: Partial<RegRow> }> = [];
   const counts: Record<string, number> = {
@@ -1003,7 +1034,7 @@ export function planDateRows(input: {
     if (r && r.status === "held" && !input.judgement.checked) continue;
     // No row yet, or held or broken: THE MONEY DIRECTION. The stamp is the
     // row's own when it has one, and never the settings of today.
-    const stamp = r ? { payable: r.payable, why: r.stampWhy ?? null } : scopeOf(settings, p.sn, date);
+    const stamp = r ? { payable: r.payable, why: r.stampWhy ?? null } : scopeOf(stampWith, p.sn, date);
     const status: Status = !stamp.payable ? "unpayable" : !input.judgement.checked ? "held" : "pending";
     const why = status === "held" ? UNCHECKED : undefined;
     if (!r) {
@@ -1022,7 +1053,7 @@ export function planDateRows(input: {
     if (r && (r.status === "pending" || r.status === "unpayable") && String(r.why ?? "").startsWith("admin:")) continue;
     if (!r && (input.onlyNotPayable || input.existingOnly || h.existingOnly)) continue;
     if (!r) {
-      inserts.push(newRow(h.sn, h.div ?? null, "held", scopeOf(settings, h.sn, date), "screen-disagrees"));
+      inserts.push(newRow(h.sn, h.div ?? null, "held", scopeOf(stampWith, h.sn, date), "screen-disagrees"));
       counts.inserted++;
     } else {
       settle(r, "held", "screen-disagrees");

@@ -379,6 +379,22 @@ console.log("\nTHE REGISTER: STAMPED ONCE, SETTLED UNTIL PAID\n");
   check("...while a broken day and a new one are still held for the check",
     p15of("h3")?.status === "held" && p15of("h3")?.why === R.UNCHECKED
     && p15.inserts.length === 1 && p15.inserts[0].studentNumber === "4" && p15.inserts[0].why === R.UNCHECKED, J({ p: p15.patches, i: p15.inserts }));
+
+  // STAMPED AS THE DATE WAS: a date decided before the switch last came on (2026-10-12 final review).
+  const snap = R.scopeSnapshot(live);
+  check("the date's snapshot reads back as the settings it was decided under, and garbage as none",
+    J(R.scopeOf(R.settingsFromSnapshot(JSON.parse(J(snap)), 100), "7", D)) === J(R.scopeOf(live, "7", D))
+    && R.settingsFromSnapshot(null, 100) === null && R.settingsFromSnapshot({ mode: "live" }, 100) === null);
+  const p16 = R.planDateRows({ date: D, now: NOW, runId: "r16", settings: off2on, existing: before, stampSettings: R.settingsFromSnapshot(snap, 100),
+    judgement: { perfect: [{ sn: "2", div: "ms" }, { sn: "9", div: "ms" }], held: [{ sn: "8", why: "screen-disagrees" }], broken: [{ sn: "1", why: "marked" }], checked: true } });
+  const ins16 = (sn) => p16.inserts.find((r) => r.studentNumber === sn) ?? null;
+  check("A CORRECTION AFTER A PAUSE: a student first broken on a date decided while live is stamped as the date was, payable, pending",
+    ins16("9")?.status === "pending" && ins16("9")?.payable === true && ins16("8")?.status === "held" && ins16("8")?.payable === true
+    && R.scopeOf(off2on, "9", D).payable === false, J(p16.inserts));
+  const p17 = R.planDateRows({ date: D, now: NOW, runId: "r17", settings: off2on, existing: before, stampSettings: R.settingsFromSnapshot(R.scopeSnapshot(shadow), 100),
+    judgement: { perfect: [{ sn: "9", div: "ms" }], held: [], broken: [], checked: true } });
+  check("...and on a date first decided in shadow, still unpayable: no back-pay", p17.inserts.length === 1 && p17.inserts[0].status === "unpayable"
+    && p17.inserts[0].payable === false && p17.inserts[0].stampWhy === "shadow", J(p17.inserts));
 }
 
 // ---------------------------------------------------------------- payday

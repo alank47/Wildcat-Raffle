@@ -510,7 +510,12 @@ status counts those days as waiting ("off"); a control's days wait until the
 controls are cleared. And the days decided before a pause are still re-read
 by every run while they are in the lookback, exactly like any other: a late
 absence is applied before payday (or puts a paid day on the paid-then-broken
-list), and a day held for the second check is released once it agrees. What a pause does lose is any school day not yet
+list), and a day held for the second check is released once it agrees. A
+correction to Present is applied the same way, to every student: one it makes
+perfect gets the day, stamped by the settings the date was first decided under
+(kept on the date's record as `scope`), so two students with the same final
+record for a day are paid the same whatever order the marks came in; a date
+first decided in shadow stays unpayable. What a pause does lose is any school day not yet
 decided when it went off: the run decides each day the next morning, so
 switching off before Monday's run means Friday is never decided. After a false
 alarm the same morning, switch back on with `"countFromDate":"<that Friday>"`
