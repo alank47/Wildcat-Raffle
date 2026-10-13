@@ -1204,8 +1204,17 @@ export function buildPayoutRow(input: {
   };
 }
 
-/** The day this pending day's money arrives: the Monday after its week. */
-export const paydayFor = (date: string): string => addDays(weekStartOf(date), 7);
+/**
+ * The day this pending day's money arrives: the Monday after its week, or,
+ * once that week's payday has already run (`lastPayWeek`), the Monday after
+ * it. A day of last week settled AFTER Monday's payday (PowerSchool down at
+ * the payday run, an admin's resolveHeld or releaseUnchecked that afternoon)
+ * waits a week, because payday pays once a week (2026-10-12 final review).
+ */
+export function paydayFor(date: string, lastPayWeek: string | null = null): string {
+  const due = addDays(weekStartOf(date), 7);
+  return lastPayWeek && isDay(lastPayWeek) && due <= lastPayWeek ? addDays(weekStartOf(lastPayWeek), 7) : due;
+}
 
 /** The cron's firings (crons.ts, "perfect day award"): :42 past these hours, UTC, every day. */
 export const TICK_UTC_HOURS = [14, 15, 16, 17];
@@ -1243,8 +1252,10 @@ export function nextPaydayOf(input: { nowIso: string; tz: string; lastDoneDate: 
  * exactly the days payday pays (payNowWhy). Null when no money moves for them
  * at all (off, shadow, a control, or outside the pilot with nothing earned
  * still to come), so nothing is promised that will not arrive (review H2).
+ * The payday is the one that will pay them: never "today" for a day settled
+ * after today's payday ran (`lastPayWeek`).
  */
-export function pendingForStudent(input: { settings: Settings; sn: string; rows: RegRow[] }):
+export function pendingForStudent(input: { settings: Settings; sn: string; rows: RegRow[]; lastPayWeek?: string | null }):
   null | { days: string[]; amount: number; payday: string | null } {
   const { settings, sn } = input;
   const days = input.rows
@@ -1255,6 +1266,6 @@ export function pendingForStudent(input: { settings: Settings; sn: string; rows:
   return {
     days: days.map((r) => r.date),
     amount: days.reduce((a, r) => a + r.amount, 0),
-    payday: days.length ? paydayFor(days[0].date) : null,
+    payday: days.length ? paydayFor(days[0].date, input.lastPayWeek ?? null) : null,
   };
 }

@@ -453,6 +453,12 @@ console.log("\nPAYDAY\n");
     && R.planPayout({ sn: "1", rows, settings: moved, before: "2026-10-26", zeroPointDate: null, cutoffDate: null }).parts[0]?.dates.length === 1);
   check("a control is promised nothing, though a day was stamped payable before", R.pendingForStudent({ settings: { ...pilot, controls: ["1"] }, sn: "1", rows }) === null);
   check("in shadow nobody sees anything promised", R.pendingForStudent({ settings: R.planConfigure(R.settingsOrDefault(null), { mode: "shadow" }, "2026-10-19").next, sn: "1", rows }) === null);
+  const lateFri = [row("2026-10-16")];
+  check("A DAY SETTLED AFTER MONDAY'S PAYDAY RAN IS PROMISED FOR THE MONDAY AFTER, never 'today'",
+    R.pendingForStudent({ settings: live, sn: "1", rows: lateFri, lastPayWeek: "2026-10-19" })?.payday === "2026-10-26"
+    && R.pendingForStudent({ settings: live, sn: "1", rows: lateFri, lastPayWeek: "2026-10-12" })?.payday === "2026-10-19"
+    && R.pendingForStudent({ settings: live, sn: "1", rows: lateFri })?.payday === "2026-10-19",
+    J(R.pendingForStudent({ settings: live, sn: "1", rows: lateFri, lastPayWeek: "2026-10-19" })));
 
   // THE ADMIN CARD'S NEXT PAYDAY: the day the money moves, never one gone by.
   const NP = (nowIso, lastDoneDate, lastPayWeek) => R.nextPaydayOf({ nowIso, tz: TZ, lastDoneDate, lastPayWeek });

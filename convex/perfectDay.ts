@@ -850,7 +850,10 @@ export async function perfectDaysForStudent(ctx: QueryCtx, studentNumber: string
   const settings = await loadSettings(ctx);
   if (!R.paying(settings.mode) || !studentNumber) return null;
   const rows = await ctx.db.query("perfectDays").withIndex("by_student_date", (q) => q.eq("studentNumber", studentNumber)).order("desc").take(20);
-  return R.pendingForStudent({ settings, sn: studentNumber, rows: rows as unknown as R.RegRow[] });
+  // This week's payday already run: a day settled since waits for next Monday's.
+  const state = (await readState(ctx, R.STATE_KEY)) ?? {};
+  const lastPayWeek = typeof state.lastPayWeek === "string" ? state.lastPayWeek : null;
+  return R.pendingForStudent({ settings, sn: studentNumber, rows: rows as unknown as R.RegRow[], lastPayWeek });
 }
 
 /**

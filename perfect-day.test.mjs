@@ -801,9 +801,14 @@ console.log("\nJ. POWERSCHOOL DOWN ON PAYDAY: PAYING NEEDS NOTHING FROM IT\n");
     J({ s1: paidDates(w, "S1"), st: w.state() }));
   check("...and the run is still not done, so the next tick reads again", w.lastRun()?.ok === false && w.state().lastDoneDate !== "2026-10-26");
   w.down = null;
-  await morning(w, "2026-10-27");
+  await tick(w, "2026-10-26T17:42:00Z");               // 10:42 PT: PowerSchool answers, after payday
   check("...once PowerSchool answers, Friday 10/23 is decided, to be paid next week",
     TEST.every((s) => w.reg(s.key, "2026-10-23")?.status === "pending") && w.payouts("S1").length === 1);
+  const card = await studentView(w, "S1", "2026-10-26T21:00:00Z");
+  check("A DAY SETTLED AFTER TODAY'S PAYDAY IS NOT 'ARRIVING TODAY': Friday's $100 is promised for Monday 11/2, when it is paid",
+    J(card.wildcatCash.perfectDays) === J({ days: ["2026-10-23"], amount: 100, payday: "2026-11-02" }), J(card.wildcatCash.perfectDays));
+  for (const d of weekdaysBetween("2026-10-27", "2026-11-02")) await morning(w, d);
+  check("...and it is", w.payouts("S1").find((p) => p.payWeek === "2026-11-02")?.dates[0] === "2026-10-23", J(w.payouts("S1").map((p) => [p.payWeek, p.dates])));
 }
 
 // ===========================================================================

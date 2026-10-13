@@ -613,7 +613,10 @@ npx convex run --prod perfectDay:releaseUnchecked '{"date":"...","reason":"...",
 - **Students** (only when money will move for them: pilot or live, not a
   control): a "Perfect day – pending" line at the top of their Wildcat Cash
   activity, on the desk dashboard and on the wallet card, from the morning a
-  day is decided: the days, the amount, and "Arrives Monday 10/19". No reason
+  day is decided: the days, the amount, and "Arrives Monday 10/19". A day
+  settled after that week's payday has run (PowerSchool down at the payday
+  run, an admin's release that afternoon) says the Monday after, when it is
+  actually paid, never "Arrives today". No reason
   is ever shown for a day that is not there. The Monday payment is a line in
   their history, "Perfect attendance -- N days", by "Wildcat Hub
   (attendance)", with the days in its note.
