@@ -591,6 +591,13 @@ function buildDesk(src) {
   check("no perfect days: nothing pending on the desk either", !/pending/i.test(wpDashboard(mine(null), { rows: [] }, grades)));
   const first = wpDashboard(mine({ days: ["2026-10-12"], amount: 100, payday: "2026-10-19" }, []), { rows: [] }, grades);
   check("a pending day and no history: the line, not 'Nothing yet'", /Perfect day – pending/.test(first) && !/Nothing yet\. When a teacher/.test(first));
+  const paidRow = out.slice(out.indexOf("Perfect attendance — 4 days"));
+  check("THE PAYMENT'S SECOND LINE WRAPS ON THE STUDENT'S CASH CARD: 'Wildcat Hub (attendance)' is never cut",
+    /<div class="wp-cash-activity">/.test(out) && /^[^]*?<span class="wp-rowsub">[^<]*Wildcat Hub \(attendance\)<\/span>/.test(paidRow)
+    && /\n\.wp-cash-activity \.wp-rowsub \{\s*white-space: normal;\s*overflow: visible;\s*text-overflow: clip;/.test(css));
+  check("...and only there: every other list keeps .wp-rowsub to one line",
+    /\n\.wp-rowsub \{[^}]*white-space: nowrap;[^}]*text-overflow: ellipsis;/.test(css)
+    && (css.match(/\.wp-rowsub[^{]*\{[^}]*white-space: normal/g) || []).length === 1);
   check("the styles exist: pending amounts dimmed, the rule dashed",
     /\.wp-rowend\.wp-amt-pending\s*\{/.test(css) && /\.wp-row-pending\s*\{[^}]*dashed/.test(css) &&
     /\.wp-tx\.is-pending\s*\{[^}]*dashed/.test(css) && /\.wp-tx-amt\.is-pending\s*\{/.test(css));
@@ -708,6 +715,33 @@ async function cardFor(src, user, o = {}) {
     reason: "Decided without the second check (no rebuild after the day): nothing new becomes payable until it runs." }] } });
   check("a date decided without the second check says so beside its counts", /370 of 607 perfect[\s\S]*without the second check/.test(unchecked.html));
   check("the last payday", /Last payday[\s\S]*Mon 10\/26/.test(a.html));
+
+  // NO PAYDAY WHILE NO MONEY MOVES, AND NEVER ONE GONE BY (2026-10-12 final review).
+  const SHADOW = { ...STATUS, settings: { ...STATUS.settings, mode: "shadow", pilot: 0, controls: 0 }, today: "2026-10-22", lastPayWeek: null,
+    held: { count: 0, list: [] }, paidThenBroken: { count: 0, handled: 0, list: [] }, controls: { count: 0, paidMovements: 0 },
+    nextPayday: { payWeek: null, date: null, students: 0, days: 0, total: 0, earnedNotPaid: {} } };
+  const sh = await cardFor(scriptSrc, ADMIN, { status: SHADOW });
+  check("IN SHADOW THE CARD SAYS 'Shadow trial: nothing will be paid': no payday date, and no day called not payable",
+    /Payday<\/span><span class="wc-pd-v">Shadow trial: nothing will be paid</.test(sh.html) && !/Next payday/.test(sh.html) && !/not pa(id|yable)/.test(sh.html),
+    sh.html.slice(sh.html.indexOf("Payday") - 40, sh.html.indexOf("Payday") + 160));
+  const shOld = await cardFor(scriptSrc, ADMIN, { status: { ...SHADOW,
+    nextPayday: { payWeek: "2026-10-19", students: 0, days: 0, total: 0, earnedNotPaid: { unpayable: 1456 } } } });
+  check("...the same from a backend that still sends this week's Monday, gone by, and every day as not payable",
+    /Shadow trial: nothing will be paid</.test(shOld.html) && !/Mon 10\/19/.test(shOld.html) && !/not payable|1,456/.test(shOld.html));
+  const shWait = await cardFor(scriptSrc, ADMIN, { status: { ...SHADOW, nextPayday: { ...SHADOW.nextPayday, earnedNotPaid: { shadow: 24 } } } });
+  check("...and days earned while it paid are said to wait, not to be refused",
+    /Shadow trial: nothing will be paid &middot; 24 days earned earlier wait until money moves again/.test(shWait.html));
+  const offCard = await cardFor(scriptSrc, ADMIN, { status: { ...SHADOW, settings: { ...SHADOW.settings, mode: "off" },
+    nextPayday: { ...SHADOW.nextPayday, earnedNotPaid: { off: 1 } } } });
+  check("switched off, after it has run: 'Switched off: nothing will be paid', and what waits",
+    /Switched off: nothing will be paid &middot; 1 day earned earlier waits until money moves again/.test(offCard.html) && !/Next payday/.test(offCard.html));
+  const midweek = await cardFor(scriptSrc, ADMIN, { status: { ...STATUS, today: "2026-10-21", lastPayWeek: "2026-10-12",
+    nextPayday: { ...STATUS.nextPayday, payWeek: "2026-10-19", date: "2026-10-22" } } });
+  check("LIVE, THE REAL NEXT PAYDAY: the day the money moves (Thu 10/22, switched on midweek), not the week's Monday gone by",
+    /Next payday<\/span><span class="wc-pd-v">Thu 10\/22 &middot;/.test(midweek.html) && !/Mon 10\/19/.test(midweek.html));
+  const oldLive = await cardFor(scriptSrc, ADMIN, { status: { ...STATUS, today: "2026-10-21", nextPayday: { ...STATUS.nextPayday, payWeek: "2026-10-19" } } });
+  check("...and from a backend that sends only a Monday gone by, 'the next run', never the past date",
+    /Next payday<\/span><span class="wc-pd-v">the next run &middot;/.test(oldLive.html) && !/Mon 10\/19/.test(oldLive.html));
   check("names are escaped", /&lt;b&gt;/.test((await (async () => {
     const w = world(scriptSrc, { currentUser: ADMIN, students: [kid(7, 7, { firstName: "<b>" })] });
     return w.app.perfectDayPanelHtml(STATUS, w.app.perfectDayNameOf);

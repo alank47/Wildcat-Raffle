@@ -422,6 +422,18 @@ console.log("\nPAYDAY\n");
     && R.planPayout({ sn: "1", rows, settings: moved, before: "2026-10-26", zeroPointDate: null, cutoffDate: null }).parts[0]?.dates.length === 1);
   check("a control is promised nothing, though a day was stamped payable before", R.pendingForStudent({ settings: { ...pilot, controls: ["1"] }, sn: "1", rows }) === null);
   check("in shadow nobody sees anything promised", R.pendingForStudent({ settings: R.planConfigure(R.settingsOrDefault(null), { mode: "shadow" }, "2026-10-19").next, sn: "1", rows }) === null);
+
+  // THE ADMIN CARD'S NEXT PAYDAY: the day the money moves, never one gone by.
+  const NP = (nowIso, lastDoneDate, lastPayWeek) => R.nextPaydayOf({ nowIso, tz: TZ, lastDoneDate, lastPayWeek });
+  check("Monday before its run: payday is today", J(NP("2026-10-19T13:00:00Z", "2026-10-16", "2026-10-12")) === J({ date: "2026-10-19", payWeek: "2026-10-19" }));
+  check("Monday after payday ran: next Monday", J(NP("2026-10-19T20:00:00Z", "2026-10-19", "2026-10-19")) === J({ date: "2026-10-26", payWeek: "2026-10-26" }));
+  check("SWITCHED ON MIDWEEK, after the morning: not the Monday gone by, but the next run, which pays this week's payday",
+    J(NP("2026-10-21T21:00:00Z", "2026-10-21", "2026-10-12")) === J({ date: "2026-10-22", payWeek: "2026-10-19" })
+    && J(NP("2026-10-19T18:30:00Z", "2026-10-16", "2026-10-12")) === J({ date: "2026-10-20", payWeek: "2026-10-19" }));
+  check("a weekend with this week's payday never run: the Monday after", J(NP("2026-10-24T18:00:00Z", "2026-10-23", "2026-10-12")) === J({ date: "2026-10-26", payWeek: "2026-10-26" }));
+  check("across the clock change: Monday 11/2 at 05:00 PST, its 06:42 run is the payday", J(NP("2026-11-02T13:00:00Z", "2026-10-30", "2026-10-26")) === J({ date: "2026-11-02", payWeek: "2026-11-02" }));
+  check("...on the cron's own firings: the rule's hours are crons.ts's",
+    read("./convex/crons.ts").includes(`"perfect day award",\n  "${R.TICK_UTC_MINUTE} ${R.TICK_UTC_HOURS.join(",")} * * *",`));
 }
 
 // ---------------------------------------------------------------- the mirror

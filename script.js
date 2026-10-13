@@ -50003,10 +50003,28 @@
             }
             if (st.lastPayWeek) parts.push(line('Last payday', escapeHtml(perfectDayShort(st.lastPayWeek))));
 
-            if (pay.payWeek) {
+            // NO PAYDAY WHILE NO MONEY MOVES (2026-10-12). In shadow or off the
+            // card says so in words, never a payday date (it used to show this
+            // week's Monday, already gone by, with every day "not paid"). Days
+            // earned while it was on are counted as waiting, not as refused.
+            const waiting = Object.entries(pay.earnedNotPaid || {})
+                .filter(([k, c]) => k !== 'unpayable' && Number(c) > 0).reduce((a, [, c]) => a + Number(c), 0);
+            const waitNote = waiting > 0 ? ' &middot; ' + n(waiting) + ' day' + (waiting === 1 ? '' : 's') +
+                ' earned earlier wait' + (waiting === 1 ? 's' : '') + ' until money moves again' : '';
+            if (mode === 'shadow') {
+                parts.push(line('Payday', 'Shadow trial: nothing will be paid' + waitNote));
+            } else if (mode === 'off') {
+                parts.push(line('Payday', 'Switched off: nothing will be paid' + waitNote));
+            } else if (pay.payWeek || pay.date) {
+                // The day the money actually moves (the server's nextPayday.date).
+                // A backend that sends only the week's Monday, already gone by,
+                // is shown as the next run: never a date in the past.
+                const day = String(pay.date || pay.payWeek || '');
+                const today = typeof st.today === 'string' ? st.today : '';
+                const when = today && day < today ? 'the next run' : perfectDayShort(day);
                 const notPaid = Object.entries(pay.earnedNotPaid || {}).filter(([, c]) => Number(c) > 0)
                     .map(([k, c]) => n(c) + ' ' + escapeHtml(WHY[k] || k)).join(', ');
-                parts.push(line('Next payday', escapeHtml(perfectDayShort(pay.payWeek)) + ' &middot; ' +
+                parts.push(line('Next payday', escapeHtml(when) + ' &middot; ' +
                     n(pay.students) + ' student' + (Number(pay.students) === 1 ? '' : 's') + ', ' +
                     n(pay.days) + ' day' + (Number(pay.days) === 1 ? '' : 's') + ', $' + n(pay.total) + ' in all' +
                     (notPaid ? ' &middot; not paid: ' + notPaid : '')));

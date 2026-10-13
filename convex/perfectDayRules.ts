@@ -1167,6 +1167,37 @@ export function buildPayoutRow(input: {
 /** The day this pending day's money arrives: the Monday after its week. */
 export const paydayFor = (date: string): string => addDays(weekStartOf(date), 7);
 
+/** The cron's firings (crons.ts, "perfect day award"): :42 past these hours, UTC, every day. */
+export const TICK_UTC_HOURS = [14, 15, 16, 17];
+export const TICK_UTC_MINUTE = 42;
+
+/**
+ * THE NEXT PAYDAY, AS THE ADMIN CARD SAYS IT: the school date the money will
+ * actually move, and the week it pays up to (every pending day before
+ * `payWeek`). It is the first cron firing decideTick would run at (a weekday
+ * morning whose run is not done) in a week whose payday has not run yet.
+ * Never a date gone by: a Monday whose payday did not happen (the switch came
+ * on midweek) is the next run, not that Monday. Only for a mode that pays.
+ */
+export function nextPaydayOf(input: { nowIso: string; tz: string; lastDoneDate: string | null; lastPayWeek: string | null }):
+  { date: string; payWeek: string } | null {
+  const now = Date.parse(input.nowIso);
+  if (!Number.isFinite(now)) return null;
+  const day0 = Date.UTC(new Date(now).getUTCFullYear(), new Date(now).getUTCMonth(), new Date(now).getUTCDate());
+  for (let k = 0; k <= 16; k++) {
+    for (const h of TICK_UTC_HOURS) {
+      const at = day0 + k * 86400000 + (h * 60 + TICK_UTC_MINUTE) * 60000;
+      if (at <= now) continue;
+      const d = decideTick({ mode: "live", nowIso: new Date(at).toISOString(), tz: input.tz, lastDoneDate: input.lastDoneDate, lease: null });
+      if (d.do !== "run") continue;
+      const payWeek = weekStartOf(d.today);
+      if (input.lastPayWeek && payWeek <= input.lastPayWeek) continue;
+      return { date: d.today, payWeek };
+    }
+  }
+  return null;
+}
+
 /**
  * WHAT THE STUDENT SEES: their perfect days that WILL be paid, and when --
  * exactly the days payday pays (payNowWhy). Null when no money moves for them

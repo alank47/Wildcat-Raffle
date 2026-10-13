@@ -272,10 +272,20 @@ console.log("\nA. SHADOW FOR A WEEK, THEN LIVE: SHADOW NEVER PAYS; THE WEEK IS P
     w.jobLedger().length === 0 && w.payouts().length === 0 && TEST.every((s) => w.hub(s.key).wildcatCashBalance === 1000));
   const sv = await studentView(w, "S1", "2026-10-23T18:00:00Z");
   check("in shadow the student is promised nothing (perfectDays null)", sv.wildcatCash.perfectDays === null, J(sv.wildcatCash.perfectDays));
+  const shadowSt = await status(w);
+  check("THE ADMIN STATUS IN SHADOW HAS NO PAYDAY: no date (never one gone by), and no day counted as not paid",
+    shadowSt.nextPayday.payWeek === null && shadowSt.nextPayday.date === null && shadowSt.nextPayday.students === 0
+    && J(shadowSt.nextPayday.earnedNotPaid) === "{}", J(shadowSt.nextPayday));
 
   const live = await configure(w, "2026-10-26T13:00:00Z", { mode: "live" });
   check("live from Monday 10/26", live.ok && live.settings.liveFrom === "2026-10-26" && live.settings.countFromDate === "2026-10-19");
+  const liveSt = await status(w);
+  check("...live, the real next payday: today's run, still to come at 06:00", liveSt.nextPayday.date === "2026-10-26" && liveSt.nextPayday.payWeek === "2026-10-26",
+    J(liveSt.nextPayday));
   await morning(w, "2026-10-26");
+  const paidSt = await status(w);
+  check("...and once it has run, the Monday after (across the clock change)", paidSt.nextPayday.date === "2026-11-02" && paidSt.nextPayday.payWeek === "2026-11-02",
+    J(paidSt.nextPayday));
   check("SHADOW TO LIVE NEVER BACK-PAYS: Friday 10/23, decided after the switch, is not payable (before-start)",
     w.rows("perfectDays").filter((r) => r.date === "2026-10-23").every((r) => r.status === "unpayable" && r.stampWhy === "before-start")
     && w.rows("perfectDays").filter((r) => r.date === "2026-10-23").length === 12);

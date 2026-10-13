@@ -925,11 +925,21 @@ export async function statusFor(ctx: QueryCtx, nDates = 10) {
     paidThenBroken.push({ studentNumber: r.studentNumber, date: r.date, txnId: txn, why: r.afterPayWhy ?? null });
   }
 
-  // THE NEXT PAYDAY: every pending day before its week that payday would pay (the same rule, payNowWhy).
-  const thisWeek = today ? R.weekStartOf(today) : null;
-  const nextPayWeek = thisWeek ? (state.lastPayWeek && state.lastPayWeek >= thisWeek ? R.addDays(thisWeek, 7) : thisWeek) : null;
-  const pending = nextPayWeek
-    ? await ctx.db.query("perfectDays").withIndex("by_status_date", (q) => q.eq("status", "pending").lt("date", nextPayWeek)).take(20000) : [];
+  // THE NEXT PAYDAY: the day the money will actually move (never a date gone
+  // by), and every pending day before its week that it would pay (the same
+  // rule, payNowWhy). While no money moves (off, shadow) there is none: the
+  // days earned before wait, all of them counted as waiting.
+  const paying = R.paying(settings.mode);
+  const next = paying && tz ? R.nextPaydayOf({
+    nowIso: new Date().toISOString(), tz,
+    lastDoneDate: typeof state.lastDoneDate === "string" ? state.lastDoneDate : null,
+    lastPayWeek: typeof state.lastPayWeek === "string" ? state.lastPayWeek : null,
+  }) : null;
+  const nextPayWeek = next?.payWeek ?? null;
+  const pending = !paying
+    ? await ctx.db.query("perfectDays").withIndex("by_status_date", (q) => q.eq("status", "pending")).take(20000)
+    : nextPayWeek
+      ? await ctx.db.query("perfectDays").withIndex("by_status_date", (q) => q.eq("status", "pending").lt("date", nextPayWeek)).take(20000) : [];
   const willPay = new Set<string>();
   let payDays = 0, payTotal = 0;
   const notPaid: Record<string, number> = {};
@@ -962,7 +972,7 @@ export async function statusFor(ctx: QueryCtx, nDates = 10) {
     held: { count: held.length, list: held.slice(0, 100).map((r) => ({ studentNumber: r.studentNumber, date: r.date, why: r.why ?? null })) },
     heldDates: heldDates.map((d) => ({ date: d.date, reason: d.reason, retryable: d.retryable ?? false })),
     paidThenBroken: { count: paidThenBroken.length, handled, list: paidThenBroken.slice(0, 100) },
-    nextPayday: { payWeek: nextPayWeek, students: willPay.size, days: payDays, total: payTotal, earnedNotPaid: notPaid },
+    nextPayday: { payWeek: nextPayWeek, date: next?.date ?? null, students: willPay.size, days: payDays, total: payTotal, earnedNotPaid: notPaid },
     controls: { count: settings.controls.length, paidMovements: controlsPaid },
   };
 }

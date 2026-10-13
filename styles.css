@@ -4335,10 +4335,22 @@ body.wp-open { overflow: hidden; }
 .wp-rowend.wp-amt-pending { opacity: .66; font-weight: 600; }
 .wp-row-pending { border-left-style: dashed; }
 .wp-pending-rows + .wp-rows { margin-top: 6px; }
+/* THE STUDENT'S OWN CASH ACTIVITY WRAPS ITS SECOND LINE (2026-10-12). The
+   weekly perfect-day payment is given by "Wildcat Hub (attendance)", which
+   with its date and time does not fit the card's column and was cut to
+   "Wildcat Hub (attendan…". On this card, and only here, the line wraps;
+   every other list keeps .wp-rowsub to one line. */
+.wp-cash-activity .wp-rowsub {
+    white-space: normal;
+    overflow: visible;
+    text-overflow: clip;
+    overflow-wrap: anywhere;
+}
 
 /* What the adult typed, under what they picked. Wraps, because a note is a
    sentence and truncating it loses the half that explains the number -- unlike
-   .wp-rowsub above it, which is a date and a name and fits. */
+   .wp-rowsub above it, which is a date and a name and fits (save on the
+   student's cash activity, where it wraps too: see .wp-cash-activity). */
 .wp-rownote {
     display: block;
     margin-top: 3px;

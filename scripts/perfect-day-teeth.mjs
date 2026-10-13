@@ -26,6 +26,9 @@ const LEGACY = "convex/legacyData.ts";
 const AWARD = "convex/cashAwardRules.ts";
 const UNIT = "perfect-day-rules.test.mjs";
 const E2E = "perfect-day.test.mjs";
+const BROWSER = "perfect-day-browser.test.mjs";
+const SITE = "script.js";
+const CSS = "styles.css";
 
 const CASES = [
   // ---- the rule (owner 10/12)
@@ -238,6 +241,23 @@ const CASES = [
   { guard: "a kept student is not checked against the screen", file: RULES, test: UNIT,
     from: "      if (sv && sv.bad.includes(date)) {", to: "      if (false) {",
     mustFail: "...a kept student the screen shows absent that day is held, for a day already decided only" },
+
+  // ---- the final review (2026-10-12): a hold keeps its reason, the same record is the same money, the promise is the real payday
+  { guard: "the admin status names a payday in shadow", file: SERVER, test: E2E,
+    from: "  const next = paying && tz ? R.nextPaydayOf({", to: "  const next = tz ? R.nextPaydayOf({",
+    mustFail: "THE ADMIN STATUS IN SHADOW HAS NO PAYDAY: no date (never one gone by), and no day counted as not paid" },
+  { guard: "the next payday is the week's Monday, gone by", file: RULES, test: UNIT,
+    from: "      return { date: d.today, payWeek };", to: "      return { date: payWeek, payWeek };",
+    mustFail: "SWITCHED ON MIDWEEK, after the morning: not the Monday gone by, but the next run, which pays this week's payday" },
+  { guard: "the admin card shows a payday in shadow", file: SITE, test: BROWSER,
+    from: "            if (mode === 'shadow') {", to: "            if (false) {",
+    mustFail: "...the same from a backend that still sends this week's Monday, gone by, and every day as not payable" },
+  { guard: "the admin card prints the Monday, not the day the money moves", file: SITE, test: BROWSER,
+    from: "                const day = String(pay.date || pay.payWeek || '');", to: "                const day = String(pay.payWeek || '');",
+    mustFail: "LIVE, THE REAL NEXT PAYDAY: the day the money moves (Thu 10/22, switched on midweek), not the week's Monday gone by" },
+  { guard: "the payment's second line is cut on the student's cash card", file: CSS, test: BROWSER,
+    from: ".wp-cash-activity .wp-rowsub {\n    white-space: normal;", to: ".wp-cash-activity .wp-rowsub {\n    white-space: nowrap;",
+    mustFail: "THE PAYMENT'S SECOND LINE WRAPS ON THE STUDENT'S CASH CARD: 'Wildcat Hub (attendance)' is never cut" },
 
   // ---- the browser cannot send it (M2): all four write paths and the command
   { guard: "appData:save applies an attendance movement", file: SHAPE, test: E2E,

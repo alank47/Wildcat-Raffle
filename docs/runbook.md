@@ -626,7 +626,11 @@ npx convex run --prod perfectDay:releaseUnchecked '{"date":"...","reason":"...",
 - **Admins** see a read-only "Perfect-day award" card on the Cash Audit Log
   (`perfectDay:adminStatus`, admins and superadmins only): the mode, the last
   run, the last five dates with counts, held students and paid-then-broken
-  days by name, the next payday and the controls. It changes nothing; it is
+  days by name, the next payday and the controls. The next payday is the day
+  the money will actually move (switched on midweek, that is the next run, not
+  the Monday gone by); in shadow it reads "Shadow trial: nothing will be
+  paid" and switched off "Switched off: nothing will be paid", never a date,
+  with any days earned earlier counted as waiting. It changes nothing; it is
   empty until the award has ever been switched on.
 - **Deploy order**: Convex first (the card's query and the summary entry's
   shape), then the site. A site without the backend shows no card and nothing
