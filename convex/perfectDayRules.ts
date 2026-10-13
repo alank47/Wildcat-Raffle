@@ -948,6 +948,13 @@ export type RegRow = {
  *
  * ENROLMENT UNCONFIRMED (a broken entry with that why) is not a break: a
  * pending day becomes held for an admin, a paid one is flagged.
+ *
+ * A HELD DAY KEEPS ITS REASON WHEN THE SECOND CHECK CANNOT RUN (2026-10-12
+ * final review). Held because the screen disagrees, or as enrolment
+ * unconfirmed, it is not relabelled "second-check-unavailable" by a run that
+ * has no check: that label never expires and releaseUnchecked releases it,
+ * so one run during a rebuild outage would turn a disputed day into one an
+ * admin pays in bulk. Only a new day or a broken one becomes held for the check.
  */
 export function planDateRows(input: {
   date: string; now: string; runId: string; settings: Settings; existing: RegRow[];
@@ -992,6 +999,8 @@ export function planDateRows(input: {
       continue;
     }
     if (r && (r.status === "pending" || r.status === "unpayable")) continue;
+    // Held, and no second check to settle it with: it keeps its own reason.
+    if (r && r.status === "held" && !input.judgement.checked) continue;
     // No row yet, or held or broken: THE MONEY DIRECTION. The stamp is the
     // row's own when it has one, and never the settings of today.
     const stamp = r ? { payable: r.payable, why: r.stampWhy ?? null } : scopeOf(settings, p.sn, date);

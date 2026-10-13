@@ -243,6 +243,9 @@ const CASES = [
     mustFail: "...a kept student the screen shows absent that day is held, for a day already decided only" },
 
   // ---- the final review (2026-10-12): a hold keeps its reason, the same record is the same money, the promise is the real payday
+  { guard: "a run with no second check relabels a held day for releaseUnchecked", file: RULES, test: UNIT,
+    from: '    if (r && r.status === "held" && !input.judgement.checked) continue;\n', to: "",
+    mustFail: "A HELD DAY KEEPS ITS REASON WITHOUT THE SECOND CHECK: one the screen disputes, or enrolment unconfirmed, is not relabelled for releaseUnchecked" },
   { guard: "the admin status names a payday in shadow", file: SERVER, test: E2E,
     from: "  const next = paying && tz ? R.nextPaydayOf({", to: "  const next = tz ? R.nextPaydayOf({",
     mustFail: "THE ADMIN STATUS IN SHADOW HAS NO PAYDAY: no date (never one gone by), and no day counted as not paid" },

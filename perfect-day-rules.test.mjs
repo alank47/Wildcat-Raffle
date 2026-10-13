@@ -364,6 +364,21 @@ console.log("\nTHE REGISTER: STAMPED ONCE, SETTLED UNTIL PAID\n");
     judgement: { perfect: [{ sn: "1", div: "ms", existingOnly: true }, { sn: "5", div: "ms", existingOnly: true }], held: [{ sn: "6", why: "screen-disagrees", existingOnly: true }], broken: [], checked: true } });
   check("...and a student kept on class records keeps the day already decided, and starts none",
     p14.patches.length === 0 && p14.inserts.length === 0, J(p14));
+
+  // A RUN WITH NO SECOND CHECK NEVER RELABELS A HOLD (2026-10-12 final review).
+  const heldRows = [
+    { ...rows[0], studentNumber: "1", _id: "h1", status: "held", why: "screen-disagrees" },
+    { ...rows[0], studentNumber: "2", _id: "h2", status: "held", why: R.ENROLMENT_UNCONFIRMED },
+    { ...rows[0], studentNumber: "3", _id: "h3", status: "broken", why: "marked" },
+  ];
+  const p15 = R.planDateRows({ date: D, now: NOW, runId: "r15", settings: live, existing: heldRows,
+    judgement: { perfect: ["1", "2", "3", "4"].map((sn) => ({ sn, div: "ms" })), held: [], broken: [], checked: false } });
+  const p15of = (id) => p15.patches.find((x) => x.id === id)?.patch ?? null;
+  check("A HELD DAY KEEPS ITS REASON WITHOUT THE SECOND CHECK: one the screen disputes, or enrolment unconfirmed, is not relabelled for releaseUnchecked",
+    p15of("h1") === null && p15of("h2") === null, J(p15.patches));
+  check("...while a broken day and a new one are still held for the check",
+    p15of("h3")?.status === "held" && p15of("h3")?.why === R.UNCHECKED
+    && p15.inserts.length === 1 && p15.inserts[0].studentNumber === "4" && p15.inserts[0].why === R.UNCHECKED, J({ p: p15.patches, i: p15.inserts }));
 }
 
 // ---------------------------------------------------------------- payday

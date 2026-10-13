@@ -574,7 +574,10 @@ npx convex run --prod perfectDay:releaseUnchecked '{"date":"...","reason":"...",
 - **Held only for the second check** (the attendance rebuild was down or
   writing): a run that can check releases them. They never expire, so an
   outage longer than the lookback forfeits nothing; they wait on the status's
-  held list for `releaseUnchecked`, one call per date.
+  held list for `releaseUnchecked`, one call per date. A day already held for
+  another reason (the screen disagrees, enrolment unconfirmed) keeps that
+  reason through the outage, so `releaseUnchecked` never releases it and it
+  expires as any held day does.
 - **A date already decided whose re-read fails**, or that PowerSchool or the
   calendar now calls no school while days are pending, held or paid for it,
   stays decided with a note (the run tries a failed read again); its days
