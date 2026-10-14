@@ -68,6 +68,9 @@ const CASES = [
     from: "const rosterSteady = fp0.oldest === fp1.oldest && fp0.newest === fp1.newest && fp0.syncAt === fp1.syncAt;",
     to: "const rosterSteady = true;",
     mustFail: "a roster replace during the build: refused, the previous copy keeps serving" },
+  { guard: "the fingerprint takes any syncRuns row as the last sync", file: SNAP, test: E2E,
+    from: "    const run = runs.find((r) => {", to: "    const run = runs[0];\n    const unused = runs.find((r) => {",
+    mustFail: "a hall-pass row or a kept-roster sync in syncRuns is not a newer sync: a half-cleared roster is still held" },
   { guard: "a public query is added to leaderboardSnapshot.ts", file: SNAP, test: E2E,
     from: 'import { internalAction, internalMutation, internalQuery } from "./_generated/server";',
     to: 'import { internalAction, internalMutation, internalQuery, query } from "./_generated/server";\n' +

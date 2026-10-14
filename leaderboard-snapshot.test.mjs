@@ -496,6 +496,34 @@ console.log("\n5. The build's guards: the lease, the switch, the roster, one row
 }
 
 // ======================================================================
+console.log("\n5b. Only a roster sync counts as a newer sync");
+{
+  // syncRuns also holds the hall-pass cleanup's rows (summary.job) and syncs
+  // whose roster guard kept the old roster; neither replaced the roster, so
+  // neither may excuse a half-cleared one (review, 2026-10-13).
+  clock.set(T0);
+  const w = world();
+  await w.configure({ mode: "live", acceptWithoutCompare: true });
+  await w.runBuilds();
+  await w.store.db.insert("syncRuns", { at: "2026-10-13T16:40:00.000Z", summary: { job: "expireAbandoned", expired: 2, purged: 0 } });
+  await w.store.db.insert("syncRuns", { at: "2026-10-13T16:45:00.000Z", summary: { reason: "manual", rosterKept: true } });
+  // A "Sync now" that died after clearing half the roster: it writes no row.
+  const roster = w.store.rows("psRoster");
+  for (const r of roster.slice(0, Math.floor(roster.length / 2))) await w.store.db.delete(r._id);
+  clock.set("2026-10-13T16:48:00.000Z");
+  await w.rt.run("leaderboardSnapshot.tick", {});
+  const [held] = await w.runBuilds();
+  check("a hall-pass row or a kept-roster sync in syncRuns is not a newer sync: a half-cleared roster is still held",
+    held?.ok === false && held.why === "drop-held" && w.stateOf().pendingDrop?.syncAt === "2026-10-13T13:04:00.000Z", J([held, w.stateOf().pendingDrop]));
+  await w.store.db.insert("syncRuns", { at: "2026-10-13T16:50:00.000Z", summary: { reason: "scheduled", rosterKept: false } });
+  clock.set("2026-10-13T16:52:00.000Z");
+  await w.rt.run("leaderboardSnapshot.runNow", { actorName: "Test Admin" });
+  const [kept] = await w.runBuilds();
+  check("  ...while a real roster sync after it is", kept?.ok === true && kept.why === "drop-new-sync", J(kept));
+  keepWrites(w);
+}
+
+// ======================================================================
 console.log("\n6. The tick: cadence, sync windows, staleness, self-healing");
 {
   clock.set(T0);

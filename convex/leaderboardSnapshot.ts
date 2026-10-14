@@ -389,12 +389,22 @@ export const rosterFingerprint = internalQuery({
   handler: async (ctx) => {
     const oldest = await ctx.db.query("psRoster").order("asc").first();
     const newest = await ctx.db.query("psRoster").order("desc").first();
-    const run = await ctx.db.query("syncRuns").withIndex("by_at").order("desc").first();
+    // THE LAST ROSTER SYNC, not the last row in syncRuns. The hall-pass
+    // cleanup (hallPasses.expireAbandoned, hourly at :40) writes rows there
+    // too, marked summary.job, and a sync whose roster guard kept the old
+    // roster (rosterKept) replaced nothing; either one taken as "a newer sync"
+    // let a half-cleared roster be kept at once. The filter reflection.ts
+    // uses. None among the last ten: null, which never counts as newer.
+    const runs = await ctx.db.query("syncRuns").withIndex("by_at").order("desc").take(10);
+    const run = runs.find((r) => {
+      const sum = r.summary;
+      return !(sum && typeof sum === "object" && "job" in sum) && sum?.rosterKept !== true;
+    });
     return {
       oldest: oldest?._id ?? null,
       newest: newest?._id ?? null,
       syncAt: run?.at ?? null,
-      bytes: sizeOf(oldest) + sizeOf(newest) + sizeOf(run),
+      bytes: sizeOf(oldest) + sizeOf(newest) + runs.reduce((n, r) => n + sizeOf(r), 0),
     };
   },
 });
