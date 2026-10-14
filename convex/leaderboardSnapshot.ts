@@ -25,11 +25,13 @@ import { rosterHit } from "./leaderboard";
  * HOW A BUILD GOES. The cron fires `tick` at :03, :18, :33 and :48 (never in
  * the sync windows). The tick reads the switch and the state row -- never the
  * copy itself, unless the state row has lost track of it (relinkCopy) -- and
- * when the board is old enough books ONE build under a lease. The build (an action) reads the roster fingerprint, pages through
- * every student fifty at a time (compactPage: each row through compactStudent,
- * so no cash history ever leaves the page), reads the fingerprint again, and
- * hands the rows to `write`, which re-checks the lease and the switch, decides
- * whether to keep the read (acceptBuild) and replaces the one stored row.
+ * when the board is old enough books ONE build under a lease. The build (an
+ * action) reads the roster fingerprint, pages through every student fifty at
+ * a time (compactPage: each row through compactStudent, so no cash history
+ * ever leaves the page), reads the fingerprint again, and hands the rows to
+ * `write`, which re-checks the lease, the switch and the pages' version,
+ * decides whether to keep the read (acceptBuild) and replaces the one stored
+ * row.
  *
  * WHY AN ACTION AND PAGES, NOT ONE MUTATION. A mutation that collected every
  * student would carry the same 16 MiB wall as the query it replaces, and every
