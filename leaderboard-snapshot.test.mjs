@@ -42,13 +42,31 @@ console.log("\n1. Static: what the new code may reach, and what may reach it");
     exports.length >= 10 && exports.every((e) => /^const \w+ = internal(Query|Mutation|Action)\(/.test(e)),
     exports.filter((e) => !/^const \w+ = internal(Query|Mutation|Action)\(/.test(e)).join(" | "));
 
-  const mentions = [];
-  for (const f of readdirSync(new URL("./convex/", import.meta.url))) {
-    if (!f.endsWith(".ts") || f.endsWith(".d.ts") || f.includes(".test.")) continue;
-    if (/\bleaderboardSnapshots\b/.test(read("./convex/" + f))) mentions.push(f);
-  }
+  // EVERY .ts FILE UNDER convex/, folders included (review, 2026-10-13: the
+  // first version looked at the top folder only, and only for the table name).
+  const walk = (dir) => readdirSync(new URL(dir, import.meta.url), { withFileTypes: true }).flatMap((e) =>
+    e.isDirectory()
+      ? (e.name === "_generated" || e.name === "node_modules" || e.name.startsWith(".") ? [] : walk(`${dir}${e.name}/`))
+      : e.name.endsWith(".ts") && !e.name.endsWith(".d.ts") && !e.name.includes(".test.") ? [`${dir}${e.name}`.replace("./convex/", "")] : []);
+  const convexFiles = walk("./convex/");
+  const mentions = convexFiles.filter((f) => /\bleaderboardSnapshots\b/.test(read("./convex/" + f)));
   check("only schema, leaderboard, leaderboardSnapshot and readHeadroom name the table",
-    J(mentions.sort()) === J(["leaderboard.ts", "leaderboardSnapshot.ts", "readHeadroom.ts", "schema.ts"]), J(mentions));
+    convexFiles.length > 50 && J(mentions.sort()) === J(["leaderboard.ts", "leaderboardSnapshot.ts", "readHeadroom.ts", "schema.ts"]), J(mentions));
+  // A READER NEED NOT NAME THE TABLE: a public function anywhere that runs
+  // internal.leaderboardSnapshot.storedSnapshot hands every earner's name and
+  // amount to any signed-in browser. Nothing outside the module may call its
+  // functions, except the cron's tick; nothing else may hold the copy's id.
+  const refs = [];
+  for (const f of convexFiles) {
+    if (f === "leaderboardSnapshot.ts") continue;
+    for (const m of blank(read("./convex/" + f)).matchAll(/\b(?:internal|api)\s*\.\s*leaderboardSnapshot\s*\.\s*\w+/g)) {
+      if (!(f === "crons.ts" && m[0] === "internal.leaderboardSnapshot.tick")) refs.push(`${f}: ${m[0]}`);
+    }
+  }
+  check("nothing outside leaderboardSnapshot.ts calls its functions, in any convex/ folder (the cron's tick excepted)",
+    refs.length === 0 && /internal\.leaderboardSnapshot\.tick/.test(read("./convex/crons.ts")), J(refs));
+  const holdsId = convexFiles.filter((f) => !/^leaderboardSnapshot(Rules)?\.ts$/.test(f) && /\bsnapshotId\b/.test(blank(read("./convex/" + f))));
+  check("no other file holds the copy's id (a ctx.db.get around every reader)", holdsId.length === 0, J(holdsId));
   const client = read("./script.js");
   const viewsApp = read("./convex/views_app.ts");
   check("views_app.ts and script.js mention neither the table nor the module",
@@ -200,7 +218,11 @@ function world() {
   const students = () => store.rows("students");
   const snapRows = () => store.rows("leaderboardSnapshots");
   const stateOf = () => S.stateOrEmpty(store.rows("appState").find((r) => r.key === S.STATE_KEY)?.value);
-  const configure = (args) => rt.run("leaderboardSnapshot.configure", { actorName: "Test Admin", ...args });
+  const configure = async (args) => {
+    const out = await rt.run("leaderboardSnapshot.configure", { actorName: "Test Admin", ...args });
+    ALL_OUTPUTS.push(out);
+    return out;
+  };
   const runBuilds = async () => {
     const out = [];
     for (const job of rt.take("leaderboardSnapshot.build")) out.push(await rt.run(job.path, job.args));
@@ -217,6 +239,8 @@ function world() {
 const T0 = "2026-10-13T16:03:00.000Z";
 const at = (iso, minutes) => new Date(Date.parse(iso) + minutes * 60000).toISOString();
 const ALL_WRITES = [];
+/** Every configure answer in every section, scanned in section 8: counts, never an address, id or name. */
+const ALL_OUTPUTS = [];
 const keepWrites = (w) => ALL_WRITES.push(...w.rec.writes);
 
 // ======================================================================
@@ -322,7 +346,10 @@ console.log("\n4. Every reason not to serve the copy ranks live");
   check("a copy written by another version: live", (await wentLive(me)).live);
   await w.store.db.patch(doc()._id, { version: w.mods.leaderboardRules.LEADERBOARD_SNAPSHOT_VERSION });
 
-  await w.configure({ mode: "pilot", pilotEmails: [viewers[5].email.toUpperCase(), "nobody@students.example"] });
+  const pe = await w.configure({ mode: "pilot", pilotEmails: [viewers[5].email.toUpperCase(), "nobody@students.example"] });
+  check("configure with pilotEmails answers in counts only: no address, id or name",
+    pe.ok === true && pe.pilot.ids === 1 && pe.pilot.fromEmails === 1 && pe.pilot.unmatched === 1 && !J(pe).includes("@") &&
+    !FIXTURE_TOKENS.some((t) => J(pe).toLowerCase().includes(t.toLowerCase())), J(pe));
   check("pilot: a viewer not on the list is live", (await wentLive(me)).live);
   check("pilot: the viewer on the list is served the copy", !(await wentLive(viewers[5])).live);
   const p = w.stateOf();
@@ -538,7 +565,11 @@ console.log("\n6. The tick: cadence, sync windows, staleness, self-healing");
   await w.runBuilds();
   check("live from off: the first build is served to all", w.snapRows()[0]?.serve === "all");
   clock.set(at(T0, 5));
+  w.rec.reads.length = 0;
   check("a board 5 minutes old in school hours is not rebuilt", (await w.rt.run("leaderboardSnapshot.tick", {})).do === "none");
+  const onTickReads = w.rec.reads.map((r) => r.table);
+  check("  ...and the tick read the switch, the state and the bell schedule, never the 65 KB copy",
+    onTickReads.length > 0 && !onTickReads.includes("leaderboardSnapshots") && onTickReads.includes("bellSettings"), J(onTickReads));
   clock.set(at(T0, 15));
   check("  ...15 minutes old it is", (await w.rt.run("leaderboardSnapshot.tick", {})).do === "build" && w.rt.jobs.length === 1);
   check("  ...one build at a time: a second tick under the lease books nothing",
@@ -588,6 +619,11 @@ console.log("\n6. The tick: cadence, sync windows, staleness, self-healing");
 
   // The kill switch, in one call.
   const killed = await w.configure({ mode: "off" });
+  w.rec.reads.length = 0;
+  const offTick = await w.rt.run("leaderboardSnapshot.tick", {});
+  const offTickReads = w.rec.reads.map((r) => r.table);
+  check("an off tick reads the two small appState rows and nothing else",
+    offTick.do === "none" && J(offTickReads) === J(["appState", "appState"]), J(offTickReads));
   check("configure off sets the copy's serve to none in the same call",
     killed.ok && w.snapRows()[0].serve === "none" && w.snapRows()[0].why === "off" && w.stateOf().serve === "none", J(killed));
   // A state row put back by hand: the tick heals the copy.
@@ -723,6 +759,10 @@ console.log("\n8. Across every run above");
   const tables = [...new Set(ALL_WRITES.map((x) => x.table))].sort();
   check("EVERY MUTATION WRITES ONLY appState AND leaderboardSnapshots",
     ALL_WRITES.length > 20 && J(tables) === J(["appState", "leaderboardSnapshots"]), J(tables));
+  const said = J(ALL_OUTPUTS);
+  check("no configure answer in any section carries an address, a fixture name or an id",
+    ALL_OUTPUTS.length > 20 && !said.includes("@") && !FIXTURE_TOKENS.some((t) => said.toLowerCase().includes(t.toLowerCase())),
+    FIXTURE_TOKENS.filter((t) => said.toLowerCase().includes(t.toLowerCase())).slice(0, 3).join(", "));
   const leaked = ALL_LOGS.filter((l) => FIXTURE_TOKENS.some((t) => l.includes(t)));
   check("no log line any module wrote carries a fixture name or id",
     ALL_LOGS.length > 5 && leaked.length === 0, leaked.slice(0, 2).join(" | "));

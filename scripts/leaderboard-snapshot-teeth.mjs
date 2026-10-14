@@ -10,8 +10,10 @@
 //
 // An anchor must appear exactly once in its file. If the code moves and an
 // anchor no longer matches, this fails loudly rather than skipping the case.
+// A case with `create` instead adds a whole new file (which must not already
+// exist) and removes it afterwards: the plausible mistake is a new reader.
 // (The same runner as scripts/perfect-day-teeth.mjs and reflection-teeth.mjs.)
-import { cpSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -96,6 +98,20 @@ const CASES = [
     from: "R.liveRefusal(state.lastLogicCompare, nowIso)", to: "R.liveRefusal(state.lastCompare, nowIso)",
     mustFail: "  ...after which live is allowed, even with a fresh compare run since (the runbook's order)" },
 
+  // ---- who may reach the copy, and what it says (review, 2026-10-13)
+  { guard: "a public action in a convex/ subfolder hands out the whole copy", file: "convex/peek/boardPeek.ts", test: E2E,
+    create: 'import { action } from "../_generated/server";\nimport { internal } from "../_generated/api";\n' +
+      "export const peek = action({ args: {}, handler: async (ctx) => await ctx.runQuery(internal.leaderboardSnapshot.storedSnapshot, {}) });\n",
+    mustFail: "nothing outside leaderboardSnapshot.ts calls its functions, in any convex/ folder (the cron's tick excepted)" },
+  { guard: "configure hands back the pilot's addresses and ids", file: SNAP, test: E2E,
+    from: "      pilot = { ids: unique.length, fromEmails, unmatched, ambiguous, sampled };",
+    to: "      pilot = { ids: unique.length, fromEmails, unmatched, ambiguous, sampled, ...(a.pilotEmails ? { emails: a.pilotEmails, idList: unique } : {}) } as any;",
+    mustFail: "configure with pilotEmails answers in counts only: no address, id or name" },
+  { guard: "the tick reads the 65 KB copy every time it fires", file: SNAP, test: E2E,
+    from: "  const config = await loadConfig(ctx);\n  const state = await loadState(ctx);\n",
+    to: "  const config = await loadConfig(ctx);\n  const state = await loadState(ctx);\n  await snapshotDoc(ctx);\n",
+    mustFail: "  ...and the tick read the switch, the state and the bell schedule, never the 65 KB copy" },
+
   // ---- the rules
   { guard: "a logic compare of an older copy format unlocks live", file: RULES, test: RULES_TEST,
     from: "  if (c.version !== LEADERBOARD_SNAPSHOT_VERSION) {", to: "  if (false) {",
@@ -169,9 +185,31 @@ try {
     }
   }
 
+  const judge = (c) => {
+    const r = run(c.test);
+    if (r.status !== 0 && has(r, "FAIL", c.mustFail)) {
+      say(`  PASS  ${c.guard}  ->  "${c.mustFail}" fails`);
+    } else {
+      bad++;
+      say(`  FAIL  ${c.guard}: "${c.mustFail}" did not fail (exit ${r.status})`);
+      if (r.status !== 0 && !has(r, "FAIL", c.mustFail)) say(String(r.stderr || "").slice(0, 400));
+    }
+  };
+
   say("\nEACH GUARD BROKEN IN TURN: its check must fail\n");
   for (const c of RUN) {
     const path = join(scratch, c.file);
+    if (c.create !== undefined) {
+      if (existsSync(path)) {
+        bad++;
+        say(`  FAIL  ${c.guard}: ${c.file} already exists, so it cannot be the new file this case adds`);
+        continue;
+      }
+      mkdirSync(dirname(path), { recursive: true });
+      writeFileSync(path, c.create);
+      try { judge(c); } finally { rmSync(path, { force: true }); }
+      continue;
+    }
     const original = readFileSync(path, "utf8");
     const at = original.indexOf(c.from);
     if (at < 0 || original.indexOf(c.from, at + 1) >= 0) {
@@ -181,14 +219,7 @@ try {
     }
     writeFileSync(path, original.slice(0, at) + c.to + original.slice(at + c.from.length));
     try {
-      const r = run(c.test);
-      if (r.status !== 0 && has(r, "FAIL", c.mustFail)) {
-        say(`  PASS  ${c.guard}  ->  "${c.mustFail}" fails`);
-      } else {
-        bad++;
-        say(`  FAIL  ${c.guard}: "${c.mustFail}" did not fail (exit ${r.status})`);
-        if (r.status !== 0 && !has(r, "FAIL", c.mustFail)) say(String(r.stderr || "").slice(0, 400));
-      }
+      judge(c);
     } finally {
       writeFileSync(path, original);
     }
