@@ -6,10 +6,15 @@
 //
 // Run: npm test
 
-import { cashLeaderboard, gradeNumber, studentIdOf, LEADERBOARD_BANDS } from "./leaderboardRules.ts";
+import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
+import {
+  cashLeaderboard, gradeNumber, studentIdOf, LEADERBOARD_BANDS,
+  compactStudent, duplicateIds, placeViewer, LEADERBOARD_SNAPSHOT_VERSION,
+} from "./leaderboardRules.ts";
 
 let pass = 0, fail = 0;
-const check = (n, c) => { c ? (pass++, console.log(`  PASS  ${n}`)) : (fail++, console.log(`  FAIL  ${n}`)); };
+const check = (n, c, why) => { c ? (pass++, console.log(`  PASS  ${n}`)) : (fail++, console.log(`  FAIL  ${n}${why ? "  (" + why + ")" : ""}`)); };
 
 const S = (id, first, last, grade, earned, extra) =>
   Object.assign({ legacyId: id, firstName: first, lastName: last, grade, wildcatCashEarned: earned }, extra || {});
@@ -192,6 +197,194 @@ console.log("\n-- bad input --");
   });
   check("a viewer genuinely in another band still reads as out of band",
     otherBand.viewer.rank === null && otherBand.viewer.inBand === false);
+}
+
+// ===========================================================================
+// THE STORED COPY (2026-10-13). leaderboard:cash now ranks from a copy of
+// what the ranking reads (compactStudent), with the viewer's own row read
+// live (placeViewer). Every assertion below compares the copy's answer with
+// the answer the live read gives on the same rows: the copy is only allowed
+// to be OLD, never different.
+// ===========================================================================
+
+// A school built to break a copy: ties on amount and on name, every kind of
+// bad figure, leavers, a missing studentNumber, odd grades, padded ids, a
+// shared id, and identity through each of legacyId, studentNumber and _id.
+// Invented names only.
+let made = 0;
+const SCHOOL = [];
+const raw = (o) => { made++; SCHOOL.push({ _id: "k" + made, _creationTime: 1000 + made, firstName: "F" + made, lastName: "L" + made, ...o }); };
+{
+  const amts = [50, 50, 80, 20, 80, 0, 0, null, undefined, NaN, -5, Infinity, 15, 15, 15, 1e-9, 3.3333333];
+  const grades = ["9", "11", "7", "6", " 09 ", "Grade 9", "K", undefined, "12", "8", "10"];
+  for (let i = 0; i < 200; i++) {
+    const o = { wildcatCashEarned: amts[i % amts.length], grade: grades[i % grades.length] };
+    if (i % 3 === 0) o.legacyId = "LG" + i;
+    if (i % 4 !== 1) o.studentNumber = "SN" + i;
+    if (i % 17 === 0) { o.firstName = "Same"; o.lastName = "Name"; }
+    if (i % 29 === 0) o.legacyId = "  LG" + i + " ";
+    raw(o);
+  }
+  raw({ legacyId: "DUP", studentNumber: "SNd1", wildcatCashEarned: 40, grade: "9" });
+  raw({ legacyId: "DUP", studentNumber: "SNd2", wildcatCashEarned: 40, grade: "9" });
+  for (let i = 0; i < 150; i++) raw({ legacyId: "D" + i, studentNumber: "SND" + i, wildcatCashEarned: 1 + (i % 7), grade: String(6 + (i % 7)) });
+}
+// Enrolment as the live read derives it: a roster row for the studentNumber.
+const enrolledOf = (r) => Boolean(r.studentNumber) && !/7$/.test(r.studentNumber);
+const LIVE = SCHOOL.map((r) => ({ ...r, enrolled: enrolledOf(r) }));
+const ROWS = SCHOOL.map((r) => compactStudent(r, enrolledOf(r)));
+const SNAP = { rows: ROWS, dupIds: duplicateIds(ROWS), newestCreationTime: SCHOOL[SCHOOL.length - 1]._creationTime };
+const viewerOf = (r, over) => {
+  const me = { ...r, ...(over || {}) };
+  return { id: studentIdOf(me), row: compactStudent(me, over && "enrolled" in over ? over.enrolled : enrolledOf(r)), creationTime: me._creationTime };
+};
+const J = (x) => JSON.stringify(x);
+
+console.log("\n-- the copy ranks every viewer exactly as the live read does --");
+{
+  const BANDS = ["academy", "hs", "ms", "HS", "", undefined, "bogus"];
+  const TOPS = [undefined, 0, -1, 1, 2.5, 10, 50, 51, Infinity, NaN];
+  let comparisons = 0, mismatches = 0, fallbacks = 0, firstBad = "";
+  for (const me of SCHOOL) {
+    const placed = placeViewer(SNAP, viewerOf(me));
+    if (!placed.ok) { fallbacks++; continue; }
+    for (const band of BANDS) for (const topN of TOPS) {
+      const a = cashLeaderboard({ students: placed.students, band, topN: topN ?? 10, viewerId: studentIdOf(me) });
+      const b = cashLeaderboard({ students: LIVE, band, topN: topN ?? 10, viewerId: studentIdOf(me) });
+      comparisons++;
+      if (J(a) !== J(b)) { mismatches++; firstBad = firstBad || `band ${String(band)} topN ${String(topN)}`; }
+    }
+  }
+  check("THE COPY RANKS EVERY VIEWER EXACTLY AS THE LIVE READ: every band and topN",
+    comparisons > 20000 && mismatches === 0, `${mismatches} of ${comparisons} differ; first at ${firstBad}`);
+  check("  ...and only the two students who share an id are ranked live instead", fallbacks === 2, String(fallbacks));
+  check("the shared id is found", J(SNAP.dupIds) === J(["DUP"]));
+}
+
+console.log("\n-- the viewer's own row is always live --");
+{
+  // A change to the viewer since the build: their answer must be the one the
+  // live read gives with that change, whatever the copy says about them.
+  const changes = [
+    ["earned more", (r) => ({ wildcatCashEarned: 999 })],
+    ["earned dropped to zero", () => ({ wildcatCashEarned: 0 })],
+    ["left the school", () => ({ enrolled: false })],
+    ["moved to grade 10", () => ({ grade: "10" })],
+    ["renamed", () => ({ firstName: "Renamed", lastName: "Aaa" })],
+  ];
+  let compared = 0, bad = 0, why = "";
+  for (const [label, change] of changes) {
+    for (const me of SCHOOL.slice(0, 80)) {
+      const over = change(me);
+      const v = viewerOf(me, over);
+      const placed = placeViewer(SNAP, v);
+      if (!placed.ok) continue;
+      const liveNow = SCHOOL.map((r) => r === me
+        ? { ...r, ...over, enrolled: "enrolled" in over ? over.enrolled : enrolledOf(r) }
+        : { ...r, enrolled: enrolledOf(r) });
+      for (const band of ["academy", "hs", "ms"]) {
+        compared++;
+        if (J(cashLeaderboard({ students: placed.students, band, topN: 10, viewerId: v.id })) !==
+            J(cashLeaderboard({ students: liveNow, band, topN: 10, viewerId: v.id }))) { bad++; why = why || label; }
+      }
+    }
+  }
+  check("the viewer's own changes since the build give the live answer (earned, zeroed, left, regraded, renamed)",
+    compared > 1000 && bad === 0, `${bad} of ${compared}; first: ${why}`);
+
+  const NEW = { _id: "new1", _creationTime: SNAP.newestCreationTime + 5, legacyId: "NEW", studentNumber: "SNnew",
+    firstName: "Nu", lastName: "Ew", grade: "9", wildcatCashEarned: 15 };
+  const placedNew = placeViewer(SNAP, { id: "NEW", row: compactStudent(NEW, true), creationTime: NEW._creationTime });
+  check("a student added since the build joins at the end, which is their live place",
+    placedNew.ok && J(cashLeaderboard({ students: placedNew.students, band: "hs", topN: 50, viewerId: "NEW" })) ===
+      J(cashLeaderboard({ students: [...LIVE, { ...NEW, enrolled: true }], band: "hs", topN: 50, viewerId: "NEW" })));
+  const old = SCHOOL[5];
+  const renumbered = placeViewer(SNAP, { id: "CHANGED", row: compactStudent({ ...old, legacyId: "CHANGED" }, true), creationTime: old._creationTime });
+  check("an old viewer the copy does not know (their id changed) is ranked live: viewer-unplaced",
+    !renumbered.ok && renumbered.why === "viewer-unplaced");
+  const dup = SCHOOL.find((r) => r.legacyId === "DUP");
+  const d1 = placeViewer(SNAP, viewerOf(dup));
+  check("a viewer whose id two rows share is ranked live: viewer-duplicated", !d1.ok && d1.why === "viewer-duplicated");
+  const late = placeViewer(SNAP, { id: studentIdOf(SCHOOL[3]), row: ROWS[3], creationTime: SNAP.newestCreationTime + 1 });
+  check("a new row carrying an id the copy already holds is ranked live too", !late.ok && late.why === "viewer-duplicated");
+  const placedSame = placeViewer(SNAP, viewerOf(SCHOOL[10]));
+  check("the viewer's row is replaced where it stood, so ties break as they do live",
+    placedSame.ok && placedSame.students.length === ROWS.length && placedSame.students[10] !== ROWS[10] &&
+    J(placedSame.students[10]) === J(ROWS[10]));
+}
+
+console.log("\n-- the copy holds only what the ranking reads --");
+{
+  // THE FIELD-ACCESS RATCHET. Every field cashLeaderboard reads off a student
+  // must be one the copy keeps (or one studentIdOf only falls back to when
+  // `id` is missing, which in the copy it never is). A rule that starts
+  // reading a new field would silently rank from a copy that lacks it.
+  const ALLOWED = ["_id", "enrolled", "firstName", "grade", "id", "lastName", "legacyId", "studentNumber", "wildcatCashEarned"];
+  const seen = new Set();
+  const watched = LIVE.map((r) => new Proxy(r, { get(o, k) { if (typeof k === "string") seen.add(k); return o[k]; } }));
+  for (const band of ["academy", "hs", "ms"]) {
+    cashLeaderboard({ students: watched, band, topN: 50, viewerId: "LG3" });
+    cashLeaderboard({ students: watched, band, topN: 50, viewerId: "nobody" });
+  }
+  const extra = [...seen].filter((k) => !ALLOWED.includes(k));
+  check("cashLeaderboard reads only the fields the copy keeps",
+    extra.length === 0 && seen.has("wildcatCashEarned") && seen.has("grade"),
+    `it now reads ${extra.join(", ")}: add it to compactStudent and bump the version`);
+
+  // THE VERSION PIN. A copy written by an older compactStudent is never
+  // served, but only if the version moves when compactStudent does. The pin
+  // is the source text of compactStudent and the two helpers whose output it
+  // stores, with the version; editing one without the other fails here.
+  const src = readFileSync(new URL("./leaderboardRules.ts", import.meta.url), "utf8");
+  const fnText = (name) => {
+    const at = src.search(new RegExp(`export function ${name}\\(`));
+    if (at < 0) return "";
+    const open = src.indexOf("{", src.indexOf(")", at));
+    let depth = 0;
+    for (let i = open; i < src.length; i++) {
+      if (src[i] === "{") depth++;
+      else if (src[i] === "}" && --depth === 0) return src.slice(at, i + 1);
+    }
+    return "";
+  };
+  const body = ["compactStudent", "earnedOf", "studentIdOf"].map(fnText);
+  const hash = createHash("sha256").update(body.map((b) => b.replace(/\s+/g, " ")).join("\n")).digest("hex").slice(0, 16);
+  const PINNED = { version: 1, hash: "595a47853a3a4f41" };
+  check("the copy's version is pinned to compactStudent: change one, change both",
+    body.every(Boolean) && LEADERBOARD_SNAPSHOT_VERSION === PINNED.version && hash === PINNED.hash,
+    `version ${LEADERBOARD_SNAPSHOT_VERSION}, hash ${hash}. If compactStudent changed on purpose, bump ` +
+    `LEADERBOARD_SNAPSHOT_VERSION and pin { version, hash } here`);
+
+  const shape = ROWS.every((r) => Object.keys(r).every((k) => ["id", "enrolled", "firstName", "lastName", "grade", "wildcatCashEarned"].includes(k)));
+  check("no row holds a field outside the stored validator", shape);
+  const leavers = ROWS.filter((r) => r.enrolled === false);
+  check("a student who has left is held as { id, enrolled: false } and nothing else",
+    leavers.length > 20 && leavers.every((r) => J(Object.keys(r).sort()) === J(["enrolled", "id"])));
+  const unranked = ROWS.filter((r) => r.enrolled !== false && !(r.wildcatCashEarned > 0));
+  check("rows with zero or unknown earnings hold no names",
+    unranked.length > 20 && unranked.every((r) => !("firstName" in r) && !("lastName" in r)));
+  check("  ...while every earner keeps both names", ROWS.filter((r) => r.wildcatCashEarned > 0).every((r) => r.firstName && r.lastName));
+  check("an unknown figure is stored as null, never as zero",
+    compactStudent({ legacyId: "U", wildcatCashEarned: NaN }, true).wildcatCashEarned === null &&
+    compactStudent({ legacyId: "U", wildcatCashEarned: -5 }, true).wildcatCashEarned === null &&
+    compactStudent({ legacyId: "U" }, true).wildcatCashEarned === null);
+  check("every row is known by an id, and the copy's id is the raw row's", ROWS.every((r, i) => r.id && r.id === studentIdOf(SCHOOL[i])));
+  check("the grade is kept as written (bands read the raw string)", compactStudent({ legacyId: "G", grade: " 09 ", wildcatCashEarned: 3 }, true).grade === " 09 ");
+}
+
+console.log("\n-- ONLY THE TOP ARE NAMED, through the copy too --");
+{
+  const many = [];
+  for (let i = 0; i < 200; i++) many.push(S("X" + i, "First" + i, "Last" + i, "9", 200 - i, { _creationTime: i + 1 }));
+  const rows = many.map((r) => compactStudent(r, true));
+  const snap = { rows, dupIds: duplicateIds(rows), newestCreationTime: 200 };
+  const me = many[150];
+  const placed = placeViewer(snap, { id: "X150", row: compactStudent(me, true), creationTime: me._creationTime });
+  const r = cashLeaderboard({ students: placed.students, band: "academy", topN: 10, viewerId: "X150" });
+  const names = JSON.stringify(r);
+  check("through the copy, the viewer deep down still learns their place", placed.ok && r.viewer.rank === 151 && r.top.length === 10);
+  check("and a student ranked 151st is not named in the payload", !names.includes("First150"));
+  check("nor is anyone below the top ten", !names.includes("First11"));
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

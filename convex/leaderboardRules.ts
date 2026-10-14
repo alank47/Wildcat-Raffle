@@ -74,7 +74,7 @@ export function studentIdOf(s: LeaderStudent): string {
  * unknown, and rendering unknown as zero puts a child at the bottom of a board
  * their whole year group can see, on the strength of a missing field.
  */
-function earnedOf(s: LeaderStudent): number | null {
+export function earnedOf(s: LeaderStudent): number | null {
   const v = s?.wildcatCashEarned;
   return typeof v === "number" && Number.isFinite(v) && v >= 0 ? v : null;
 }
@@ -201,4 +201,122 @@ export function cashLeaderboard(opts: {
     })),
     viewer,
   };
+}
+
+// ===========================================================================
+// The stored copy the board is ranked from (leaderboardSnapshot.ts, 2026-10-13)
+// ===========================================================================
+
+/**
+ * BUMP THIS WHENEVER compactStudent CHANGES WHAT IT KEEPS. A stored copy whose
+ * version is not this one is never served (leaderboard.ts goes live) and the
+ * next tick rebuilds it, so a deploy that changes the copy can never rank
+ * students from rows written by the old rule. leaderboardRules.test.mjs pins
+ * this number to the text of compactStudent: editing one without the other
+ * fails the tests.
+ */
+export const LEADERBOARD_SNAPSHOT_VERSION = 1;
+
+/** One student as the stored copy holds them. The schema validator admits nothing else. */
+export type SnapRow = {
+  id: string;
+  enrolled?: false;
+  firstName?: string;
+  lastName?: string;
+  grade?: string;
+  wildcatCashEarned?: number | null;
+};
+
+/**
+ * WHAT cashLeaderboard READS OF ONE STUDENT, AND NOTHING ELSE.
+ *
+ * WHY A COPY AT ALL. Ranking needs every student, and a student row carries
+ * that child's whole cash history. Reading every row on every portal open was
+ * 4.88 MiB a call on 2026-10-13 and growing by about 0.9 MiB a school week,
+ * towards Convex's 16 MiB wall around January. The ranking itself reads nine
+ * fields (measured by a Proxy in leaderboardRules.test.mjs), so a copy of
+ * those, about 65 KB for the whole school, gives the same answer.
+ *
+ * WHY EACH FIELD IS KEPT THE WAY IT IS:
+ *   - `id` is studentIdOf(raw), already trimmed, and studentIdOf checks `id`
+ *     first, so the copy is known by exactly the identity the raw row was.
+ *   - A student who has left keeps their id and `enrolled: false` and nothing
+ *     else: the ranking drops them before reading anything more, and a name
+ *     kept here would be a former student's name sitting in a document their
+ *     old classmates' board is built from.
+ *   - The amount is stored as earnedOf reads it (a real figure, or null), so
+ *     unknown stays unknown and is never turned into a zero.
+ *   - `grade` is kept exactly as written, " 09 " and all, because the band
+ *     test and the grade shown beside a name both read the raw string.
+ *   - Names only for a student who has earned something. The ranking reads a
+ *     name only to sort and show the ranked, and a zero or unknown figure is
+ *     never ranked, so those names would be stored for no reader.
+ */
+export function compactStudent(raw: LeaderStudent, enrolled: boolean): SnapRow {
+  const id = studentIdOf(raw);
+  if (!enrolled) return { id, enrolled: false };
+  const amount = earnedOf(raw);
+  const row: SnapRow = { id, wildcatCashEarned: amount };
+  if (typeof raw.grade === "string") row.grade = raw.grade;
+  if (amount !== null && amount > 0) {
+    if (typeof raw.firstName === "string") row.firstName = raw.firstName;
+    if (typeof raw.lastName === "string") row.lastName = raw.lastName;
+  }
+  return row;
+}
+
+/** Ids held by more than one row. Expected empty; each one's owner is ranked live instead. */
+export function duplicateIds(rows: ReadonlyArray<{ id: string }>): string[] {
+  const seen = new Set<string>();
+  const twice = new Set<string>();
+  for (const r of rows) {
+    if (seen.has(r.id)) twice.add(r.id);
+    else seen.add(r.id);
+  }
+  return [...twice];
+}
+
+export type PlaceResult =
+  | { ok: true; students: SnapRow[] }
+  | { ok: false; why: "viewer-duplicated" | "viewer-unplaced" };
+
+/**
+ * THE STORED COPY WITH THE VIEWER'S OWN ROW READ LIVE, or the reason it cannot
+ * be built.
+ *
+ * THE VIEWER IS ALWAYS LIVE, because what a child checks first is their own
+ * number. A student awarded a minute ago must see their new place and the
+ * same amount the "Earned all year" figure beside the board shows, not the
+ * one from the last build. Only other students' figures can be as old as the
+ * copy.
+ *
+ * AT THE SAME PLACE IN THE LIST, not moved to the end, because ties on equal
+ * amount and equal name keep the order rows were stored in (the sort is
+ * stable), and that order is the order the live read returns them in.
+ *
+ * WHEN IT REFUSES, the caller ranks live for that one call:
+ *   - an id two rows share: the live ranking takes the first of them in
+ *     ranked order, and a copy cannot say which row is this viewer;
+ *   - a viewer created after the build whose id is already in the copy: the
+ *     same, a second row with an old id;
+ *   - a viewer from before the build who is not in it: their id changed since
+ *     (a legacyId set, say), and adding them would count them twice.
+ * A viewer created after the build and not in it is new, and is added at the
+ * end, which is where the live read would return them.
+ */
+export function placeViewer(
+  snap: { rows: ReadonlyArray<SnapRow>; dupIds: ReadonlyArray<string>; newestCreationTime: number },
+  viewer: { id: string; row: SnapRow; creationTime: number },
+): PlaceResult {
+  if (snap.dupIds.includes(viewer.id)) return { ok: false, why: "viewer-duplicated" };
+  const at = snap.rows.findIndex((r) => r.id === viewer.id);
+  const isNew = viewer.creationTime > snap.newestCreationTime;
+  if (at >= 0 && isNew) return { ok: false, why: "viewer-duplicated" };
+  if (at >= 0) {
+    const students = snap.rows.slice();
+    students[at] = viewer.row;
+    return { ok: true, students };
+  }
+  if (isNew) return { ok: true, students: [...snap.rows, viewer.row] };
+  return { ok: false, why: "viewer-unplaced" };
 }
