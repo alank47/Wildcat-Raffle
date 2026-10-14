@@ -242,4 +242,38 @@ crons.cron(
   {},
 );
 
+/**
+ * THE LEADERBOARD'S STORED COPY (build spec 2026-10-13). See
+ * leaderboardSnapshot.ts.
+ *
+ * At :03, :18, :33 and :48 -- minutes no other job uses -- every hour EXCEPT
+ * that the main line skips 13:00-13:59 and 19:00-19:59 UTC, and the second
+ * line puts back only :03 and :18 of those hours. So it never fires inside
+ * 13:25-14:00 or 19:25-20:00 UTC, the sync windows; the tick also refuses
+ * 13:03 and 19:03, while the sync is replacing the roster, which leaves 13:18
+ * and 19:18 for the first board after each sync.
+ *
+ * THE HANDLER NEVER TRUSTS THE HOUR IT FIRED AT. It turns now into the
+ * school's wall clock to pick the cadence (every 15 minutes on a weekday from
+ * 06:45 to 16:30 school time, every 6 hours otherwise), and measures the
+ * board's age in UTC, so the 1 November clock change cannot move it.
+ *
+ * IT DOES NOTHING UNTIL IT IS TURNED ON:
+ *   npx convex run --prod leaderboardSnapshot:configure '{"mode":"shadow","actorName":"..."}'
+ * Switched off (the default, and what a missing config row means), each
+ * firing reads two small rows and stops.
+ */
+crons.cron(
+  "leaderboard snapshot",
+  "3,18,33,48 0-12,14-18,20-23 * * *",
+  internal.leaderboardSnapshot.tick,
+  {},
+);
+crons.cron(
+  "leaderboard snapshot (sync hours)",
+  "3,18 13,19 * * *",
+  internal.leaderboardSnapshot.tick,
+  {},
+);
+
 export default crons;

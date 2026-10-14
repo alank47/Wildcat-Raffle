@@ -276,6 +276,18 @@ console.log("\n3. The scan has teeth");
   check("a students collect planted inside leaderboard:cash is caught as unlisted",
     inCash["leaderboard.ts"] !== files["leaderboard.ts"] && caughtCash.some((s) => s.file === "leaderboard.ts" && s.decl === "cash"),
     JSON.stringify(caughtCash.map((s) => s.decl)));
+  // The builder's pages read the whole table on purpose: they are reached
+  // only from the cron's action. A public function that runs one is a path
+  // from a browser to every student row.
+  const viaPage = { ...files, "leaderboardSnapshot.ts": files["leaderboardSnapshot.ts"] +
+    "\nexport const front = action({ args: {}, handler: async (ctx) => await ctx.runQuery(internal.leaderboardSnapshot.compactPage, { cursor: null }) });\n" };
+  const caughtPage = scan(viaPage).filter((s) => s.reachable && !s.bounded && !ALLOWED[sigOf(s)]);
+  check("a public action that runs leaderboardSnapshot.compactPage is caught",
+    caughtPage.some((s) => s.file === "leaderboardSnapshot.ts" && s.decl === "compactPage"),
+    JSON.stringify(caughtPage.map((s) => s.decl)));
+  check("  ...while the shipped builder's pages are reached by no browser",
+    sites.filter((s) => s.file === "leaderboardSnapshot.ts" && s.table === "students").every((s) => !s.reachable) &&
+    sites.some((s) => s.file === "leaderboardSnapshot.ts" && s.decl === "compactPage"));
 
   const commented = { ...files, "leaderboard.ts": files["leaderboard.ts"] +
     "\n// const x = await ctx.db.query(\"students\").collect();\n/* await ctx.db.query(\"legacyMirror\").collect(); */\n" };

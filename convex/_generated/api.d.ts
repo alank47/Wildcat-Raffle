@@ -57,6 +57,8 @@ import type * as identity from "../identity.js";
 import type * as identityRules from "../identityRules.js";
 import type * as leaderboard from "../leaderboard.js";
 import type * as leaderboardRules from "../leaderboardRules.js";
+import type * as leaderboardSnapshot from "../leaderboardSnapshot.js";
+import type * as leaderboardSnapshotRules from "../leaderboardSnapshotRules.js";
 import type * as legacyData from "../legacyData.js";
 import type * as legacyPurge from "../legacyPurge.js";
 import type * as lookupRules from "../lookupRules.js";
@@ -182,6 +184,8 @@ declare const fullApi: ApiFromModules<{
   identityRules: typeof identityRules;
   leaderboard: typeof leaderboard;
   leaderboardRules: typeof leaderboardRules;
+  leaderboardSnapshot: typeof leaderboardSnapshot;
+  leaderboardSnapshotRules: typeof leaderboardSnapshotRules;
   legacyData: typeof legacyData;
   legacyPurge: typeof legacyPurge;
   lookupRules: typeof lookupRules;
