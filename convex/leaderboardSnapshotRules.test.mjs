@@ -134,6 +134,10 @@ try {
     check("a persistent failure off hours backs off: failing 2 hours, last try 30 minutes ago, no build",
       backoff.build === false && /^backoff/.test(backoff.why), J(backoff));
     check("  ...and tries again once the last try is the off-hours cadence old", decide(SAT, 600, { extra: failing(400, 360) }).build === true);
+    // Capped at an hour, so a fault that clears is noticed within the hour
+    // rather than at the next six-hourly build (review, 2026-10-13).
+    check("  ...but never waits more than an hour between tries: last try 60 minutes ago builds, 50 does not",
+      decide(SAT, 600, { extra: failing(120, 60) }).build === true && decide(SAT, 600, { extra: failing(120, 50) }).build === false);
     check("  ...inside the hour's grace every tick still retries", decide(SAT, 600, { extra: failing(30, 15) }).build === true);
     check("  ...in school hours the 15-minute cadence is the retry", decide(TUE_0803, 600, { extra: failing(120, 15, TUE_0803) }).build === true &&
       decide(TUE_0803, 600, { extra: failing(120, 5, TUE_0803) }).build === false);

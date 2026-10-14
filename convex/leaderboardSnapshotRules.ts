@@ -70,6 +70,13 @@ export const SCHOOL_TO_MINUTE = 16 * 60 + 30;
  * the :33, doubling the cadence.
  */
 export const CADENCE_SLACK_MINUTES = 5;
+/**
+ * The longest a failing build waits before trying again. Without a cap the
+ * backoff waited the whole off-hours cadence, so a fault that cleared at 23:30
+ * kept the board on the live read until about 05:00 (review, 2026-10-13).
+ * Hourly costs about one build an hour while something is really broken.
+ */
+export const BACKOFF_RETRY_MAX_MINUTES = 60;
 
 export type Mode = "off" | "shadow" | "pilot" | "live";
 export type Serve = "none" | "pilot" | "all";
@@ -306,12 +313,14 @@ export type TickDecision = { build: boolean; markStale: null | "failing" | "stal
  *   7. otherwise by age: schoolEveryMinutes on a weekday from 06:45 to 16:30
  *      school time, offHoursEveryMinutes otherwise, each less the slack;
  *   8. but BACK OFF a persistent failure: once builds have failed for
- *      failGraceMinutes, try again only when the last try is that same
- *      cadence old. Age is measured from the last GOOD build, so without
- *      this a refusal that kept happening re-read every student at every
- *      tick, nights and weekends included (about 66 builds on a Saturday
- *      instead of 4). Inside the grace every tick still retries, so a one-off
- *      refusal costs one cadence at most. (Review, 2026-10-13.)
+ *      failGraceMinutes, try again only when the last try is that cadence
+ *      old, or BACKOFF_RETRY_MAX_MINUTES if that is shorter. Age is measured
+ *      from the last GOOD build, so without this a refusal that kept
+ *      happening re-read every student at every tick, nights and weekends
+ *      included (88 builds on a Saturday). Inside the grace every tick still
+ *      retries. The trade: once the copy has been marked failing, a fault
+ *      that clears keeps students on the live read until the next retry, up
+ *      to an hour off hours (one tick in school hours). (Review, 2026-10-13.)
  * Age is measured in UTC milliseconds, so the 1 November clock change cannot
  * move it; only which cadence applies is read off the school's wall clock.
  * With no time zone set, the school cadence applies (erring towards a fresher
@@ -352,7 +361,8 @@ export function decideSnapshotTick(input: {
   if (age !== null && age < every - CADENCE_SLACK_MINUTES) return none(`fresh (${label}${tzWhy})`);
   const failingFor = minutesSince(state.firstFailAt, nowMs);
   const lastTry = state.lastAttempt && state.lastAttempt.ok === false ? minutesSince(state.lastAttempt.at, nowMs) : null;
-  if (failingFor !== null && failingFor >= config.failGraceMinutes && lastTry !== null && lastTry < every - CADENCE_SLACK_MINUTES) {
+  const retryEvery = Math.min(every, BACKOFF_RETRY_MAX_MINUTES);
+  if (failingFor !== null && failingFor >= config.failGraceMinutes && lastTry !== null && lastTry < retryEvery - CADENCE_SLACK_MINUTES) {
     return none(`backoff (${label}${tzWhy})`);
   }
   return go(`${label}${tzWhy}`);
@@ -502,6 +512,19 @@ export type CompareCounts = {
 };
 
 /**
+ * ONE STORED ROW AS A FIXED-ORDER KEY, for "has this row changed since the
+ * build". Not JSON.stringify of the row: Convex hands documents back with
+ * their keys sorted, and compactStudent writes them in its own order, so a
+ * stringify compared every unchanged row as changed (review, 2026-10-13).
+ */
+export function snapRowKey(r: Partial<SnapRow> | undefined): string {
+  const x = (r ?? {}) as Partial<SnapRow>;
+  return JSON.stringify([
+    x.id ?? null, x.t ?? null, x.enrolled === false, x.firstName ?? null, x.lastName ?? null, x.grade ?? null, x.wildcatCashEarned ?? null,
+  ]);
+}
+
+/**
  * EVERY STUDENT AS THE VIEWER, every band, the top 10 and the top 50: the
  * board leaderboard:cash would serve from the copy against the board the live
  * read gives, on the same read of the students table. COUNTS ONLY: which
@@ -523,19 +546,6 @@ export type CompareCounts = {
  * leaderboard:cash ranks that viewer live, so their answer is live by
  * construction.
  */
-/**
- * ONE STORED ROW AS A FIXED-ORDER KEY, for "has this row changed since the
- * build". Not JSON.stringify of the row: Convex hands documents back with
- * their keys sorted, and compactStudent writes them in its own order, so a
- * stringify compared every unchanged row as changed (review, 2026-10-13).
- */
-export function snapRowKey(r: Partial<SnapRow> | undefined): string {
-  const x = (r ?? {}) as Partial<SnapRow>;
-  return JSON.stringify([
-    x.id ?? null, x.t ?? null, x.enrolled === false, x.firstName ?? null, x.lastName ?? null, x.grade ?? null, x.wildcatCashEarned ?? null,
-  ]);
-}
-
 export function compareSnapshot(
   live: ReadonlyArray<Record<string, any>>,
   kind: "logic" | "fresh",

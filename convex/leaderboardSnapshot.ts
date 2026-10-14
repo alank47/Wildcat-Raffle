@@ -252,7 +252,8 @@ async function bookBuild(ctx: MutationCtx, trigger: string, force: boolean): Pro
 
 /**
  * The cron's handler (crons.ts). Switched off -- the repo default, and what a
- * missing config row means -- it reads two small rows and stops.
+ * missing config row means -- it reads two small rows and stops, plus one
+ * index lookup for the copy until a copy's id has been linked (relinkCopy).
  */
 export const tick = internalMutation({
   args: {},

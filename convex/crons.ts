@@ -261,7 +261,8 @@ crons.cron(
  * IT DOES NOTHING UNTIL IT IS TURNED ON:
  *   npx convex run --prod leaderboardSnapshot:configure '{"mode":"shadow","actorName":"..."}'
  * Switched off (the default, and what a missing config row means), each
- * firing reads two small rows and stops.
+ * firing reads two small rows and stops (plus one index lookup for the
+ * copy, until a copy's id has been linked).
  */
 crons.cron(
   "leaderboard snapshot",
