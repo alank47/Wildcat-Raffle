@@ -511,6 +511,19 @@ export type CompareCounts = {
  * leaderboard:cash ranks that viewer live, so their answer is live by
  * construction.
  */
+/**
+ * ONE STORED ROW AS A FIXED-ORDER KEY, for "has this row changed since the
+ * build". Not JSON.stringify of the row: Convex hands documents back with
+ * their keys sorted, and compactStudent writes them in its own order, so a
+ * stringify compared every unchanged row as changed (review, 2026-10-13).
+ */
+export function snapRowKey(r: Partial<SnapRow> | undefined): string {
+  const x = (r ?? {}) as Partial<SnapRow>;
+  return JSON.stringify([
+    x.id ?? null, x.enrolled === false, x.firstName ?? null, x.lastName ?? null, x.grade ?? null, x.wildcatCashEarned ?? null,
+  ]);
+}
+
 export function compareSnapshot(
   live: ReadonlyArray<Record<string, any>>,
   kind: "logic" | "fresh",
@@ -527,7 +540,7 @@ export function compareSnapshot(
   let rowsChangedSinceBuild = 0;
   if (kind === "fresh" && stored) {
     compactLive.forEach((row, i) => {
-      if (i >= stored.rows.length || JSON.stringify(row) !== JSON.stringify(stored.rows[i])) rowsChangedSinceBuild++;
+      if (i >= stored.rows.length || snapRowKey(row) !== snapRowKey(stored.rows[i])) rowsChangedSinceBuild++;
     });
   }
   const byField = Object.fromEntries(RESULT_FIELDS.map((f) => [f, 0])) as CompareCounts["byField"];

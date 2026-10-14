@@ -208,6 +208,26 @@ try {
       sample.every((id) => rows.find((r) => r.id === id).enrolled !== false) && !sample.includes("x1") &&
       new Set(sample).size === 10 && J(R.spreadSample(rows, ["x1"], 10)) === J(sample));
   }
+
+  console.log("\n-- the compare counts rows changed since the build by content, not key order --");
+  {
+    // Convex returns a stored document with its keys sorted; compactStudent
+    // writes them in its own order. Only a change of content may count.
+    const { compactStudent } = loaded.mods.leaderboardRules;
+    const live = Array.from({ length: 40 }, (_, i) => ({
+      _id: "students:" + i, _creationTime: 100 + i, legacyId: "KO" + i, firstName: "Kofirst" + i, lastName: "Kolast" + i,
+      grade: String(6 + (i % 7)), wildcatCashEarned: i % 5 === 0 ? 0 : 10 + i, enrolled: i % 8 !== 3,
+    }));
+    const sorted = (o) => Object.fromEntries(Object.keys(o).sort().map((k) => [k, o[k]]));
+    const rows = live.map((r) => sorted(compactStudent(r, r.enrolled)));
+    const stored = { rows, dupIds: [], newestCreationTime: 139 };
+    const same = R.compareSnapshot(live, "fresh", stored);
+    const moved = live.map((r, i) => (i === 7 ? { ...r, wildcatCashEarned: 999 } : r));
+    const one = R.compareSnapshot(moved, "fresh", stored);
+    check("rowsChangedSinceBuild ignores key order: 0 right after a build, 1 after one award",
+      same.rowsChangedSinceBuild === 0 && one.rowsChangedSinceBuild === 1 && same.differ === 0,
+      J([same.rowsChangedSinceBuild, one.rowsChangedSinceBuild, same.differ]));
+  }
 } finally {
   loaded.cleanup();
 }
