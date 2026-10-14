@@ -103,6 +103,15 @@ const CASES = [
     create: 'import { action } from "../_generated/server";\nimport { internal } from "../_generated/api";\n' +
       "export const peek = action({ args: {}, handler: async (ctx) => await ctx.runQuery(internal.leaderboardSnapshot.storedSnapshot, {}) });\n",
     mustFail: "nothing outside leaderboardSnapshot.ts calls its functions, in any convex/ folder (the cron's tick excepted)" },
+  { guard: "the same public action, reaching the module through an alias", file: "convex/boardPeekAlias.ts", test: E2E,
+    create: 'import { action } from "./_generated/server";\nimport { internal } from "./_generated/api";\n' +
+      "const lb = internal.leaderboardSnapshot;\n" +
+      "export const peek = action({ args: {}, handler: async (ctx) => await ctx.runQuery(lb.storedSnapshot, {}) });\n",
+    mustFail: "nothing outside leaderboardSnapshot.ts calls its functions, in any convex/ folder (the cron's tick excepted)" },
+  { guard: "the same public action, naming the function as a string", file: "convex/boardPeekString.ts", test: E2E,
+    create: 'import { action } from "./_generated/server";\nimport { makeFunctionReference } from "convex/server";\n' +
+      "export const peek = action({ args: {}, handler: async (ctx) => await ctx.runQuery(makeFunctionReference<\"query\">(\"leaderboardSnapshot:storedSnapshot\") as any, {}) });\n",
+    mustFail: "nothing outside leaderboardSnapshot.ts calls its functions, in any convex/ folder (the cron's tick excepted)" },
   { guard: "configure hands back the pilot's addresses and ids", file: SNAP, test: E2E,
     from: "      pilot = { ids: unique.length, fromEmails, unmatched, ambiguous, sampled };",
     to: "      pilot = { ids: unique.length, fromEmails, unmatched, ambiguous, sampled, ...(a.pilotEmails ? { emails: a.pilotEmails, idList: unique } : {}) } as any;",
@@ -134,7 +143,10 @@ const CASES = [
   { guard: "no backoff: a failing build is retried at every tick, nights and weekends", file: RULES, test: E2E,
     from: "  if (failingFor !== null && failingFor >= config.failGraceMinutes && lastTry !== null",
     to: "  if (false && failingFor !== null && failingFor >= config.failGraceMinutes && lastTry !== null",
-    mustFail: "a Saturday of failing builds makes a handful, not one at every tick" },
+    mustFail: "a Saturday of failing builds makes about one an hour, not one at every tick" },
+  { guard: "the backoff waits the whole off-hours cadence (a cleared fault goes unnoticed for hours)", file: RULES, test: RULES_TEST,
+    from: "const retryEvery = Math.min(every, BACKOFF_RETRY_MAX_MINUTES);", to: "const retryEvery = every;",
+    mustFail: "  ...but never waits more than an hour between tries: last try 60 minutes ago builds, 50 does not" },
   { guard: "a lapsed lease is dated when the tick noticed it, not when it was booked", file: SNAP, test: E2E,
     from: 'noteRefusal(state, nowIso, "lapsed", 0, state.lease.startedAt);', to: 'noteRefusal(state, nowIso, "lapsed", 0);',
     mustFail: "  ...dated when it was booked, which is when the backoff counts from" },

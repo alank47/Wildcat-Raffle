@@ -56,15 +56,46 @@ console.log("\n1. Static: what the new code may reach, and what may reach it");
   // internal.leaderboardSnapshot.storedSnapshot hands every earner's name and
   // amount to any signed-in browser. Nothing outside the module may call its
   // functions, except the cron's tick; nothing else may hold the copy's id.
+  //
+  // NOT ONLY THE FULL CHAIN (review of the fixes, 2026-10-13): an alias
+  // (`const lb = internal.leaderboardSnapshot`), bracket access, destructuring
+  // or a string reference ("leaderboardSnapshot:storedSnapshot") reaches the
+  // same functions. Any reference to the module object counts; the only one
+  // allowed is the cron's exact `internal.leaderboardSnapshot.tick`, and the
+  // only string is the nightly check's reader label.
+  const fnNames = exports.map((e) => /^const (\w+) =/.exec(e)[1]);
+  const moduleRefs = (src) => {
+    const out = [];
+    const pats = [
+      /\b(?:internal|api|anyApi)\s*(?:\.\s*|\[\s*["'`]\s*)leaderboardSnapshot\b(?:\s*\.\s*\w+)?/g,
+      /\{[^{}]*\bleaderboardSnapshot\b[^{}]*\}\s*=\s*\w+/g,
+      /\.\s*leaderboardSnapshot\s*\.\s*\w+/g,
+      // A string naming one of the module's FUNCTIONS (its appState keys,
+      // "leaderboardSnapshot:config" and ":state", are data, not functions).
+      new RegExp(`["'\`]leaderboardSnapshot:(?:${fnNames.join("|")})\\b`, "g"),
+    ];
+    for (const re of pats) for (const m of src.matchAll(re)) out.push(m[0].replace(/\s+/g, " "));
+    return out;
+  };
+  const ALLOWED = { "crons.ts": ["internal.leaderboardSnapshot.tick", ".leaderboardSnapshot.tick"], "readHeadroomRules.ts": ['"leaderboardSnapshot:compactPage'] };
   const refs = [];
   for (const f of convexFiles) {
     if (f === "leaderboardSnapshot.ts") continue;
-    for (const m of blank(read("./convex/" + f)).matchAll(/\b(?:internal|api)\s*\.\s*leaderboardSnapshot\s*\.\s*\w+/g)) {
-      if (!(f === "crons.ts" && m[0] === "internal.leaderboardSnapshot.tick")) refs.push(`${f}: ${m[0]}`);
+    for (const r of moduleRefs(blank(read("./convex/" + f)))) {
+      if (!(ALLOWED[f] || []).includes(r)) refs.push(`${f}: ${r}`);
     }
   }
   check("nothing outside leaderboardSnapshot.ts calls its functions, in any convex/ folder (the cron's tick excepted)",
     refs.length === 0 && /internal\.leaderboardSnapshot\.tick/.test(read("./convex/crons.ts")), J(refs));
+  const planted = [
+    "const lb = internal.leaderboardSnapshot; await ctx.runQuery(lb.storedSnapshot, {});",
+    'const lb = internal["leaderboardSnapshot"];',
+    "const { leaderboardSnapshot: lb } = internal;",
+    "const i = internal; await ctx.runQuery(i.leaderboardSnapshot.storedSnapshot, {});",
+    'makeFunctionReference("leaderboardSnapshot:storedSnapshot");',
+  ];
+  check("  ...and catches an alias, bracket access, destructuring, a renamed api object and a string reference",
+    planted.every((src) => moduleRefs(src).length > 0), J(planted.map((src) => moduleRefs(src))));
   const holdsId = convexFiles.filter((f) => !/^leaderboardSnapshot(Rules)?\.ts$/.test(f) && /\bsnapshotId\b/.test(blank(read("./convex/" + f))));
   check("no other file holds the copy's id (a ctx.db.get around every reader)", holdsId.length === 0, J(holdsId));
   const client = read("./script.js");
@@ -698,8 +729,10 @@ console.log("\n6b. A build that keeps failing backs off nights and weekends");
     }
   }
   w.rec.forbid.delete("students");
-  check("a Saturday of failing builds makes a handful, not one at every tick",
-    servedFri && ticks === 88 && builds >= 4 && builds <= 8 && w.snapRows()[0].serve === "none" && w.snapRows()[0].why === "failing",
+  // About one an hour once the grace has run out (BACKOFF_RETRY_MAX_MINUTES),
+  // plus the grace hour's retries: roughly 20, against 88 with no backoff.
+  check("a Saturday of failing builds makes about one an hour, not one at every tick",
+    servedFri && ticks === 88 && builds >= 12 && builds <= 26 && w.snapRows()[0].serve === "none" && w.snapRows()[0].why === "failing",
     J({ servedFri, ticks, builds, serve: w.snapRows()[0].serve }));
   keepWrites(w);
 }
