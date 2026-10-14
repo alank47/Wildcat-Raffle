@@ -2358,4 +2358,52 @@ export default defineSchema({
     action: v.string(),
     detail: v.any(),
   }).index("by_at", ["at"]),
+
+  /**
+   * EVERY STUDENT'S LEADERBOARD INPUTS AS OF THE LAST BUILD (2026-10-13). Read
+   * only by leaderboard:cash (which returns cashLeaderboard()'s output and
+   * nothing else), by leaderboardSnapshot.ts (internal), and by readHeadroom.ts
+   * (its size only). Written only by leaderboardSnapshot.ts. One row, name
+   * "cash".
+   *
+   * A TABLE, NOT AN appState ROW, because appState's value admits anything and
+   * whole-appState tools carry every key: one document holding every earner's
+   * name and amount belongs behind a validator with one reader. This validator
+   * admits no other field; leaderboardRules.compactStudent decides what fills
+   * it, and a copy written by an older compactStudent (`version`) is never
+   * served. About 65 KB for 763 students, growing about 100 bytes a student,
+   * never with the cash ledger.
+   */
+  leaderboardSnapshots: defineTable({
+    name: v.literal("cash"),
+    /** leaderboardRules.LEADERBOARD_SNAPSHOT_VERSION when written; a mismatch is never served. */
+    version: v.number(),
+    /** Who leaderboard:cash serves it to. The tick sets "none" when it is stale or failing. */
+    serve: v.union(v.literal("none"), v.literal("pilot"), v.literal("all")),
+    /** A reason code only: off, shadow, stale, failing. */
+    why: v.optional(v.string()),
+    /** At most 50 student ids (studentIdOf), read only when serve is "pilot". */
+    pilotIds: v.array(v.string()),
+    /** When the build read its first page. */
+    builtAt: v.string(),
+    buildId: v.string(),
+    /** The _creationTime of the newest student row included: anyone newer joins at the end. */
+    newestCreationTime: v.number(),
+    /** Ids more than one row holds (expected none); their owners are ranked live. */
+    dupIds: v.array(v.string()),
+    /** In the order the live read returns students (_creationTime), so ties break the same way. */
+    rows: v.array(v.object({
+      /** studentIdOf(raw), never "". */
+      id: v.string(),
+      /** A student who has left is { id, enrolled: false } and nothing else. */
+      enrolled: v.optional(v.literal(false)),
+      /** Names only for a student who has earned something: no other name is ever read. */
+      firstName: v.optional(v.string()),
+      lastName: v.optional(v.string()),
+      /** As written on the student row; the bands read the raw string. */
+      grade: v.optional(v.string()),
+      /** leaderboardRules.earnedOf: a finite figure >= 0, else null. */
+      wildcatCashEarned: v.optional(v.union(v.number(), v.null())),
+    })),
+  }).index("by_name", ["name"]),
 });
