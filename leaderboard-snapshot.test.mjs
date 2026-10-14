@@ -642,8 +642,12 @@ console.log("\n7. The compare, the live gate, and what status says");
   const logic = await w.rt.run("leaderboardSnapshot.compare", { kind: "logic" });
   check("a logic compare finds no difference across every viewer, band and page size",
     logic.ok && logic.comparisons === (60 - 2) * 6 && logic.differ === 0 && logic.fallbacksByReason["viewer-duplicated"] === 2, J(logic));
+  // THE RUNBOOK'S ORDER (spec 3.12): fresh compares run after the logic one,
+  // and the switch to live still finds the logic one (review, 2026-10-13).
+  const between = await w.rt.run("leaderboardSnapshot.compare", { kind: "fresh" });
   const ok = await w.configure({ mode: "live" });
-  check("  ...after which live is allowed", ok.ok === true && w.snapRows()[0].serve === "all", J(ok));
+  check("  ...after which live is allowed, even with a fresh compare run since (the runbook's order)",
+    between.ok === true && ok.ok === true && w.snapRows()[0].serve === "all", J(ok));
 
   // Drift: an award after the build. A fresh compare must see it.
   const someone = w.students().find((s) => s.wildcatCashEarned === 45);
@@ -668,7 +672,7 @@ console.log("\n7. The compare, the live gate, and what status says");
   check("status says the mode, the copy's size and its builds",
     status.config.mode === "pilot" && status.snapshot.exists && status.snapshot.rows === 60 && status.snapshot.bytes > 1000 &&
     status.state.lastOk.rows === 60 && status.config.pilot === 5);
-  const outputs = J([status, logic, fresh, logic2, sample]);
+  const outputs = J([status, logic, between, fresh, logic2, sample]);
   check("NO STATUS OR COMPARE OUTPUT CARRIES A FIXTURE NAME OR ID",
     !FIXTURE_TOKENS.some((t) => outputs.includes(t)), FIXTURE_TOKENS.filter((t) => outputs.includes(t)).slice(0, 3).join(", "));
   keepWrites(w);

@@ -275,8 +275,9 @@ export const runNow = internalMutation({
  *     lookup; an address that matches no student, or two, is counted and left
  *     out. pilotSample picks that many enrolled students from the copy. At
  *     most 50 in all. The ids are stored, never returned.
- *   - LIVE NEEDS A CLEAN LOGIC COMPARE from the last 72 hours (liveRefusal),
- *     unless acceptWithoutCompare says otherwise on purpose.
+ *   - LIVE NEEDS A CLEAN LOGIC COMPARE from the last 72 hours, by this
+ *     version (liveRefusal reads the last logic compare, so fresh compares run
+ *     since do not hide it), unless acceptWithoutCompare says otherwise.
  *   - Switching on from off books a build straight away.
  */
 export const configure = internalMutation({
@@ -346,7 +347,7 @@ export const configure = internalMutation({
     }
 
     if (next.mode === "live" && prev.mode !== "live" && a.acceptWithoutCompare !== true) {
-      const why = R.liveRefusal(state.lastCompare, nowIso);
+      const why = R.liveRefusal(state.lastLogicCompare, nowIso);
       if (why) return refuse("no-clean-compare", why);
     }
 
@@ -679,13 +680,13 @@ export const compare = internalAction({
       if (!stored) return { ok: false, why: "no-snapshot" };
     }
     const counts = R.compareSnapshot(live, kind, stored);
-    const result = { kind, at: new Date().toISOString(), ...counts };
+    const result = { kind, at: new Date().toISOString(), version: LEADERBOARD_SNAPSHOT_VERSION, ...counts };
     await ctx.runMutation(internal.leaderboardSnapshot.recordCompare, { result });
     return { ok: true, ...result };
   },
 });
 
-/** Keep the compare's counts in the state row: the live switch reads them. */
+/** Keep the compare's counts in the state row; a logic compare also in its own slot, which the live switch reads. */
 export const recordCompare = internalMutation({
   args: { result: v.any() },
   handler: async (ctx, { result }): Promise<Record<string, any>> => {
@@ -694,13 +695,16 @@ export const recordCompare = internalMutation({
     const n = (x: unknown) => (typeof x === "number" && Number.isFinite(x) ? x : 0);
     const counts = (o: unknown) => Object.fromEntries(Object.entries((o ?? {}) as Record<string, unknown>)
       .filter(([k]) => /^[a-zA-Z-]{1,40}$/.test(k)).map(([k, x]) => [k, n(x)]));
-    state.lastCompare = {
+    const kept = {
       kind: r.kind === "logic" ? "logic" : "fresh",
       at: typeof r.at === "string" ? r.at : new Date().toISOString(),
+      version: typeof r.version === "number" ? r.version : null,
       viewers: n(r.viewers), enrolledViewers: n(r.enrolledViewers), comparisons: n(r.comparisons),
       identical: n(r.identical), differ: n(r.differ), byField: counts(r.byField),
       fallbacksByReason: counts(r.fallbacksByReason), rowsChangedSinceBuild: n(r.rowsChangedSinceBuild), dupIds: n(r.dupIds),
     };
+    state.lastCompare = kept;
+    if (kept.kind === "logic") state.lastLogicCompare = kept;
     await writeState(ctx, R.STATE_KEY, state);
     return { recorded: true };
   },
@@ -742,6 +746,7 @@ export const status = internalQuery({
         pendingDrop: state.pendingDrop,
         buildsByDay: state.buildsByDay,
         lastCompare: state.lastCompare,
+        lastLogicCompare: state.lastLogicCompare,
       },
       snapshot: doc
         ? {

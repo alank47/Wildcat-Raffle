@@ -189,8 +189,11 @@ try {
     check("serve follows the mode: off and shadow none, pilot pilot, live all",
       R.serveFor("off") === "none" && R.serveFor("shadow") === "none" && R.serveFor("pilot") === "pilot" && R.serveFor("live") === "all");
     const NOW = "2026-10-13T23:00:00.000Z";
-    const clean = { kind: "logic", at: ago(NOW, 60), comparisons: 4500, differ: 0 };
+    const clean = { kind: "logic", at: ago(NOW, 60), comparisons: 4500, differ: 0, version: LEADERBOARD_SNAPSHOT_VERSION };
     check("live is allowed after a clean logic compare in the last 72 hours", R.liveRefusal(clean, NOW) === null);
+    check("  ...but not on a logic compare made by another version of the copy (a deploy changed it since)",
+      typeof R.liveRefusal({ ...clean, version: LEADERBOARD_SNAPSHOT_VERSION - 1 }, NOW) === "string" &&
+      typeof R.liveRefusal({ ...clean, version: undefined }, NOW) === "string");
     check("  ...refused with none on record, a fresh one, differences, nothing compared, or one too old",
       R.liveRefusal(null, NOW) && R.liveRefusal({ ...clean, kind: "fresh" }, NOW) && R.liveRefusal({ ...clean, differ: 1 }, NOW) &&
       R.liveRefusal({ ...clean, comparisons: 0 }, NOW) && R.liveRefusal({ ...clean, at: ago(NOW, 73 * 60) }, NOW));

@@ -187,12 +187,16 @@ export type State = {
   firstFailAt: string | null;
   pendingDrop: PendingDrop;
   buildsByDay: DayCount[];
+  /** The last compare of either kind, as status shows it. */
   lastCompare: Record<string, any> | null;
+  /** The last LOGIC compare: what the live switch reads (a fresh one run since must not hide it). */
+  lastLogicCompare: Record<string, any> | null;
 };
 
 export const EMPTY_STATE: State = {
   lease: null, snapshotId: null, version: null, serve: "none", why: null, builtAt: null,
   lastOk: null, lastAttempt: null, firstFailAt: null, pendingDrop: null, buildsByDay: [], lastCompare: null,
+  lastLogicCompare: null,
 };
 
 export function leaseOf(x: unknown): Lease {
@@ -223,6 +227,7 @@ export function stateOrEmpty(raw: unknown): State {
         } : null,
     buildsByDay: Array.isArray(r.buildsByDay) ? r.buildsByDay.filter((d: any) => d && typeof d.day === "string") : [],
     lastCompare: r.lastCompare && typeof r.lastCompare === "object" ? r.lastCompare : null,
+    lastLogicCompare: r.lastLogicCompare && typeof r.lastLogicCompare === "object" ? r.lastLogicCompare : null,
   };
 }
 
@@ -427,12 +432,22 @@ export function acceptBuild(input: {
  * NOT LIVE WITHOUT A CLEAN COMPARE ON RECORD: a "logic" compare (every student
  * as viewer, every band, topN 10 and 50, the copy against the live ranking on
  * the same read) that found no difference in at least one comparison, within
- * the last 72 hours. Null when switching is allowed, else the reason.
+ * the last 72 hours, made by this version of compactStudent. Null when
+ * switching is allowed, else the reason.
+ *
+ * Given the last LOGIC compare (state.lastLogicCompare), not the last compare
+ * of any kind: the runbook runs fresh compares after the logic one, and they
+ * used to overwrite it, so following it to the letter was refused. And a
+ * compare of the old format says nothing about a copy a deploy has changed.
+ * (Review, 2026-10-13.)
  */
-export function liveRefusal(lastCompare: Record<string, any> | null, nowIso: string): string | null {
-  const c = lastCompare;
-  if (!c) return "No compare is on record. Run leaderboardSnapshot:compare with kind logic first.";
-  if (c.kind !== "logic") return "The last compare was not a logic compare.";
+export function liveRefusal(lastLogicCompare: Record<string, any> | null, nowIso: string): string | null {
+  const c = lastLogicCompare;
+  if (!c) return "No logic compare is on record. Run leaderboardSnapshot:compare with kind logic first.";
+  if (c.kind !== "logic") return "The compare on record is not a logic compare.";
+  if (c.version !== LEADERBOARD_SNAPSHOT_VERSION) {
+    return "The last logic compare was made by another version of the copy. Run leaderboardSnapshot:compare with kind logic again.";
+  }
   if (!(typeof c.comparisons === "number" && c.comparisons > 0)) return "The last compare compared nothing.";
   if (c.differ !== 0) return `The last logic compare found ${Number(c.differ)} difference(s).`;
   const age = minutesSince(typeof c.at === "string" ? c.at : null, Date.parse(nowIso));

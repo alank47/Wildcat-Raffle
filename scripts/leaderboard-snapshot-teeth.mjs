@@ -89,8 +89,14 @@ const CASES = [
     from: 'if (next.mode === "live" && prev.mode !== "live" && a.acceptWithoutCompare !== true) {',
     to: "if (false) {",
     mustFail: "configure live is refused without a clean compare on record" },
+  { guard: "the live gate reads the last compare of any kind (a fresh one hides the logic one)", file: SNAP, test: E2E,
+    from: "R.liveRefusal(state.lastLogicCompare, nowIso)", to: "R.liveRefusal(state.lastCompare, nowIso)",
+    mustFail: "  ...after which live is allowed, even with a fresh compare run since (the runbook's order)" },
 
   // ---- the rules
+  { guard: "a logic compare of an older copy format unlocks live", file: RULES, test: RULES_TEST,
+    from: "  if (c.version !== LEADERBOARD_SNAPSHOT_VERSION) {", to: "  if (false) {",
+    mustFail: "  ...but not on a logic compare made by another version of the copy (a deploy changed it since)" },
   { guard: "13:03 UTC is allowed (a build during the roster replace)", file: RULES, test: RULES_TEST,
     from: "  return inside(13 * 60, 13 * 60 + 15) || inside(13 * 60 + 25, 14 * 60) ||",
     to: "  return inside(13 * 60 + 25, 14 * 60) ||",
