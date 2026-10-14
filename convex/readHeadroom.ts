@@ -10,10 +10,12 @@ import {
   estimateReaders,
   growthOf,
   headroomHeadline,
+  leaderboardSnapshotBlock,
   projectDates,
   worsenedReaders,
   type HeadroomMeasure,
 } from "./readHeadroomRules";
+import { CONFIG_KEY as LB_CONFIG_KEY, STATE_KEY as LB_STATE_KEY } from "./leaderboardSnapshotRules";
 
 /**
  * The nightly read-headroom check: how close is each heavy read to Convex's
@@ -84,6 +86,10 @@ export const studentsPage = internalQuery({
     return {
       rows: page.page.length, bytes, cashCopyBytes, largestRowBytes,
       rosterLookupBytes, rosterLookupHits,
+      // What this one page read, rows and lookups together: the same fifty
+      // and the same lookups leaderboardSnapshot.compactPage reads, so the
+      // night's largest page is the builder's largest single read.
+      pageBytes: bytes + rosterLookupBytes,
       cursor: page.continueCursor, isDone: page.isDone,
     };
   },
@@ -171,6 +177,39 @@ export const trendsContextReads = internalQuery({
       add(await ctx.db.query("psRoster").withIndex("by_teacherEmail", (q) => q.eq("teacherEmail", email)).first());
     }
     return { rows, bytes };
+  },
+});
+
+/**
+ * THE LEADERBOARD'S STORED COPY (leaderboardSnapshot.ts): its size and row
+ * count, and from its state row the mode and the builds. Never its content:
+ * the copy holds every earner's name and amount, and this check is read by
+ * people looking at numbers.
+ */
+export const leaderboardSnapshotSize = internalQuery({
+  args: {},
+  handler: async (ctx) => {
+    const doc = await ctx.db.query("leaderboardSnapshots")
+      .withIndex("by_name", (q) => q.eq("name", "cash")).first();
+    const state = async (key: string) => ((await ctx.db.query("appState")
+      .withIndex("by_key", (q) => q.eq("key", key)).unique())?.value ?? null) as any;
+    const config = await state(LB_CONFIG_KEY);
+    const st = await state(LB_STATE_KEY);
+    return {
+      exists: Boolean(doc),
+      bytes: doc ? sizeOf(doc) : 0,
+      rows: doc ? doc.rows.length : 0,
+      mode: typeof config?.mode === "string" ? config.mode : "off",
+      serve: typeof st?.serve === "string" ? st.serve : "none",
+      builtAt: typeof st?.builtAt === "string" ? st.builtAt : null,
+      lastBuildOk: typeof st?.lastAttempt?.ok === "boolean" ? st.lastAttempt.ok : null,
+      buildsByDay: Array.isArray(st?.buildsByDay)
+        ? st.buildsByDay.map((d: any) => ({
+            day: String(d?.day ?? ""), builds: Number(d?.builds) || 0,
+            refusals: Number(d?.refusals) || 0, bytesRead: Number(d?.bytesRead) || 0,
+          }))
+        : [],
+    };
   },
 });
 
@@ -271,7 +310,7 @@ export const nightly = internalAction({
     // tonight's. (Only the record itself is outside this net.)
     let result: Record<string, any>;
     try {
-      const students = { rows: 0, bytes: 0, cashCopyBytes: 0, largestRowBytes: 0, rosterLookupBytes: 0, rosterLookupHits: 0 };
+      const students = { rows: 0, bytes: 0, cashCopyBytes: 0, largestRowBytes: 0, rosterLookupBytes: 0, rosterLookupHits: 0, maxPageBytes: 0 };
       let cursor: string | null = null;
       for (let i = 0; ; i++) {
         if (i >= MAX_PAGES) return await fail("the students table needed more than 200 pages");
@@ -279,6 +318,7 @@ export const nightly = internalAction({
         students.rows += p.rows; students.bytes += p.bytes; students.cashCopyBytes += p.cashCopyBytes;
         students.largestRowBytes = Math.max(students.largestRowBytes, p.largestRowBytes);
         students.rosterLookupBytes += p.rosterLookupBytes; students.rosterLookupHits += p.rosterLookupHits;
+        students.maxPageBytes = Math.max(students.maxPageBytes, Number(p.pageBytes) || 0);
         if (p.isDone) break;
         cursor = p.cursor;
       }
@@ -312,6 +352,7 @@ export const nightly = internalAction({
 
       const small: any = await ctx.runQuery(internal.readHeadroom.smallReads, {});
       const trends: any = await ctx.runQuery(internal.readHeadroom.trendsContextReads, {});
+      const lbSnap: any = await ctx.runQuery(internal.readHeadroom.leaderboardSnapshotSize, {});
       const nowIso = new Date().toISOString();
       const measure: HeadroomMeasure = {
         nowIso,
@@ -322,6 +363,7 @@ export const nightly = internalAction({
         loadSettingsBytes: small.loadSettingsBytes,
         mirror,
         trendsContext: { rows: trends.rows, bytes: trends.bytes },
+        leaderboardSnapshot: lbSnap.exists ? { bytes: lbSnap.bytes, rows: lbSnap.rows } : null,
       };
       const readers = estimateReaders(measure);
       const MiB = (b: number) => Math.round((b / 1048576) * 100) / 100;
@@ -333,6 +375,9 @@ export const nightly = internalAction({
         bands: { amberPct: AMBER_PCT, redPct: RED_PCT },
         headline: headroomHeadline(readers),
         readers,
+        // BESIDE the readers, not among them: the copy's mode and build cost
+        // are not a read nearing a wall, so they take no band and raise no alarm.
+        leaderboardSnapshot: leaderboardSnapshotBlock(lbSnap, nowIso),
         projectedDates: projectDates(readers, nowIso),
         growth: growthOf(measure),
         tables: {

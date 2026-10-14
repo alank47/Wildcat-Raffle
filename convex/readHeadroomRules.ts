@@ -51,6 +51,12 @@ export type HeadroomMeasure = {
     /** The first psRoster row per student, which is what an enrolment lookup reads. */
     rosterLookupBytes: number;
     rosterLookupHits: number;
+    /**
+     * The largest page of fifty, rows and lookups together: what
+     * leaderboardSnapshot.compactPage reads at most in one call. Optional: an
+     * older record has none.
+     */
+    maxPageBytes?: number;
   };
   psRoster: { rows: number; bytes: number };
   teachers: { rows: number; bytes: number };
@@ -66,6 +72,11 @@ export type HeadroomMeasure = {
    * without it -- an older record, a test -- simply has no such reader.
    */
   trendsContext?: { rows: number; bytes: number } | null;
+  /**
+   * The leaderboard's stored copy (2026-10-13): its whole size. Absent or null
+   * when there is no copy, and then neither of its readers is listed.
+   */
+  leaderboardSnapshot?: { bytes: number; rows: number } | null;
 };
 
 export type Reader = {
@@ -196,10 +207,14 @@ export function estimateReaders(measure: HeadroomMeasure): Reader[] {
       bytes: S.bytes + S.rosterLookupBytes + measure.teachers.bytes + measure.loadSettingsBytes,
       growthMiBPerWeek: studs,
     }),
+    // THE LIVE FALLBACK, under the name it has always had, so its announced
+    // bands carry on. Since 2026-10-13 it runs only when the copy cannot
+    // answer, but when it does it still reads all of this, and it still meets
+    // the wall around January.
     make({
       name: "leaderboard:cash",
-      what: "every student row, one roster row per enrolled student",
-      reachedBy: "every student-portal open",
+      what: "the live fallback: every student row, one roster row per enrolled student",
+      reachedBy: "only when the snapshot is off, shadow, stale, a version mismatch, or a viewer it cannot place",
       bytes: S.bytes + S.rosterLookupBytes,
       growthMiBPerWeek: studs,
     }),
@@ -258,7 +273,71 @@ export function estimateReaders(measure: HeadroomMeasure): Reader[] {
       growthMiBPerWeek: null,
     }));
   }
+  const snap = measure.leaderboardSnapshot;
+  if (snap && Number.isFinite(snap.bytes)) {
+    // What a student's portal open reads once the copy is served: their own
+    // row (at most the largest), the copy, and one roster row.
+    readers.push(make({
+      name: "leaderboard:cash (snapshot)",
+      what: "the viewer's own student row, the leaderboard's stored copy, one roster row",
+      reachedBy: "every student-portal open while the snapshot is served; grows about 100 bytes a student, not with the cash ledger",
+      bytes: S.largestRowBytes + snap.bytes + S.rosterLookupBytes / Math.max(1, S.rosterLookupHits),
+      growthMiBPerWeek: null,
+    }));
+    // The builder's largest single call: one page of fifty with their
+    // lookups. A page carries its students' cash copies, so it grows with
+    // them, at fifty students' share of the table's growth.
+    const pageBytes = typeof S.maxPageBytes === "number" && Number.isFinite(S.maxPageBytes)
+      ? S.maxPageBytes
+      : ((S.bytes + S.rosterLookupBytes) * 50) / Math.max(1, S.rows);
+    readers.push(make({
+      name: "leaderboardSnapshot:compactPage",
+      what: "fifty student rows and their roster rows (the largest page of the night)",
+      reachedBy: "the snapshot builder, every 15 minutes in school hours while it is on (loud, nobody's screen)",
+      bytes: pageBytes,
+      growthMiBPerWeek: studs === null ? null : Math.round(((studs * 50) / Math.max(1, S.rows)) * 1000) / 1000,
+    }));
+  }
   return readers.sort((a, b) => b.pct - a.pct);
+}
+
+/**
+ * THE LEADERBOARD COPY'S RUNNING COST, beside the readers rather than among
+ * them: none of it is a read nearing the wall, so it takes no band and raises
+ * no alarm. Built from the copy's size and its state row (counts only).
+ *
+ * `estBuildGiBPer30d` is the last seven days' build reads at that rate for
+ * thirty days: builds dominate the copy's cost until the cash history moves
+ * off the student row.
+ */
+export function leaderboardSnapshotBlock(
+  info: {
+    exists?: boolean; bytes?: number; mode?: string; serve?: string; builtAt?: string | null;
+    lastBuildOk?: boolean | null; buildsByDay?: Array<{ day: string; builds: number; refusals: number; bytesRead: number }>;
+  } | null | undefined,
+  nowIso: string,
+): {
+  mode: string; serve: string; snapshotBytes: number; snapshotAgeMinutes: number | null; lastBuildOk: boolean | null;
+  buildsLast7d: number; meanBuildMiB: number | null; estBuildGiBPer30d: number | null;
+} {
+  const i = info ?? {};
+  const now = Date.parse(nowIso);
+  const built = typeof i.builtAt === "string" ? Date.parse(i.builtAt) : NaN;
+  const since = Number.isFinite(now) ? new Date(now - 7 * 86400000).toISOString().slice(0, 10) : "";
+  const week = (i.buildsByDay ?? []).filter((d) => d && typeof d.day === "string" && d.day > since);
+  const builds = week.reduce((a, d) => a + (d.builds || 0), 0);
+  const attempts = week.reduce((a, d) => a + (d.builds || 0) + (d.refusals || 0), 0);
+  const bytes = week.reduce((a, d) => a + (d.bytesRead || 0), 0);
+  return {
+    mode: typeof i.mode === "string" ? i.mode : "off",
+    serve: typeof i.serve === "string" ? i.serve : "none",
+    snapshotBytes: i.exists && typeof i.bytes === "number" ? i.bytes : 0,
+    snapshotAgeMinutes: Number.isFinite(built) && Number.isFinite(now) ? Math.round((now - built) / 60000) : null,
+    lastBuildOk: typeof i.lastBuildOk === "boolean" ? i.lastBuildOk : null,
+    buildsLast7d: builds,
+    meanBuildMiB: attempts ? toMiB(bytes / attempts) : null,
+    estBuildGiBPer30d: attempts ? Math.round(((bytes * 30) / 7 / 1073741824) * 100) / 100 : null,
+  };
 }
 
 /**

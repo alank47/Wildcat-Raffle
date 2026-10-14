@@ -554,6 +554,7 @@ console.log("\n11. The nightly check end to end: pages, records, and keeps quiet
   const QUERIES = { "readHeadroom.studentsPage": H.studentsPage, "readHeadroom.rosterPage": H.rosterPage,
                     "readHeadroom.mirrorPage": H.mirrorPage, "readHeadroom.smallReads": H.smallReads,
                     "readHeadroom.trendsContextReads": H.trendsContextReads,
+                    "readHeadroom.leaderboardSnapshotSize": H.leaderboardSnapshotSize,
                     "readHeadroom.recordResult": H.recordResult };
   const ctx = {
     runQuery: async (ref, args) => QUERIES[ref].handler({ db: d.db }, args),
@@ -766,6 +767,7 @@ function nightlyRig(d, mod) {
   const Q = { "readHeadroom.studentsPage": H.studentsPage, "readHeadroom.rosterPage": H.rosterPage,
               "readHeadroom.mirrorPage": H.mirrorPage, "readHeadroom.smallReads": H.smallReads,
                     "readHeadroom.trendsContextReads": H.trendsContextReads,
+              "readHeadroom.leaderboardSnapshotSize": H.leaderboardSnapshotSize,
               "readHeadroom.recordResult": H.recordResult };
   return {
     H, Q,
@@ -983,6 +985,80 @@ console.log("\n19. The recount's and the diagnostics' capped reads refuse to con
   const recTeeth = load({ cashRecount: (c) => c.replace("    if (truncated) {\n      return {\n        rows: out, slicesRead: slices.length,", "    if (false) {\n      return {\n        rows: out, slicesRead: slices.length,") });
   const rfsBad = await recTeeth.req("./cashRecount").rowsForStudents.handler({ db: makeDb(seed({ weekFiller: 4000 })).db }, { studentIds: ["10001"], doc: "cash_tx_" + week });
   check("  (teeth) with its truncated return disabled, the cut is silent again", rfsBad.truncated !== true);
+}
+
+// ======================================================================
+console.log("\n20. The leaderboard's stored copy: its two readers, and the fallback's honest name");
+{
+  const R = M.headroomRules;
+  const MiB = 1048576;
+  const base = {
+    nowIso: "2026-10-13T10:25:00.000Z", cutoffIso: "2026-09-14T15:30:00.000Z",
+    students: { rows: 763, bytes: 4.55 * MiB, cashCopyBytes: 3.68 * MiB, largestRowBytes: 25000,
+      rosterLookupBytes: 0.33 * MiB, rosterLookupHits: 607, maxPageBytes: 0.42 * MiB },
+    psRoster: { rows: 5463, bytes: 2.94 * MiB }, teachers: { rows: 63, bytes: 0.014 * MiB }, loadSettingsBytes: 20000,
+    mirror: { rows: 7985, bytes: 4.718 * MiB, docs: [
+      { doc: "cash_tx_2026_W38", rows: 2527, bytes: 1.414 * MiB }, { doc: "cash_tx_2026_W39", rows: 1855, bytes: 1.044 * MiB },
+      { doc: "cash_tx_2026_W40", rows: 2286, bytes: 1.284 * MiB }, { doc: "cash_tx_2026_W41", rows: 286, bytes: 0.16 * MiB } ] },
+  };
+  const without = R.estimateReaders(base);
+  const withSnap = R.estimateReaders({ ...base, leaderboardSnapshot: { bytes: 65000, rows: 763 } });
+  const by = Object.fromEntries(withSnap.map((r) => [r.name, r]));
+  check("with a measured copy, its two readers are listed",
+    by["leaderboard:cash (snapshot)"] && by["leaderboardSnapshot:compactPage"] && withSnap.length === without.length + 2);
+  check("  ...and the list stays nearest-the-wall first", withSnap.every((r, i) => i === 0 || withSnap[i - 1].pct >= r.pct));
+  const perCall = 25000 + 65000 + (0.33 * MiB) / 607;
+  check("a portal open on the copy is the largest own row + the copy + one roster row, not growing with the ledger",
+    Math.abs(by["leaderboard:cash (snapshot)"].estMiB - Math.round((perCall / MiB) * 100) / 100) < 0.005 &&
+    by["leaderboard:cash (snapshot)"].growthMiBPerWeek === null && by["leaderboard:cash (snapshot)"].band === "green",
+    JSON.stringify(by["leaderboard:cash (snapshot)"]));
+  check("the builder's largest call is the night's largest page, growing with fifty students' share",
+    by["leaderboardSnapshot:compactPage"].estMiB === 0.42 && by["leaderboardSnapshot:compactPage"].growthMiBPerWeek > 0 &&
+    by["leaderboardSnapshot:compactPage"].growthMiBPerWeek < 0.2, JSON.stringify(by["leaderboardSnapshot:compactPage"]));
+  check("without a copy, neither is listed, and there are still at least six readers",
+    !without.some((r) => /snapshot/i.test(r.name)) && without.length >= 6);
+  const fallback = by["leaderboard:cash"];
+  check("the old reader keeps its name and its bytes, and now says it is the live fallback",
+    fallback && Math.abs(fallback.estMiB - 4.88) < 0.01 && /fallback/.test(fallback.what) && /snapshot is off/.test(fallback.reachedBy),
+    JSON.stringify(fallback));
+
+  const block = R.leaderboardSnapshotBlock({
+    exists: true, bytes: 65000, mode: "live", serve: "all", builtAt: "2026-10-13T10:10:00.000Z", lastBuildOk: true,
+    buildsByDay: [{ day: "2026-10-01", builds: 99, refusals: 0, bytesRead: 999 * MiB },
+                  { day: "2026-10-12", builds: 30, refusals: 2, bytesRead: 32 * 6 * MiB },
+                  { day: "2026-10-13", builds: 10, refusals: 0, bytesRead: 10 * 6 * MiB }],
+  }, "2026-10-13T10:25:00.000Z");
+  check("the cost block: mode, age, the last week's builds (older days left out), mean and 30-day estimate",
+    block.mode === "live" && block.serve === "all" && block.snapshotBytes === 65000 && block.snapshotAgeMinutes === 15 &&
+    block.lastBuildOk === true && block.buildsLast7d === 40 && block.meanBuildMiB === 6 &&
+    Math.abs(block.estBuildGiBPer30d - (42 * 6 * 30 / 7) / 1024) < 0.01, JSON.stringify(block));
+  const none = R.leaderboardSnapshotBlock(null, "2026-10-13T10:25:00.000Z");
+  check("  ...and with nothing measured, off and empty rather than a guess",
+    none.mode === "off" && none.snapshotBytes === 0 && none.snapshotAgeMinutes === null && none.meanBuildMiB === null);
+
+  // End to end: the nightly check finds the copy and its state row.
+  const sd = headroomSeed();
+  sd.leaderboardSnapshots = [{ name: "cash", version: 1, serve: "all", pilotIds: [], builtAt: new Date(NOW - 30 * 60000).toISOString(),
+    buildId: "lb_x", newestCreationTime: 1, dupIds: [], rows: Array.from({ length: 40 }, (_, i) => ({ id: "x" + i, wildcatCashEarned: i })) }];
+  sd.appState.push({ key: "leaderboardSnapshot:config", value: { mode: "live" }, mirroredAt: "x" });
+  sd.appState.push({ key: "leaderboardSnapshot:state", value: { serve: "all", builtAt: new Date(NOW - 30 * 60000).toISOString(),
+    lastAttempt: { ok: true }, buildsByDay: [{ day: new Date(NOW).toISOString().slice(0, 10), builds: 3, refusals: 0, bytesRead: 3 * MiB }] }, mirroredAt: "x" });
+  const d = makeDb(sd);
+  const rig = nightlyRig(d, M);
+  const n = await rig.H.nightly.handler(rig.ctx, {});
+  const v = d.tables.appState.find((x) => x.key === "readHeadroom").value;
+  check("the nightly check measures the copy and records its cost block beside the readers",
+    n.recorded && v.ok && v.readers.some((r) => r.name === "leaderboard:cash (snapshot)") &&
+    v.readers.some((r) => r.name === "leaderboardSnapshot:compactPage") && v.leaderboardSnapshot.mode === "live" &&
+    v.leaderboardSnapshot.buildsLast7d === 3 && v.leaderboardSnapshot.snapshotAgeMinutes >= 29, JSON.stringify(v.leaderboardSnapshot));
+  check("  ...without one byte of the copy's content",
+    !JSON.stringify(v).includes('"x1"') && readsOf(d.log, "leaderboardSnapshots").length === 1);
+  // Forty students are one page, so the largest page is the whole table with
+  // its lookups: exactly what the live fallback reads.
+  check("  ...and the page maximum comes from the students pages it already reads",
+    v.readers.find((r) => r.name === "leaderboardSnapshot:compactPage").estMiB ===
+      v.readers.find((r) => r.name === "leaderboard:cash").estMiB &&
+    readsOf(d.log, "students").every((e) => e.terminal === "paginate"));
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);
