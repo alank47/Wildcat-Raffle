@@ -69,6 +69,15 @@ const CASES = [
     to: 'import { internalAction, internalMutation, internalQuery, query } from "./_generated/server";\n' +
       'export const peek = query({ args: {}, handler: async (ctx: any) => await ctx.db.query("leaderboardSnapshots").first() });',
     mustFail: "leaderboardSnapshot.ts exports only internal functions" },
+  // ---- the kill switch finds the copy by name (review, 2026-10-13)
+  { guard: "configure patches only the copy the state row remembers", file: SNAP, test: E2E,
+    from: "(relinkCopy says why).\n    const docs = await relinkCopy(ctx, state);",
+    to: "(relinkCopy says why).\n    const docs = (await relinkCopy(ctx, { ...state })).filter((d) => String(d._id) === state.snapshotId);",
+    mustFail: "configure off stops serving the copy even when the state row lost track of it" },
+  { guard: "the tick never looks for a copy the state row lost", file: SNAP, test: E2E,
+    from: "  if (!state.snapshotId) {\n    const docs = await relinkCopy(ctx, state);",
+    to: "  if (false) {\n    const docs = await relinkCopy(ctx, state);",
+    mustFail: "with both appState rows deleted (which reads as off), the next tick finds the copy and stops serving it" },
   { guard: "live without a clean compare", file: SNAP, test: E2E,
     from: 'if (next.mode === "live" && prev.mode !== "live" && a.acceptWithoutCompare !== true) {',
     to: "if (false) {",

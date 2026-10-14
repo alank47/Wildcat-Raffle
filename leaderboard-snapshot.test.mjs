@@ -522,6 +522,44 @@ console.log("\n6. The tick: cadence, sync windows, staleness, self-healing");
   await w.store.db.patch(w.snapRows()[0]._id, { serve: "all" });
   const healed = await w.rt.run("leaderboardSnapshot.tick", {});
   check("off with the copy still marked served: the tick puts it back to none", healed.healed === true && w.snapRows()[0].serve === "none");
+
+  // THE STATE ROW LOST WHILE THE COPY IS SERVED (review, 2026-10-13). The
+  // mirror forgets the copy; the switch and the tick must find it by name.
+  const appRow = (key) => w.store.rows("appState").find((r) => r.key === key);
+  const dropRow = async (key) => { const r = appRow(key); if (r) await w.store.db.delete(r._id); };
+  const goLive = async () => {
+    clock.advance(20 * 60000);
+    await w.configure({ mode: "live", acceptWithoutCompare: true });
+    await w.rt.run("leaderboardSnapshot.runNow", { actorName: "Test Admin" });
+    await w.runBuilds();
+    return w.snapRows()[0].serve === "all";
+  };
+  const servedA = await goLive();
+  await dropRow(w.S.STATE_KEY);
+  const killed2 = await w.configure({ mode: "off" });
+  w.rec.reads.length = 0;
+  await w.cash(w.students()[0]);
+  check("configure off stops serving the copy even when the state row lost track of it",
+    servedA && killed2.ok && w.snapRows()[0].serve === "none" && w.snapRows()[0].why === "off" &&
+    w.stateOf().snapshotId === w.snapRows()[0]._id && w.rec.reads.some((r) => r.table === "students" && r.terminal === "collect"),
+    J([servedA, killed2, w.snapRows()[0].serve]));
+
+  const servedB = await goLive();
+  await dropRow(w.S.STATE_KEY);
+  await dropRow(w.S.CONFIG_KEY);
+  const found = await w.rt.run("leaderboardSnapshot.tick", {});
+  check("with both appState rows deleted (which reads as off), the next tick finds the copy and stops serving it",
+    servedB && found.healed === true && w.snapRows()[0].serve === "none" && w.stateOf().snapshotId === w.snapRows()[0]._id,
+    J([servedB, found, w.snapRows()[0].serve]));
+
+  const servedC = await goLive();
+  await dropRow(w.S.STATE_KEY);
+  clock.advance(14 * 60 * 60000);
+  const late = await w.rt.run("leaderboardSnapshot.tick", {});
+  w.rt.take();
+  check("in live, a lost state row is found again by the tick, and an old copy is still stopped (stale)",
+    servedC && late.markStale === "stale" && w.snapRows()[0].serve === "none" && w.snapRows()[0].why === "stale",
+    J([servedC, late, w.snapRows()[0].serve]));
   keepWrites(w);
 }
 

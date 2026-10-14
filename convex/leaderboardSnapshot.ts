@@ -24,8 +24,8 @@ import { rosterHit } from "./leaderboard";
  *
  * HOW A BUILD GOES. The cron fires `tick` at :03, :18, :33 and :48 (never in
  * the sync windows). The tick reads the switch and the state row -- never the
- * copy itself -- and when the board is old enough books ONE build under a
- * lease. The build (an action) reads the roster fingerprint, pages through
+ * copy itself, unless the state row has lost track of it (relinkCopy) -- and
+ * when the board is old enough books ONE build under a lease. The build (an action) reads the roster fingerprint, pages through
  * every student fifty at a time (compactPage: each row through compactStudent,
  * so no cash history ever leaves the page), reads the fingerprint again, and
  * hands the rows to `write`, which re-checks the lease and the switch, decides
@@ -56,7 +56,8 @@ import { rosterHit } from "./leaderboard";
  *   npx convex run --prod leaderboardSnapshot:configure '{"mode":"off","actorName":"..."}'     <- THE KILL SWITCH
  *   npx convex run --prod leaderboardSnapshot:status
  * The kill switch sets the copy's `serve` to "none" in the same transaction,
- * so the next call from every open tab ranks live: no deploy, no refresh.
+ * found by name, so the next call from every open tab ranks live: no deploy,
+ * no refresh.
  */
 
 type Ctx = QueryCtx | MutationCtx;
@@ -116,20 +117,59 @@ const snapRow = v.object({
 /**
  * WHO THE COPY IS SERVED TO, written to the document and mirrored in the
  * state row, which is what the tick reads instead of the 65 KB document.
+ * `ids` are the copy rows to patch; by default the one the state row mirrors.
  */
-async function setServe(ctx: MutationCtx, state: R.State, serve: R.Serve, why: string | null, pilotIds?: string[]): Promise<void> {
+async function setServe(
+  ctx: MutationCtx, state: R.State, serve: R.Serve, why: string | null,
+  opts: { pilotIds?: string[]; ids?: string[] } = {},
+): Promise<void> {
   state.serve = serve;
   state.why = why;
-  if (!state.snapshotId) return;
+  const ids = opts.ids ?? (state.snapshotId ? [state.snapshotId] : []);
   const fields: Record<string, unknown> = { serve, why: why ?? undefined };
-  if (pilotIds) fields.pilotIds = pilotIds;
-  try {
-    await ctx.db.patch(state.snapshotId as any, fields);
-  } catch {
-    // The row is gone (removed by hand): forget it, and the next tick builds.
+  if (opts.pilotIds) fields.pilotIds = opts.pilotIds;
+  for (const id of ids) {
+    try {
+      await ctx.db.patch(id as any, fields);
+    } catch {
+      // The row is gone (removed by hand): forget it, and the next tick builds.
+      if (id === state.snapshotId) {
+        state.snapshotId = null;
+        state.builtAt = null;
+      }
+    }
+  }
+}
+
+/**
+ * THE COPY, FOUND BY ITS NAME rather than through the id the state row
+ * mirrors, and mirrored again when the two disagree.
+ *
+ * WHY. leaderboard:cash serves whatever the DOCUMENT's `serve` says. If the
+ * state row is deleted or reset by hand while the copy is served (to clear a
+ * stuck build, say), the mirror forgets the copy: the kill switch then
+ * patched nothing while reporting "none", and the tick, which trusts the
+ * mirror, never put it right. A frozen board, leavers' names and all, was
+ * served for as long as nobody looked. Found by review, 2026-10-13.
+ *
+ * Read by `configure` every time (a CLI call; the 65 KB is nothing there) and
+ * by the tick only when the mirror holds no id: before the first build that
+ * is an empty index read, and after a lost state row it happens once.
+ */
+async function relinkCopy(ctx: MutationCtx, state: R.State) {
+  const docs = await ctx.db.query("leaderboardSnapshots").withIndex("by_name", (q) => q.eq("name", "cash")).take(10);
+  const first = docs[0];
+  if (!first) {
     state.snapshotId = null;
     state.builtAt = null;
+  } else if (state.snapshotId !== String(first._id)) {
+    state.snapshotId = String(first._id);
+    state.builtAt = first.builtAt;
+    state.version = first.version;
+    state.serve = first.serve;
+    state.why = first.why ?? null;
   }
+  return docs;
 }
 
 /** A build that was not kept, for whatever reason: counted, and the grace clock starts. */
@@ -151,15 +191,29 @@ async function bookBuild(ctx: MutationCtx, trigger: string, force: boolean): Pro
   const nowMs = Date.parse(nowIso);
   let changed = false;
 
+  // THE MIRROR LOST THE COPY (the state row deleted or reset by hand): find it
+  // by name and mirror what it really serves, before anything below trusts
+  // the mirror. Otherwise the tick never reads the document.
+  let found: string[] | undefined;
+  if (!state.snapshotId) {
+    const docs = await relinkCopy(ctx, state);
+    if (docs.length) {
+      found = docs.map((d) => String(d._id));
+      changed = true;
+    }
+  }
+
   // SWITCHED OFF, the repo default: nothing is built, and a copy still marked
   // as served is put right (configure off does this in its own transaction;
-  // this catches a state row edited by hand).
+  // this catches a state row edited or deleted by hand, and both appState
+  // rows deleted, which reads as off).
   if (config.mode === "off") {
     if (state.serve !== "none") {
-      await setServe(ctx, state, "none", "off");
+      await setServe(ctx, state, "none", "off", { ids: found });
       await writeState(ctx, R.STATE_KEY, state);
       return { do: "none", why: "off", healed: true };
     }
+    if (changed) await writeState(ctx, R.STATE_KEY, state);
     return { do: "none", why: "off" };
   }
 
@@ -244,6 +298,9 @@ export const configure = internalMutation({
     const refuse = (code: string, why: string) => ({ ok: false, code, why });
     const actor = a.actorName.trim();
     if (!actor) return refuse("no-actor", "Say who is changing it: actorName.");
+    // THE COPY ITSELF, by name: the switch patches every row leaderboard:cash
+    // could serve, whatever the state row remembers (relinkCopy says why).
+    const docs = await relinkCopy(ctx, state);
 
     const next: R.Config = { ...prev, pilotIds: [...prev.pilotIds] };
     if (a.mode !== undefined) next.mode = a.mode;
@@ -276,7 +333,7 @@ export const configure = internalMutation({
         if (!Number.isInteger(a.pilotSample) || a.pilotSample < 0 || a.pilotSample > R.PILOT_MAX) {
           return refuse("bad-sample", `pilotSample must be a whole number from 0 to ${R.PILOT_MAX}.`);
         }
-        const snap = await snapshotDoc(ctx);
+        const snap = docs[0];
         if (!snap) return refuse("no-snapshot", "pilotSample picks from the stored copy, and there is none yet: run shadow until a build is kept.");
         const picked = R.spreadSample(snap.rows, snap.dupIds, a.pilotSample);
         ids.push(...picked);
@@ -303,7 +360,7 @@ export const configure = internalMutation({
       const stale = R.staleReason({ mode: next.mode, state: { ...state, serve }, config: next, nowIso });
       if (stale) { serve = "none"; why = stale; }
     }
-    await setServe(ctx, state, serve, why, next.pilotIds);
+    await setServe(ctx, state, serve, why, { pilotIds: next.pilotIds, ids: docs.map((d) => String(d._id)) });
     await writeState(ctx, R.STATE_KEY, state);
 
     let build: string | null = null;
