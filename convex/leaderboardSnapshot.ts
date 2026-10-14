@@ -403,7 +403,9 @@ export const rosterFingerprint = internalQuery({
  * FIFTY STUDENTS, AS THE COPY HOLDS THEM. Each row goes through
  * compactStudent here, inside the query, so no cash history, email or other
  * field ever reaches the action. Enrolment is the same roster lookup the live
- * read makes (leaderboard.rosterHit). Never logs.
+ * read makes (leaderboard.rosterHit). Never logs. Says which version of
+ * compactStudent made its rows, so `write` can refuse a build that straddled
+ * a deploy.
  */
 export const compactPage = internalQuery({
   args: { cursor: v.optional(v.union(v.string(), v.null())) },
@@ -420,7 +422,7 @@ export const compactPage = internalQuery({
       if (hit) { enrolled++; lookupBytes += sizeOf(hit); }
       rows.push(compactStudent(raw, Boolean(hit)));
     }
-    return { rows, newest, bytes, lookupBytes, enrolled, cursor: page.continueCursor, isDone: page.isDone };
+    return { version: LEADERBOARD_SNAPSHOT_VERSION, rows, newest, bytes, lookupBytes, enrolled, cursor: page.continueCursor, isDone: page.isDone };
   },
 });
 
@@ -444,10 +446,12 @@ export const build = internalAction({
       const rows: SnapRow[] = [];
       let cursor: string | null = null;
       let newest = 0, enrolled = 0;
+      const pageVersions = new Set<number>();
       for (;;) {
         if (pages >= R.MAX_PAGES) throw new Error("too-many-pages");
         const p: any = await ctx.runQuery(internal.leaderboardSnapshot.compactPage, { cursor });
         pages++;
+        pageVersions.add(Number(p.version));
         for (const r of p.rows as SnapRow[]) rows.push(r);
         newest = Math.max(newest, p.newest);
         enrolled += p.enrolled;
@@ -462,7 +466,7 @@ export const build = internalAction({
       stage = "write";
       const w: any = await ctx.runMutation(internal.leaderboardSnapshot.write, {
         runId, startedAt, rows, newestCreationTime: newest, enrolled, rosterSteady, syncAt: fp1.syncAt,
-        pages, tookMs: Date.now() - t0, estBytesRead,
+        pageVersions: [...pageVersions], pages, tookMs: Date.now() - t0, estBytesRead,
       });
       out = { ok: w.ok === true, why: w.why, rows: rows.length, enrolled, pages, estBytesRead };
     } catch (e) {
@@ -492,6 +496,8 @@ export const write = internalMutation({
     enrolled: v.number(),
     rosterSteady: v.boolean(),
     syncAt: v.union(v.string(), v.null()),
+    /** The compactStudent version each page was made by (compactPage). Missing: refused. */
+    pageVersions: v.optional(v.array(v.number())),
     pages: v.number(),
     tookMs: v.number(),
     estBytesRead: v.number(),
@@ -512,6 +518,19 @@ export const write = internalMutation({
       state.lastAttempt = { at: nowIso, ok: false, why: "off" };
       await writeState(ctx, R.STATE_KEY, state);
       return { ok: false, why: "off" };
+    }
+    // EVERY PAGE MADE BY THIS CODE'S compactStudent. A deploy that bumps the
+    // version can land between a build's pages, and Convex runs each page and
+    // this write with the code current at the time: rows compacted by the old
+    // rule would be stamped with the new number, and the version gate --
+    // which exists for exactly that deploy -- would serve them. Refused; the
+    // tick then sees the old version on record and rebuilds at once. (Review,
+    // 2026-10-13.)
+    const pv = a.pageVersions ?? [];
+    if (!(pv.length > 0 && pv.every((x) => x === LEADERBOARD_SNAPSHOT_VERSION))) {
+      noteRefusal(state, nowIso, "version-moved", a.estBytesRead);
+      await writeState(ctx, R.STATE_KEY, state);
+      return { ok: false, why: "version-moved" };
     }
 
     const verdict = R.acceptBuild({

@@ -369,7 +369,8 @@ console.log("\n5. The build's guards: the lease, the switch, the roster, one row
   const leaseRun = w.stateOf().lease.runId;
   const args = (o) => ({
     runId: leaseRun, startedAt: T0, rows: [{ id: "r1", wildcatCashEarned: 5 }], newestCreationTime: 1, enrolled: 1,
-    rosterSteady: true, syncAt: null, pages: 1, tookMs: 1, estBytesRead: 1, ...(o || {}),
+    rosterSteady: true, syncAt: null, pageVersions: [w.mods.leaderboardRules.LEADERBOARD_SNAPSHOT_VERSION],
+    pages: 1, tookMs: 1, estBytesRead: 1, ...(o || {}),
   });
   const wrong = await w.rt.run("leaderboardSnapshot.write", args({ runId: "lb_not_mine" }));
   check("write refuses a run that does not hold the lease, and writes nothing",
@@ -425,6 +426,28 @@ console.log("\n5. The build's guards: the lease, the switch, the roster, one row
   w.rt.actx.runQuery = real;
   check("a roster replace during the build: refused, the previous copy keeps serving",
     moved.ok === false && moved.why === "roster-moved" && w.snapRows()[0].buildId === before && w.snapRows()[0].serve === "all", J(moved));
+
+  // A deploy that bumps the copy's version lands between a build's pages
+  // (review, 2026-10-13): rows made by the old compactStudent must never be
+  // kept under the new number, which the version gate would then serve.
+  await w.rt.run("leaderboardSnapshot.runNow", { actorName: "Test Admin" });
+  const [job5] = w.rt.take("leaderboardSnapshot.build");
+  let pageNo = 0;
+  w.rt.actx.runQuery = async (ref, a) => {
+    const out = await real(ref, a);
+    if (String(ref).endsWith("compactPage") && ++pageNo === 1) out.version -= 1;
+    return out;
+  };
+  const straddled = await w.rt.run(job5.path, job5.args);
+  w.rt.actx.runQuery = real;
+  await w.rt.run("leaderboardSnapshot.runNow", { actorName: "Test Admin" });
+  w.rt.take("leaderboardSnapshot.build");
+  const bare = await w.rt.run("leaderboardSnapshot.write", {
+    ...args({ runId: w.stateOf().lease.runId, startedAt: clock.iso, rows: w.snapRows()[0].rows, enrolled: w.stateOf().lastOk.enrolled }), pageVersions: undefined,
+  });
+  check("a build whose pages were made by another version of compactStudent is not kept (a deploy landed mid-build)",
+    straddled.ok === false && straddled.why === "version-moved" && bare.ok === false && bare.why === "version-moved" &&
+    w.snapRows()[0].buildId === before && w.snapRows()[0].serve === "all" && w.stateOf().lease === null, J([straddled, bare]));
 
   // A half-cleared roster (a sync that died): held, then kept when a later build agrees.
   const roster = w.store.rows("psRoster");
