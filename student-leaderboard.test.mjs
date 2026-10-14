@@ -51,6 +51,14 @@ console.log("\n-- enrolment is DERIVED, not read off the record --");
     /same DEFINITION as appData/i.test(server));
   // The cheaper method is the point: this runs on every portal load.
   check("the read cost is recorded", /1,514 documents|about 1,514/.test(server));
+  // THE STORED COPY (2026-10-13). The read above is now the live fallback;
+  // a served copy is one document by index, with the viewer's own row placed
+  // live, and both paths go through the ONE ranking call.
+  check("the copy is read by its index, one document", /withIndex\("by_name"/.test(server));
+  check("the viewer is placed in it live, through the tested rule", /placeViewer\(/.test(server));
+  check("and there is exactly one ranking call for both paths",
+    (server.match(/cashLeaderboard\(\{/g) || []).length === 1);
+  check("the new read cost is recorded", /COST, measured 2026-10-13/.test(server));
   // The ranking rule still filters, so a caller passing enrolled:false is honoured.
   check("the rule still drops unenrolled students",
     /s\.enrolled !== false/.test(readFileSync(new URL("./convex/leaderboardRules.ts", import.meta.url), "utf8")));

@@ -42,7 +42,10 @@ const check = (n, c, why) => {
 const ALLOWED = {
   "appData.ts:load:students": "every staff page load needs every student row; the cash-history copy riding on " +
     "each row is moved off it in step 3 (2026-10-05 plan). Measured nightly as appData:load.",
-  "leaderboard.ts:cash:students": "ranks every student; same step 3. Measured nightly as leaderboard:cash.",
+  // Since 2026-10-13 the board ranks from a stored copy (leaderboardSnapshot.ts);
+  // this read is what it falls back to.
+  "leaderboard.ts:liveBoardRows:students": "kill-switch and fallback path only; step 3 shrinks it. " +
+    "Measured nightly as leaderboard:cash.",
   // Reached from the browser through the admin's "Sync now" (sisManual:runNow
   // runs sisAction.syncFromPowerSchool, which runs these), as well as the cron.
   "sisSync.ts:syncStudents:students": "the PowerSchool sync matches every incoming student against every " +
@@ -263,6 +266,16 @@ console.log("\n3. The scan has teeth");
   const okF = scan(narrowedF).filter((s) => s.decl === "oneWeek");
   check("  ...while a filter inside an eq index range stays bounded",
     okF.length === 1 && okF[0].reachable && okF[0].bounded, JSON.stringify(okF));
+
+  // THE LEADERBOARD'S COPY (2026-10-13): the fallback is allowed, a second
+  // whole read inside the query itself is not.
+  const inCash = { ...files, "leaderboard.ts": files["leaderboard.ts"].replace(
+    "    const me = await requireStudentSelf(ctx);\n",
+    "    const me = await requireStudentSelf(ctx);\n    const everyone = await ctx.db.query(\"students\").collect();\n") };
+  const caughtCash = scan(inCash).filter((s) => s.reachable && !s.bounded && !ALLOWED[sigOf(s)]);
+  check("a students collect planted inside leaderboard:cash is caught as unlisted",
+    inCash["leaderboard.ts"] !== files["leaderboard.ts"] && caughtCash.some((s) => s.file === "leaderboard.ts" && s.decl === "cash"),
+    JSON.stringify(caughtCash.map((s) => s.decl)));
 
   const commented = { ...files, "leaderboard.ts": files["leaderboard.ts"] +
     "\n// const x = await ctx.db.query(\"students\").collect();\n/* await ctx.db.query(\"legacyMirror\").collect(); */\n" };
