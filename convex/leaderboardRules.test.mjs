@@ -307,6 +307,31 @@ console.log("\n-- the viewer's own row is always live --");
   check("a viewer whose id two rows share is ranked live: viewer-duplicated", !d1.ok && d1.why === "viewer-duplicated");
   const late = placeViewer(SNAP, { id: studentIdOf(SCHOOL[3]), row: ROWS[3], creationTime: SNAP.newestCreationTime + 1 });
   check("a new row carrying an id the copy already holds is ranked live too", !late.ok && late.why === "viewer-duplicated");
+  // AN ID EDITED ONTO ANOTHER ROW (review fuzz, 2026-10-13): the viewer
+  // existed at the build and now carries an id another row held then. Laid
+  // over that row, the copy dropped that student and kept the viewer's old
+  // row; it must go live instead, and whatever it serves must be the live answer.
+  let took = 0, placedOver = 0, wrong = 0;
+  SCHOOL.forEach((me, i) => {
+    const other = SCHOOL[(i + 7) % SCHOOL.length];
+    const theirs = studentIdOf(other);
+    if (other === me || theirs === studentIdOf(me) || SNAP.dupIds.includes(theirs)) return;
+    took++;
+    const over = { legacyId: theirs };
+    const v = viewerOf(me, over);
+    const placed = placeViewer(SNAP, v);
+    if (!placed.ok) return;
+    placedOver++;
+    const liveNow = SCHOOL.map((r) => ({ ...(r === me ? { ...r, ...over } : r), enrolled: enrolledOf(r) }));
+    for (const band of ["academy", "hs", "ms"]) {
+      if (J(cashLeaderboard({ students: placed.students, band, topN: 10, viewerId: v.id })) !==
+          J(cashLeaderboard({ students: liveNow, band, topN: 10, viewerId: v.id }))) wrong++;
+    }
+  });
+  check("a viewer who took an id another row holds is ranked live, never laid over that row (viewer-unplaced)",
+    took > 300 && placedOver === 0 && wrong === 0 &&
+    placeViewer(SNAP, viewerOf(SCHOOL[0], { legacyId: studentIdOf(SCHOOL[7]) })).why === "viewer-unplaced",
+    `${placedOver} of ${took} placed over another row, ${wrong} answers differ from live`);
   const placedSame = placeViewer(SNAP, viewerOf(SCHOOL[10]));
   check("the viewer's row is replaced where it stood, so ties break as they do live",
     placedSame.ok && placedSame.students.length === ROWS.length && placedSame.students[10] !== ROWS[10] &&
@@ -349,17 +374,19 @@ console.log("\n-- the copy holds only what the ranking reads --");
   };
   const body = ["compactStudent", "earnedOf", "studentIdOf"].map(fnText);
   const hash = createHash("sha256").update(body.map((b) => b.replace(/\s+/g, " ")).join("\n")).digest("hex").slice(0, 16);
-  const PINNED = { version: 1, hash: "595a47853a3a4f41" };
+  const PINNED = { version: 2, hash: "d77bc36b03ca5eaa" };
   check("the copy's version is pinned to compactStudent: change one, change both",
     body.every(Boolean) && LEADERBOARD_SNAPSHOT_VERSION === PINNED.version && hash === PINNED.hash,
     `version ${LEADERBOARD_SNAPSHOT_VERSION}, hash ${hash}. If compactStudent changed on purpose, bump ` +
     `LEADERBOARD_SNAPSHOT_VERSION and pin { version, hash } here`);
 
-  const shape = ROWS.every((r) => Object.keys(r).every((k) => ["id", "enrolled", "firstName", "lastName", "grade", "wildcatCashEarned"].includes(k)));
+  const shape = ROWS.every((r) => Object.keys(r).every((k) => ["id", "t", "enrolled", "firstName", "lastName", "grade", "wildcatCashEarned"].includes(k)));
   check("no row holds a field outside the stored validator", shape);
   const leavers = ROWS.filter((r) => r.enrolled === false);
-  check("a student who has left is held as { id, enrolled: false } and nothing else",
-    leavers.length > 20 && leavers.every((r) => J(Object.keys(r).sort()) === J(["enrolled", "id"])));
+  check("a student who has left is held as { id, t, enrolled: false } and nothing else",
+    leavers.length > 20 && leavers.every((r) => J(Object.keys(r).sort()) === J(["enrolled", "id", "t"])));
+  check("every row carries its student row's creation time, which never changes",
+    ROWS.every((r, i) => r.t === SCHOOL[i]._creationTime) && compactStudent({ legacyId: "N" }, true).t === 0);
   const unranked = ROWS.filter((r) => r.enrolled !== false && !(r.wildcatCashEarned > 0));
   check("rows with zero or unknown earnings hold no names",
     unranked.length > 20 && unranked.every((r) => !("firstName" in r) && !("lastName" in r)));

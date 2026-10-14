@@ -35,6 +35,9 @@ const CASES = [
   { guard: "the overlay keeps the stored figure for the viewer", file: RANK, test: RANK_TEST,
     from: "    students[at] = viewer.row;", to: "    students[at] = snap.rows[at];",
     mustFail: "the viewer's own changes since the build give the live answer (earned, zeroed, left, regraded, renamed)" },
+  { guard: "the viewer is laid over whatever row holds their id (the creation time unchecked)", file: RANK, test: RANK_TEST,
+    from: '  if (at >= 0 && snap.rows[at].t !== viewer.creationTime) return { ok: false, why: "viewer-unplaced" };\n', to: "",
+    mustFail: "a viewer who took an id another row holds is ranked live, never laid over that row (viewer-unplaced)" },
   { guard: "Date.now() in leaderboard.ts (a clock inside a cached query)", file: BOARD, test: E2E,
     from: "    const me = await requireStudentSelf(ctx);\n", to: "    const me = await requireStudentSelf(ctx);\n    const asOf = Date.now();\n",
     mustFail: "leaderboard.ts has no clock" },
@@ -47,8 +50,8 @@ const CASES = [
     from: "  if (amount !== null && amount > 0) {\n", to: "  if (true) {\n",
     mustFail: "rows with zero or unknown earnings hold no names" },
   { guard: "compactStudent changes and the version does not", file: RANK, test: RANK_TEST,
-    from: "  const id = studentIdOf(raw);\n  if (!enrolled) return { id, enrolled: false };",
-    to: "  const id = String(studentIdOf(raw));\n  if (!enrolled) return { id, enrolled: false };",
+    from: "  const id = studentIdOf(raw);\n  const t = ",
+    to: "  const id = String(studentIdOf(raw));\n  const t = ",
     mustFail: "the copy's version is pinned to compactStudent: change one, change both" },
 
   // ---- the build

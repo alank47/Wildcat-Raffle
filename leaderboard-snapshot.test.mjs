@@ -244,7 +244,7 @@ console.log("\n2. Shadow builds the copy and serves nobody");
     st.lastOk.dupIds === 1 && st.serve === "none" && st.builtAt === doc.builtAt && st.lease === null, J(st.lastOk));
   check("no copy row holds a cash history, an email, or any field outside the validator",
     !J(doc).includes("wildcatCashTransactions") && !J(doc).includes("students.example") &&
-    doc.rows.every((r) => Object.keys(r).every((k) => ["id", "enrolled", "firstName", "lastName", "grade", "wildcatCashEarned"].includes(k))));
+    doc.rows.every((r) => Object.keys(r).every((k) => ["id", "t", "enrolled", "firstName", "lastName", "grade", "wildcatCashEarned"].includes(k))));
   const v = w.students()[2];
   w.rec.reads.length = 0;
   await w.cash(v);
@@ -335,12 +335,18 @@ console.log("\n4. Every reason not to serve the copy ranks live");
   const g = await wentLive(ghost);
   check("a viewer whose id changed since the build (viewer-unplaced): live",
     g.live && g.logs.some((l) => l === "leaderboard:cash live fallback: viewer-unplaced"), J(g.logs));
+  // An id edited onto another student's row since the build (review fuzz,
+  // 2026-10-13): never laid over that student's row in the copy.
+  const thief = { ...viewers[6], legacyId: viewers[8].legacyId };
+  const th = await wentLive(thief);
+  check("a viewer whose id was edited to one another student held at the build: live",
+    viewers[8].legacyId && th.live && th.logs.some((l) => l === "leaderboard:cash live fallback: viewer-unplaced"), J(th.logs));
   const dup = viewers.find((s) => s.legacyId === "LBXDUP");
   const d = await wentLive(dup);
   check("a viewer whose id two rows share (viewer-duplicated): live",
     d.live && d.logs.some((l) => l === "leaderboard:cash live fallback: viewer-duplicated"));
   const leaks = (lines) => lines.filter((l) => FIXTURE_TOKENS.some((t) => l.includes(t)));
-  check("each fallback's log line names the reason, never the student", leaks([...g.logs, ...d.logs]).length === 0);
+  check("each fallback's log line names the reason, never the student", leaks([...g.logs, ...th.logs, ...d.logs]).length === 0);
 
   // A student added after the build is placed at the end, from the copy.
   const newId = await w.store.db.insert("students", {

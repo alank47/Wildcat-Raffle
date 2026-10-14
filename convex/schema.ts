@@ -2371,8 +2371,8 @@ export default defineSchema({
    * name and amount belongs behind a validator with one reader. This validator
    * admits no other field; leaderboardRules.compactStudent decides what fills
    * it, and a copy written by an older compactStudent (`version`) is never
-   * served. About 65 KB for 763 students, growing about 100 bytes a student,
-   * never with the cash ledger.
+   * served. About 65 KB for 763 students before `t` (8.4 KB more with it: 11 bytes a row),
+   * growing about 110 bytes a student, never with the cash ledger.
    */
   leaderboardSnapshots: defineTable({
     name: v.literal("cash"),
@@ -2395,7 +2395,12 @@ export default defineSchema({
     rows: v.array(v.object({
       /** studentIdOf(raw), never "". */
       id: v.string(),
-      /** A student who has left is { id, enrolled: false } and nothing else. */
+      /**
+       * The student row's _creationTime: which row this is, so a viewer whose
+       * id changed to one this row holds is never laid over it (placeViewer).
+       */
+      t: v.number(),
+      /** A student who has left is { id, t, enrolled: false } and nothing else. */
       enrolled: v.optional(v.literal(false)),
       /** Names only for a student who has earned something: no other name is ever read. */
       firstName: v.optional(v.string()),

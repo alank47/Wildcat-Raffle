@@ -24,8 +24,9 @@ import {
  * Nothing else. Every other child's earnings stay here, which is what makes
  * this a leaderboard rather than a list of who has the least.
  *
- * COST, measured 2026-10-13: snapshot path ≈ own row + one ~65 KB document +
- * one roster row; live fallback 4.88 MiB. That is about 72 KB a call against
+ * COST, measured 2026-10-13: snapshot path ≈ own row + one ~65 KB document
+ * (about 73 KB from version 2, whose rows carry their creation time) + one
+ * roster row; live fallback 4.88 MiB. That is about 72-81 KB a call against
  * 4.88 MiB, and nothing in it grows with the cash ledger. The live fallback is
  * the old read, kept for the kill switch and for the few viewers the copy
  * cannot place; it still meets Convex's 16 MiB wall around January 2027, and

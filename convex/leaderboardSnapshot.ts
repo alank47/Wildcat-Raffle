@@ -107,6 +107,7 @@ const codeOf = (why: unknown) => (typeof why === "string" && /^[a-z0-9-]{1,40}$/
 
 const snapRow = v.object({
   id: v.string(),
+  t: v.number(),
   enrolled: v.optional(v.literal(false)),
   firstName: v.optional(v.string()),
   lastName: v.optional(v.string()),

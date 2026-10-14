@@ -215,11 +215,13 @@ export function cashLeaderboard(opts: {
  * this number to the text of compactStudent: editing one without the other
  * fails the tests.
  */
-export const LEADERBOARD_SNAPSHOT_VERSION = 1;
+export const LEADERBOARD_SNAPSHOT_VERSION = 2;
 
 /** One student as the stored copy holds them. The schema validator admits nothing else. */
 export type SnapRow = {
   id: string;
+  /** The student row's _creationTime (0 if it had none): which row this is. */
+  t: number;
   enrolled?: false;
   firstName?: string;
   lastName?: string;
@@ -240,6 +242,9 @@ export type SnapRow = {
  * WHY EACH FIELD IS KEPT THE WAY IT IS:
  *   - `id` is studentIdOf(raw), already trimmed, and studentIdOf checks `id`
  *     first, so the copy is known by exactly the identity the raw row was.
+ *   - `t` is the raw row's _creationTime, which never changes: an id can be
+ *     edited onto another row, and placeViewer must know the row under an id
+ *     is still the viewer's own (version 2, review 2026-10-13).
  *   - A student who has left keeps their id and `enrolled: false` and nothing
  *     else: the ranking drops them before reading anything more, and a name
  *     kept here would be a former student's name sitting in a document their
@@ -254,9 +259,10 @@ export type SnapRow = {
  */
 export function compactStudent(raw: LeaderStudent, enrolled: boolean): SnapRow {
   const id = studentIdOf(raw);
-  if (!enrolled) return { id, enrolled: false };
+  const t = typeof raw._creationTime === "number" && Number.isFinite(raw._creationTime) ? raw._creationTime : 0;
+  if (!enrolled) return { id, t, enrolled: false };
   const amount = earnedOf(raw);
-  const row: SnapRow = { id, wildcatCashEarned: amount };
+  const row: SnapRow = { id, t, wildcatCashEarned: amount };
   if (typeof raw.grade === "string") row.grade = raw.grade;
   if (amount !== null && amount > 0) {
     if (typeof raw.firstName === "string") row.firstName = raw.firstName;
@@ -300,7 +306,11 @@ export type PlaceResult =
  *   - a viewer created after the build whose id is already in the copy: the
  *     same, a second row with an old id;
  *   - a viewer from before the build who is not in it: their id changed since
- *     (a legacyId set, say), and adding them would count them twice.
+ *     (a legacyId set, say), and adding them would count them twice;
+ *   - a viewer from before the build whose new id is one ANOTHER row held at
+ *     the build (the row under that id has a different creation time):
+ *     laying them over it would drop that student and keep the viewer's own
+ *     old row, a board neither live nor old. Found by a fuzz, 2026-10-13.
  * A viewer created after the build and not in it is new, and is added at the
  * end, which is where the live read would return them.
  */
@@ -312,6 +322,7 @@ export function placeViewer(
   const at = snap.rows.findIndex((r) => r.id === viewer.id);
   const isNew = viewer.creationTime > snap.newestCreationTime;
   if (at >= 0 && isNew) return { ok: false, why: "viewer-duplicated" };
+  if (at >= 0 && snap.rows[at].t !== viewer.creationTime) return { ok: false, why: "viewer-unplaced" };
   if (at >= 0) {
     const students = snap.rows.slice();
     students[at] = viewer.row;

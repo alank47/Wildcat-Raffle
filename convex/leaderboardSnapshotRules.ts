@@ -532,7 +532,7 @@ export type CompareCounts = {
 export function snapRowKey(r: Partial<SnapRow> | undefined): string {
   const x = (r ?? {}) as Partial<SnapRow>;
   return JSON.stringify([
-    x.id ?? null, x.enrolled === false, x.firstName ?? null, x.lastName ?? null, x.grade ?? null, x.wildcatCashEarned ?? null,
+    x.id ?? null, x.t ?? null, x.enrolled === false, x.firstName ?? null, x.lastName ?? null, x.grade ?? null, x.wildcatCashEarned ?? null,
   ]);
 }
 
