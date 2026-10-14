@@ -158,7 +158,8 @@ export function serveFor(mode: Mode): Serve {
 // ===========================================================================
 
 export type Lease = { runId: string; startedAt: string; expiresAt: string } | null;
-export type PendingDrop = { at: string; enrolled: number; syncAt: string | null } | null;
+/** A held build: when it read, what it counted (rows null in a state row written before 2026-10-13's fix). */
+export type PendingDrop = { at: string; enrolled: number; rows: number | null; syncAt: string | null } | null;
 export type DayCount = { day: string; builds: number; refusals: number; bytesRead: number };
 export type LastOk = {
   at: string;
@@ -216,7 +217,10 @@ export function stateOrEmpty(raw: unknown): State {
     lastAttempt: r.lastAttempt && typeof r.lastAttempt === "object" ? r.lastAttempt : null,
     firstFailAt: str(r.firstFailAt),
     pendingDrop: r.pendingDrop && typeof r.pendingDrop === "object" && typeof r.pendingDrop.at === "string"
-      ? { at: r.pendingDrop.at, enrolled: Number(r.pendingDrop.enrolled), syncAt: str(r.pendingDrop.syncAt) } : null,
+      ? {
+          at: r.pendingDrop.at, enrolled: Number(r.pendingDrop.enrolled),
+          rows: typeof r.pendingDrop.rows === "number" ? r.pendingDrop.rows : null, syncAt: str(r.pendingDrop.syncAt),
+        } : null,
     buildsByDay: Array.isArray(r.buildsByDay) ? r.buildsByDay.filter((d: any) => d && typeof d.day === "string") : [],
     lastCompare: r.lastCompare && typeof r.lastCompare === "object" ? r.lastCompare : null,
   };
@@ -292,8 +296,8 @@ export type TickDecision = { build: boolean; markStale: null | "failing" | "stal
  *   3. inside a sync window: no build.
  *   4. no copy yet, or one written by an older compactStudent: build.
  *   5. (force, the CLI's runNow: build.)
- *   6. a held enrolment drop: build once it is DROP_RECHECK_MINUTES old, in
- *      or out of school hours, and not before.
+ *   6. a held drop (enrolment, or the row count): build once it is
+ *      DROP_RECHECK_MINUTES old, in or out of school hours, and not before.
  *   7. otherwise by age: schoolEveryMinutes on a weekday from 06:45 to 16:30
  *      school time, offHoursEveryMinutes otherwise, each less the slack.
  * Age is measured in UTC milliseconds, so the 1 November clock change cannot
@@ -342,9 +346,9 @@ export function decideSnapshotTick(input: {
 // ===========================================================================
 
 export type BuildVerdict =
-  | { verdict: "accept"; why: "first" | "steady" | "drop-confirmed" | "drop-new-sync" }
-  | { verdict: "refuse"; code: "roster-moved" | "no-rows" | "fewer-rows" | "too-many-rows" }
-  | { verdict: "hold"; pendingDrop: { at: string; enrolled: number; syncAt: string | null } };
+  | { verdict: "accept"; why: "first" | "steady" | "drop-confirmed" | "drop-new-sync" | "rows-confirmed" }
+  | { verdict: "refuse"; code: "roster-moved" | "no-rows" | "too-many-rows" }
+  | { verdict: "hold"; code: "drop-held" | "rows-held"; pendingDrop: NonNullable<PendingDrop> };
 
 /**
  * KEEP WHAT A BUILD READ, OR NOT. A refused or held build leaves the last
@@ -355,8 +359,15 @@ export type BuildVerdict =
  *     sync's clearRoster deletes oldest-first and upsertRoster inserts new
  *     rows, so a replace in progress changes the oldest or newest roster row,
  *     and half the school would read as having left.
- *   - NO ROWS, or FEWER ROWS THAN LAST TIME: nothing deletes students (the sync
- *     archives nobody), so fewer rows is a paging fault, not a fact.
+ *   - NO ROWS: refused (every viewer would read as new and be ranked alone).
+ *   - FEWER ROWS THAN LAST TIME: no code deletes students (the sync archives
+ *     nobody), so a fall is first taken for a paging fault and HELD; it is
+ *     kept when a build at least 20 minutes later reads the same count (and
+ *     enrolment within 2). Refusing it outright, as the first version did,
+ *     meant one student row deleted by hand in the dashboard (the duplicate
+ *     behind a dupIds entry, say) wedged the copy for good: every build
+ *     refused, the copy stopped after the grace, and the tick rebuilt every
+ *     15 minutes round the clock. Found by review, 2026-10-13.
  *   - MORE THAN 7,000 ROWS: refused loudly, far before the 8,192 array limit.
  *   - ENROLMENT FELL BY MORE THAN max(15, 3%) WITH NO NEWER SYNC: a half-
  *     cleared roster left by a sync that died. Held, and kept only when a
@@ -383,18 +394,29 @@ export function acceptBuild(input: {
   if (rows <= 0) return { verdict: "refuse", code: "no-rows" };
   if (rows > MAX_ROWS) return { verdict: "refuse", code: "too-many-rows" };
   if (!prev) return { verdict: "accept", why: "first" };
-  if (rows < prev.rows) return { verdict: "refuse", code: "fewer-rows" };
+  const p = input.pendingDrop;
+  const heldEnough = (q: NonNullable<PendingDrop>) => {
+    const held = minutesSince(q.at, Date.parse(input.nowIso));
+    return held !== null && held >= DROP_RECHECK_MINUTES;
+  };
+  // A new hold starts from this build; a re-read that agrees too soon keeps
+  // the first one's time, so the wait is never restarted by agreeing.
+  const hold = (code: "drop-held" | "rows-held"): BuildVerdict =>
+    ({ verdict: "hold", code, pendingDrop: { at: input.nowIso, enrolled, rows, syncAt: input.syncAtNow } });
+  if (rows < prev.rows) {
+    if (p && p.rows === rows && Math.abs(enrolled - p.enrolled) <= DROP_AGREE) {
+      return heldEnough(p) ? { verdict: "accept", why: "rows-confirmed" } : { verdict: "hold", code: "rows-held", pendingDrop: p };
+    }
+    return hold("rows-held");
+  }
   const drop = prev.enrolled - enrolled;
   if (drop <= Math.max(15, 0.03 * prev.enrolled)) return { verdict: "accept", why: "steady" };
   const newerSync = input.syncAtNow !== null && (prev.syncAt === null || input.syncAtNow > prev.syncAt);
   if (newerSync) return { verdict: "accept", why: "drop-new-sync" };
-  const p = input.pendingDrop;
   if (p && Math.abs(enrolled - p.enrolled) <= DROP_AGREE) {
-    const held = minutesSince(p.at, Date.parse(input.nowIso));
-    if (held !== null && held >= DROP_RECHECK_MINUTES) return { verdict: "accept", why: "drop-confirmed" };
-    return { verdict: "hold", pendingDrop: p };
+    return heldEnough(p) ? { verdict: "accept", why: "drop-confirmed" } : { verdict: "hold", code: "drop-held", pendingDrop: p };
   }
-  return { verdict: "hold", pendingDrop: { at: input.nowIso, enrolled, syncAt: input.syncAtNow } };
+  return hold("drop-held");
 }
 
 // ===========================================================================

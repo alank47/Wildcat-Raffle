@@ -141,14 +141,26 @@ try {
     const A = (o) => R.acceptBuild({ ...base, ...o });
     check("the roster moved during the build: refused", J(A({ rosterSteady: false })) === J({ verdict: "refuse", code: "roster-moved" }));
     check("no rows at all: refused", A({ rows: 0, prev: null }).code === "no-rows");
-    check("fewer student rows than last time (nothing deletes students): refused", A({ rows: 762 }).code === "fewer-rows");
+    // ONE STUDENT ROW DELETED BY HAND (review, 2026-10-13): refusing every
+    // smaller build wedged the copy for good. A fall is held and re-read.
+    const fewer = A({ rows: 762 });
+    check("fewer student rows than last time is held, not kept and not refused for good",
+      fewer.verdict === "hold" && fewer.code === "rows-held" && fewer.pendingDrop.rows === 762 && fewer.pendingDrop.at === NOW, J(fewer));
+    check("  ...and kept when a build 20 minutes on reads the same count",
+      J(A({ rows: 762, pendingDrop: fewer.pendingDrop, nowIso: later(NOW, 20) })) === J({ verdict: "accept", why: "rows-confirmed" }));
+    const tooSoon = A({ rows: 762, pendingDrop: fewer.pendingDrop, nowIso: later(NOW, 15) });
+    const other = A({ rows: 740, pendingDrop: fewer.pendingDrop, nowIso: later(NOW, 30) });
+    check("  ...a re-read too soon stays held from the first time; a different count starts a new wait",
+      tooSoon.verdict === "hold" && tooSoon.pendingDrop.at === NOW &&
+      other.verdict === "hold" && other.pendingDrop.rows === 740 && other.pendingDrop.at === later(NOW, 30), J([tooSoon, other]));
+    check("  ...and a lost page that comes back is simply kept", A({ rows: 763, pendingDrop: fewer.pendingDrop, nowIso: later(NOW, 5) }).verdict === "accept");
     check("more than 7,000 rows: refused", A({ rows: 7001 }).code === "too-many-rows" && A({ rows: 7000 }).verdict === "accept");
     check("the first build is kept", J(A({ prev: null })) === J({ verdict: "accept", why: "first" }));
     check("the same, more rows, or more enrolled: kept", A({}).verdict === "accept" && A({ rows: 770, enrolled: 615 }).verdict === "accept");
     check("a small drop (within max(15, 3%)) is kept", A({ enrolled: 607 - 18 }).verdict === "accept");
     const h = A({ enrolled: 300 });
     check("a big enrolment drop with no new sync is held, not kept",
-      h.verdict === "hold" && h.pendingDrop.at === NOW && h.pendingDrop.enrolled === 300 && h.pendingDrop.syncAt === prev.syncAt, J(h));
+      h.verdict === "hold" && h.code === "drop-held" && h.pendingDrop.at === NOW && h.pendingDrop.enrolled === 300 && h.pendingDrop.syncAt === prev.syncAt, J(h));
     check("  ...the threshold is 15 for a small school", R.acceptBuild({ ...base, prev: { ...prev, enrolled: 100 }, enrolled: 84 }).verdict === "hold");
     const pending = h.pendingDrop;
     check("held, then a build 20 minutes later that agrees within 2: kept",

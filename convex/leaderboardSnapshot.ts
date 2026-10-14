@@ -524,7 +524,7 @@ export const write = internalMutation({
       nowIso: a.startedAt,
     });
     if (verdict.verdict !== "accept") {
-      const why = verdict.verdict === "hold" ? "drop-held" : verdict.code;
+      const why = verdict.code;
       if (verdict.verdict === "hold") state.pendingDrop = verdict.pendingDrop;
       noteRefusal(state, nowIso, why, a.estBytesRead);
       await writeState(ctx, R.STATE_KEY, state);

@@ -454,6 +454,21 @@ console.log("\n5. The build's guards: the lease, the switch, the roster, one row
   check("a build that throws is recorded as a failure with a short code, and releases the lease",
     thrown.ok === false && sf.lastAttempt.why === "page-threw" && sf.lease === null && sf.firstFailAt !== null, J(sf.lastAttempt));
   check("  ...and its log line is numbers only", LOGS.length === 1 && /^\[leaderboardSnapshot\] \{("[a-zA-Z]+":-?\d+,?)+\}$/.test(LOGS[0]), J(LOGS));
+
+  // ONE STUDENT ROW DELETED BY HAND (the duplicate behind a dupIds entry, say):
+  // held, read again, and kept -- not refused for good (review, 2026-10-13).
+  const victim = w.students().find((s) => s.legacyId === "LBXDUP");
+  await w.store.db.delete(victim._id);
+  clock.set("2026-10-13T20:18:00.000Z");
+  await w.rt.run("leaderboardSnapshot.runNow", { actorName: "Test Admin" });
+  const [r1] = await w.runBuilds();
+  const servedOn = w.snapRows()[0].rows.length === 60 && w.snapRows()[0].serve === "all";
+  clock.set("2026-10-13T20:43:00.000Z");
+  const t2 = await w.rt.run("leaderboardSnapshot.tick", {});
+  const [r2] = await w.runBuilds();
+  check("a student row deleted by hand: the build is held, and one 20 minutes on that agrees is kept",
+    r1.ok === false && r1.why === "rows-held" && servedOn && t2.why === "drop-recheck" && r2?.ok === true && r2.why === "rows-confirmed" &&
+    w.snapRows()[0].rows.length === 59 && w.stateOf().lastOk.rows === 59 && w.stateOf().pendingDrop === null, J([r1, t2, r2]));
   keepWrites(w);
 }
 
