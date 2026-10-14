@@ -124,6 +124,23 @@ try {
       decide(TUE_0803, 900, { extra: { lease: { runId: "x", startedAt: TUE_0803, expiresAt: later(TUE_0803, 5) } } }).markStale === "stale");
   }
 
+  console.log("\n-- a build that keeps failing backs off to the cadence --");
+  {
+    // Saturday 2026-10-17, 10:03 PDT: off hours, every 6 hours.
+    const SAT = "2026-10-17T17:03:00.000Z";
+    const failing = (failedFor, lastTry, now = SAT) =>
+      ({ firstFailAt: ago(now, failedFor), lastAttempt: { at: ago(now, lastTry), ok: false, why: "page-threw" } });
+    const backoff = decide(SAT, 600, { extra: failing(120, 30) });
+    check("a persistent failure off hours backs off: failing 2 hours, last try 30 minutes ago, no build",
+      backoff.build === false && /^backoff/.test(backoff.why), J(backoff));
+    check("  ...and tries again once the last try is the off-hours cadence old", decide(SAT, 600, { extra: failing(400, 360) }).build === true);
+    check("  ...inside the hour's grace every tick still retries", decide(SAT, 600, { extra: failing(30, 15) }).build === true);
+    check("  ...in school hours the 15-minute cadence is the retry", decide(TUE_0803, 600, { extra: failing(120, 15, TUE_0803) }).build === true &&
+      decide(TUE_0803, 600, { extra: failing(120, 5, TUE_0803) }).build === false);
+    check("  ...and a good last try is no reason to wait", decide(SAT, 600, {
+      extra: { firstFailAt: ago(SAT, 120), lastAttempt: { at: ago(SAT, 30), ok: true, why: "steady" } } }).build === true);
+  }
+
   console.log("\n-- a held enrolment drop is read again, 20 minutes on --");
   {
     const held = (m) => decide(TUE_0803, 600, { extra: { pendingDrop: { at: ago(TUE_0803, m), enrolled: 300, syncAt: null } } });

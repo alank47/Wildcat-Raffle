@@ -172,9 +172,14 @@ async function relinkCopy(ctx: MutationCtx, state: R.State) {
   return docs;
 }
 
-/** A build that was not kept, for whatever reason: counted, and the grace clock starts. */
-function noteRefusal(state: R.State, nowIso: string, why: string, bytesRead: number): void {
-  state.lastAttempt = { at: nowIso, ok: false, why };
+/**
+ * A build that was not kept, for whatever reason: counted, and the grace
+ * clock starts. `triedAt` is when the build was tried, if not now (a lapsed
+ * lease: when it was booked), which is what the backoff measures from.
+ */
+function noteRefusal(state: R.State, nowIso: string, why: string, bytesRead: number, triedAt?: string): void {
+  const tried = triedAt && Number.isFinite(Date.parse(triedAt)) ? triedAt : nowIso;
+  state.lastAttempt = { at: tried, ok: false, why };
   state.firstFailAt = state.firstFailAt ?? nowIso;
   state.buildsByDay = R.bumpDay(state.buildsByDay, nowIso.slice(0, 10), { refusals: 1, bytesRead });
   state.lease = null;
@@ -221,7 +226,7 @@ async function bookBuild(ctx: MutationCtx, trigger: string, force: boolean): Pro
   // action, or it threw before it could say so). Counted as a failure, so a
   // build that keeps dying runs out the grace like one that keeps failing.
   if (state.lease && Date.parse(state.lease.expiresAt) <= nowMs) {
-    noteRefusal(state, nowIso, "lapsed", 0);
+    noteRefusal(state, nowIso, "lapsed", 0, state.lease.startedAt);
     changed = true;
   }
 

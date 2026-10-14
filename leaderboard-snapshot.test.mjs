@@ -550,6 +550,8 @@ console.log("\n6. The tick: cadence, sync windows, staleness, self-healing");
   const lapsed = await w.rt.run("leaderboardSnapshot.tick", {});
   check("a lease that lapsed is counted as a failed build", lapsed.do === "build" && w.stateOf().firstFailAt === "2026-10-13T20:03:30.000Z" &&
     w.stateOf().lastAttempt.why === "lapsed" && w.stateOf().buildsByDay.some((d) => d.refusals > 0), J(lapsed));
+  check("  ...dated when it was booked, which is when the backoff counts from",
+    w.stateOf().lastAttempt.at === "2026-10-13T19:18:30.000Z", J(w.stateOf().lastAttempt));
   w.rt.take();
   // That one dies too. An hour of failure: stop serving.
   clock.set("2026-10-13T21:03:30.000Z");
@@ -626,6 +628,37 @@ console.log("\n6. The tick: cadence, sync windows, staleness, self-healing");
   check("in live, a lost state row is found again by the tick, and an old copy is still stopped (stale)",
     servedC && late.markStale === "stale" && w.snapRows()[0].serve === "none" && w.snapRows()[0].why === "stale",
     J([servedC, late, w.snapRows()[0].serve]));
+  keepWrites(w);
+}
+
+// ======================================================================
+console.log("\n6b. A build that keeps failing backs off nights and weekends");
+{
+  // Cadence is measured from the last GOOD build, so without a backoff a
+  // refusal that keeps happening re-read every student at every tick, around
+  // the clock (review, 2026-10-13). A Saturday, every cron firing, every
+  // build failing: about as many builds as the off-hours cadence makes.
+  clock.set("2026-10-16T23:03:00.000Z");
+  const w = world();
+  await w.configure({ mode: "live", acceptWithoutCompare: true });
+  await w.runBuilds();
+  const servedFri = w.snapRows()[0].serve === "all";
+  w.rec.forbid.add("students");
+  let ticks = 0, builds = 0;
+  for (let h = 0; h < 24; h++) {
+    if (h === 13 || h === 19) continue; // crons.ts never fires in those hours
+    for (const m of [3, 18, 33, 48]) {
+      clock.set(`2026-10-17T${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:00.000Z`);
+      const t = await w.rt.run("leaderboardSnapshot.tick", {});
+      ticks++;
+      if (t.do === "build") builds++;
+      await w.runBuilds();
+    }
+  }
+  w.rec.forbid.delete("students");
+  check("a Saturday of failing builds makes a handful, not one at every tick",
+    servedFri && ticks === 88 && builds >= 4 && builds <= 8 && w.snapRows()[0].serve === "none" && w.snapRows()[0].why === "failing",
+    J({ servedFri, ticks, builds, serve: w.snapRows()[0].serve }));
   keepWrites(w);
 }
 

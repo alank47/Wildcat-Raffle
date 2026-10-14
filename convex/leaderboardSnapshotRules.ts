@@ -304,7 +304,14 @@ export type TickDecision = { build: boolean; markStale: null | "failing" | "stal
  *   6. a held drop (enrolment, or the row count): build once it is
  *      DROP_RECHECK_MINUTES old, in or out of school hours, and not before.
  *   7. otherwise by age: schoolEveryMinutes on a weekday from 06:45 to 16:30
- *      school time, offHoursEveryMinutes otherwise, each less the slack.
+ *      school time, offHoursEveryMinutes otherwise, each less the slack;
+ *   8. but BACK OFF a persistent failure: once builds have failed for
+ *      failGraceMinutes, try again only when the last try is that same
+ *      cadence old. Age is measured from the last GOOD build, so without
+ *      this a refusal that kept happening re-read every student at every
+ *      tick, nights and weekends included (about 66 builds on a Saturday
+ *      instead of 4). Inside the grace every tick still retries, so a one-off
+ *      refusal costs one cadence at most. (Review, 2026-10-13.)
  * Age is measured in UTC milliseconds, so the 1 November clock change cannot
  * move it; only which cadence applies is read off the school's wall clock.
  * With no time zone set, the school cadence applies (erring towards a fresher
@@ -342,8 +349,13 @@ export function decideSnapshotTick(input: {
   const every = school ? config.schoolEveryMinutes : config.offHoursEveryMinutes;
   const age = minutesSince(state.builtAt, nowMs);
   const label = school ? "school-hours" : "off-hours";
-  if (age === null || age >= every - CADENCE_SLACK_MINUTES) return go(`${label}${tzWhy}`);
-  return none(`fresh (${label}${tzWhy})`);
+  if (age !== null && age < every - CADENCE_SLACK_MINUTES) return none(`fresh (${label}${tzWhy})`);
+  const failingFor = minutesSince(state.firstFailAt, nowMs);
+  const lastTry = state.lastAttempt && state.lastAttempt.ok === false ? minutesSince(state.lastAttempt.at, nowMs) : null;
+  if (failingFor !== null && failingFor >= config.failGraceMinutes && lastTry !== null && lastTry < every - CADENCE_SLACK_MINUTES) {
+    return none(`backoff (${label}${tzWhy})`);
+  }
+  return go(`${label}${tzWhy}`);
 }
 
 // ===========================================================================
