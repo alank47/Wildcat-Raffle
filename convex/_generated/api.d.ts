@@ -96,6 +96,7 @@ import type * as reflectionRoom from "../reflectionRoom.js";
 import type * as reflectionRules from "../reflectionRules.js";
 import type * as restrictedPolicy from "../restrictedPolicy.js";
 import type * as roleChangeRules from "../roleChangeRules.js";
+import type * as roomRules from "../roomRules.js";
 import type * as rosterEmail from "../rosterEmail.js";
 import type * as rosterGuardRules from "../rosterGuardRules.js";
 import type * as runChartDays from "../runChartDays.js";
@@ -223,6 +224,7 @@ declare const fullApi: ApiFromModules<{
   reflectionRules: typeof reflectionRules;
   restrictedPolicy: typeof restrictedPolicy;
   roleChangeRules: typeof roleChangeRules;
+  roomRules: typeof roomRules;
   rosterEmail: typeof rosterEmail;
   rosterGuardRules: typeof rosterGuardRules;
   runChartDays: typeof runChartDays;
