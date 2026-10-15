@@ -682,3 +682,68 @@ npx convex run --prod perfectDay:releaseUnchecked '{"date":"...","reason":"...",
 - **Deploy order**: Convex first (the card's query and the summary entry's
   shape), then the site. A site without the backend shows no card and nothing
   else changes.
+
+## The leaderboard's stored copy (cheaper Wildcat Cash leaderboard)
+
+Added 2026-10-15, server only (no site change, no stamp). The student
+leaderboard (`leaderboard:cash`) used to read every student row, each with its
+whole cash history, every time a student opened their portal: about 5 MiB a
+call and 19% of the Convex bill in September-October. It now ranks from a
+small stored copy (`leaderboardSnapshots`, one row of about 65 KB) that the
+server rebuilds on a timetable. The viewer's own row is always read live, so a
+student's own amount and place are never stale; only other students' figures
+can be as old as the last build. Students see the same board, the same names
+and the same privacy as before. When the copy is off, missing, too old,
+failing, or cannot place a viewer, that student gets the old live read,
+exactly as before.
+
+### What runs, and when
+
+| | |
+|---|---|
+| Crons | `leaderboard snapshot` and `leaderboard snapshot (sync hours)`, at :03, :18, :33, :48; never in 13:25-14:00 or 19:25-20:00 UTC, and the tick also skips 13:00-13:15 and 19:00-19:15 UTC while the SIS sync runs (`convex/crons.ts`) |
+| What it calls | `leaderboardSnapshot:tick`, which books `leaderboardSnapshot:build` (reads students 50 at a time, then `write`) |
+| Cadence | Every 15 minutes on weekdays 06:45-16:30 school time, every 6 hours otherwise (`schoolEveryMinutes`, `offHoursEveryMinutes`) |
+| A build is not kept when | the roster was being replaced while it read; it read no students; or enrolment or the row count fell sharply with no new sync (held, read again 20 minutes on, kept if it agrees) |
+| Stops serving the copy | after an hour of failed builds (`failGraceMinutes`) or when it is 13 hours old (`maxAgeMinutes`); everyone gets the live read until the next good build. Failing builds are retried at least hourly |
+| While off | Each firing reads two small rows and stops |
+
+### Switching it on, and off
+
+```
+# Shadow: builds the copy, serves nobody
+npx convex run --prod leaderboardSnapshot:configure '{"mode":"shadow","actorName":"Your Name"}'
+
+# The check that must pass before live: every student as the viewer, every
+# band, top 10 and top 50, copy against live. Counts only. differ must be 0.
+npx convex run --prod leaderboardSnapshot:compare '{"kind":"logic"}'
+
+# A pilot: only these students are served from the copy (resolved on the
+# server; the answer is counts only). Or "pilotSample": 25 for a spread.
+npx convex run --prod leaderboardSnapshot:configure '{"mode":"pilot","pilotEmails":["<student email>"],"actorName":"Your Name"}'
+
+# Everyone. Refused unless a logic compare with 0 differences ran in the last
+# 72 hours on this version of the copy.
+npx convex run --prod leaderboardSnapshot:configure '{"mode":"live","actorName":"Your Name"}'
+
+# THE KILL SWITCH: instant, no deploy, no refresh. The next call from every
+# open portal goes back to the live read.
+npx convex run --prod leaderboardSnapshot:configure '{"mode":"off","actorName":"Your Name"}'
+
+# How it is doing (counts and times only)
+npx convex run --prod leaderboardSnapshot:status '{}'
+
+# How many answers staleness touches right now (uses the stored copy)
+npx convex run --prod leaderboardSnapshot:compare '{"kind":"fresh"}'
+
+# Rebuild now (still respects off, a running build and the sync windows)
+npx convex run --prod leaderboardSnapshot:runNow '{}'
+```
+
+To make the board fresher or cheaper, change the cadence with no deploy, e.g.
+`'{"schoolEveryMinutes":30,"actorName":"Your Name"}'`. Each build reads every
+student row once (about 5 MiB today, growing about 0.9 MiB a school week until
+the cash history moves off the student row).
+
+**For a code rollback, keep the `leaderboardSnapshots` table in the schema**
+and switch the copy off instead: the switch is the rollback.
