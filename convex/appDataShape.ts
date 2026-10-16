@@ -302,6 +302,54 @@ export function isSystemCashRow(row: unknown): boolean {
 }
 
 /**
+ * RESET ALL CASH, AND WHO MAY SEND ONE (2026-10-16).
+ *
+ * The reset is a button on Cash Settings, a screen for admins and
+ * superadmins. Until today the button's class was its only gate, and the
+ * button was being built after the pass that applies the class, so after a
+ * reload every teacher, aide and PBIS lead had it -- and every write path
+ * accepted what it sent from anyone signed in as staff.
+ *
+ * WHAT A RESET SENDS, from script.js _resetAllStudentCash through
+ * recordCashTransaction: for each student with money, one deduct movement
+ * ({ id, at, amount, kind } on appData:save) and one history row carrying
+ * behaviorId "system_reset" under the SAME id -- in the student's own history
+ * array on the same save, and in the week's cash_tx_* ledger through
+ * legacyData:mergeSlice. The movement itself names no behaviour, so the
+ * history row beside it is how the server tells a reset from an ordinary
+ * deduction.
+ *
+ * WHAT IS REFUSED, for a caller whose own role (from the verified token) is
+ * not in CASH_SETTINGS_ROLES: that movement (as "reserved_kind", which every
+ * browser since 2026-10-12 drops from its pending list for good, so the save
+ * queue is never wedged), and those rows on every path that carries them.
+ * Everything else in the same save lands as it would have. Admins are never
+ * refused, and no teacher's ordinary award, deduction or purchase is touched:
+ * no screen of theirs writes "system_reset". The award command has always
+ * refused it from everyone (cashAwardRules.ts RESERVED_BEHAVIOR).
+ */
+export const CASH_RESET_BEHAVIOR = "system_reset";
+
+/**
+ * The roles Cash Settings is for: the same two requireAdmin admits
+ * (identity.ts). A list here rather than a call to it, because requireAdmin
+ * throws and these refusals are per row; a test keeps the two in step.
+ */
+export const CASH_SETTINGS_ROLES = ["admin", "superadmin"] as const;
+
+/** May this staff role reset balances or change the cash behaviour list? Unknown roles may not. */
+export function canChangeCashSettings(role: unknown): boolean {
+  const r = String(role ?? "").trim().toLowerCase();
+  return (CASH_SETTINGS_ROLES as readonly string[]).includes(r);
+}
+
+/** A row or movement RESET ALL CASH wrote: behaviour "system_reset". */
+export function isCashResetRow(row: unknown): boolean {
+  if (!row || typeof row !== "object") return false;
+  return String((row as Record<string, unknown>).behaviorId ?? "").trim().toLowerCase() === CASH_RESET_BEHAVIOR;
+}
+
+/**
  * Per-student history arrays: written once per movement, never edited.
  *
  * THE THIRD WRITE PATH, and I missed it. On 2026-09-14 a history cutoff was
@@ -604,12 +652,31 @@ export function planCashMovements(
   row: Record<string, any>,
   record: Record<string, any>,
   stated: Record<string, number>,
-  opts: { cutoffMs: number | null; maxDelta: number },
+  /**
+   * `mayReset: false` refuses this record's RESET ALL CASH movements (see
+   * CASH_RESET_BEHAVIOR). Absent means allowed, which is what every caller
+   * before 2026-10-16 had; appData:save always states it from the caller's
+   * role.
+   */
+  opts: { cutoffMs: number | null; maxDelta: number; mayReset?: boolean },
 ): MovementPlan {
   const cutoffMs = opts ? opts.cutoffMs : null;
   const maxDelta = (opts && Number.isFinite(opts.maxDelta)) ? opts.maxDelta : 5000;
   const refused: Array<{ id: string; why: string }> = [];
   const absorbed: string[] = [];
+
+  // WHICH OF THIS RECORD'S MOVEMENTS ARE A RESET, for a caller who may not
+  // send one: the ids of the "system_reset" history rows travelling with it
+  // (the movement itself carries no behaviour), and any movement that names
+  // the behaviour itself.
+  const resetIds = new Set<string>();
+  const resetBarred = opts?.mayReset === false;
+  if (resetBarred) {
+    for (const f of ["wildcatCashTransactions", "cashTransactions"]) {
+      const rows = Array.isArray(record?.[f]) ? record[f] : [];
+      for (const h of rows) if (isCashResetRow(h) && h.id !== undefined && h.id !== null) resetIds.add(String(h.id));
+    }
+  }
 
   // --- accept the list -------------------------------------------------
   const raw = Array.isArray(record?.cashMovements) ? record.cashMovements : [];
@@ -630,6 +697,10 @@ export function planCashMovements(
     // moves a counter by an "attendance" movement; the perfect-day job does,
     // in its own transaction. Refused before it can be claimed or applied.
     if (isSystemCashRow(m)) { refused.push({ id, why: "reserved_kind" }); continue; }
+    // RESET ALL CASH from a role that may not reset (see CASH_RESET_BEHAVIOR).
+    // Refused before it can be claimed, exactly like the line above, and under
+    // the same reason, so every live tab drops it rather than re-sending it.
+    if (resetBarred && (resetIds.has(id) || isCashResetRow(m))) { refused.push({ id, why: "reserved_kind" }); continue; }
     accepted.push({ id, at: String((m && m.at) || ""), amount, kind: String(m.kind) });
   }
 
@@ -841,7 +912,14 @@ export function planPatch(
    * working; absent means no pruning, which is the behaviour before this.
    */
   historyCutoff: number | null = null,
+  /**
+   * `mayReset: false` for a caller who may not reset balances: their RESET ALL
+   * CASH movements are refused and its rows are not added to a history (see
+   * CASH_RESET_BEHAVIOR). Optional for the same reason as historyCutoff.
+   */
+  opts: { mayReset?: boolean } = {},
 ): Record<string, unknown> {
+  const resetBarred = opts?.mayReset === false;
   const fields = pick(record, writable);
   // THE THIRD WRITE PATH. See HISTORY_ARRAY_FIELDS: the ledger and the
   // referrals are guarded in legacyData:mergeSlice, and these arrays arrive
@@ -855,6 +933,11 @@ export function planPatch(
     // is the one that stays, so nothing the server wrote is ever lost.
     const pruned = (pruneHistoryArray(incoming, historyCutoff) as unknown[])
       .filter((r) => !isSystemCashRow(r));
+    // A reset's row, from a role that may not reset, is not added either: the
+    // money it describes was refused, so a row saying it moved would be the
+    // ledger disagreeing with the balance. A copy of an admin's reset already
+    // stored is kept by the union below, as the server's own rows are.
+    const kept = resetBarred ? pruned.filter((r) => !isCashResetRow(r)) : pruned;
 
     // A NON-EMPTY HISTORY IS UNIONED, NEVER REPLACED. THE COUNTERS' RULE,
     // APPLIED TO HISTORY: a browser may ADD to a student's history and may not
@@ -889,10 +972,10 @@ export function planPatch(
     // a save to infer intent from an absence.
     if (!Array.isArray(row[f]) || (row[f] as unknown[]).length === 0) {
       // Nothing stored yet: the incoming rows are all there is.
-      fields[f] = pruned;
+      fields[f] = kept;
       continue;
     }
-    fields[f] = unionHistoryRows(row[f], pruned);
+    fields[f] = unionHistoryRows(row[f], kept);
   }
   // NO DELTA, NO COUNTERS. A record that cannot say how much IT moved a
   // counter is describing a balance it remembers, not a change it made. On
@@ -925,6 +1008,7 @@ export function planPatch(
   const mv = planCashMovements(row, record, stated, {
     cutoffMs: historyCutoff,
     maxDelta: MAX_CASH_DELTA,
+    mayReset: !resetBarred,
   });
   for (const field of CASH_COUNTERS) {
     const d = mv.net[field] || 0;
@@ -1016,6 +1100,12 @@ export function planSave(
   keysOf: (row: Record<string, any>) => string[],
   /** The server's history cutoff, or null. Optional, as on planPatch. */
   historyCutoff: number | null = null,
+  /**
+   * Whether the CALLER may reset balances (canChangeCashSettings of their own
+   * role). Optional, and absent means allowed, so the dry-run and the tests
+   * that predate it keep their meaning; appData:save always passes it.
+   */
+  opts: { mayReset?: boolean } = {},
 ): SavePlan {
   const byKey = new Map<string, Record<string, any>>();
   for (const row of rows) {
@@ -1037,7 +1127,7 @@ export function planSave(
       if (key) skipped.push(key);
       continue;
     }
-    const patch = planPatch(row, record, writable, historyCutoff);
+    const patch = planPatch(row, record, writable, historyCutoff, opts);
     // BEFORE the emptiness guard below, deliberately. A record carrying
     // nothing but refused counters produces an EMPTY patch and would
     // otherwise vanish from the save's answer entirely -- which is the exact
@@ -1056,6 +1146,7 @@ export function planSave(
       const mv = planCashMovements(row, record, st, {
         cutoffMs: historyCutoff,
         maxDelta: MAX_CASH_DELTA,
+        mayReset: opts?.mayReset !== false,
       });
       movementsApplied += mv.applied.length;
       mv.applied.forEach((m: any) => movementsAppliedList.push({

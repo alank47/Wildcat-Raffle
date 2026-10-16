@@ -9,7 +9,7 @@ import {
   planReferralUpdate, planReferralInsert, REFERRAL_SCOPE_KEY, REFERRAL_CLOSE_GUARD_KEY,
 } from "./referralAccessRules";
 import type { ReferralSwitch } from "./referralAccessRules";
-import { isSystemCashRow } from "./appDataShape";
+import { isSystemCashRow, isCashResetRow, canChangeCashSettings } from "./appDataShape";
 
 /**
  * The app-facing half of the legacy mirror.
@@ -663,6 +663,22 @@ export const mergeSlice = mutation({
      */
     let refusedSystemCash = 0;
     const cashDoc = doc.startsWith("cash_tx_");
+    // CASH SETTINGS' WRITES, FROM THE ROLES CASH SETTINGS IS FOR (2026-10-16).
+    // The caller's own role, from the verified token. Skipped row by row and
+    // counted, never thrown, so the rest of the same save lands and an old tab
+    // re-sending them is harmless (see appDataShape.ts CASH_RESET_BEHAVIOR):
+    //   - a RESET ALL CASH ledger row (behaviour "system_reset") is not added,
+    //     and a stored one is never rewritten by, or turned into, a copy;
+    //   - the behaviour list -- the amount every award takes -- is not added
+    //     to or changed. No screen but Cash Settings writes it, and every tab
+    //     keeps the core behaviours itself whatever the server holds.
+    const mayChangeCash = canChangeCashSettings((me as any)?.role);
+    const resetBarred = cashDoc && !mayChangeCash;
+    const behaviorsBarred = doc === "secondary" && collection === "wildcatCashBehaviors" && !mayChangeCash;
+    /** RESET ALL CASH rows refused from a role that may not reset. */
+    let refusedResetCash = 0;
+    /** Behaviour-list rows refused from a role that may not change it. */
+    let refusedBehaviorEdits = 0;
     for (const r of rows) {
       const token = tokenFor(r);
       if (seen.has(token)) {
@@ -699,6 +715,16 @@ export const mergeSlice = mutation({
         // marks; the stored row stays exactly as it is.
         if (stored && cashDoc && (isSystemCashRow(stored.payload) || isSystemCashRow(r.payload))) {
           if (touchedAt(r.payload) > touchedAt(stored.payload)) refusedSystemCash++;
+          continue;
+        }
+        // The same for a reset row, from a role that may not reset.
+        if (stored && resetBarred && (isCashResetRow(stored.payload) || isCashResetRow(r.payload))) {
+          if (touchedAt(r.payload) > touchedAt(stored.payload)) refusedResetCash++;
+          continue;
+        }
+        // A stored behaviour stays as it is unless an admin changes it.
+        if (stored && behaviorsBarred) {
+          if (touchedAt(r.payload) > touchedAt(stored.payload)) refusedBehaviorEdits++;
           continue;
         }
         if (stored && touchedAt(r.payload) > touchedAt(stored.payload)) {
@@ -767,6 +793,15 @@ export const mergeSlice = mutation({
       // transaction, never through here), so it is not inserted.
       if (cashDoc && isSystemCashRow(accepted.payload)) {
         refusedSystemCash++;
+        continue;
+      }
+      // A reset row, and a new behaviour, only from the roles Cash Settings is for.
+      if (resetBarred && isCashResetRow(accepted.payload)) {
+        refusedResetCash++;
+        continue;
+      }
+      if (behaviorsBarred) {
+        refusedBehaviorEdits++;
         continue;
       }
       if (clamped) clampedStamps++;
@@ -861,6 +896,9 @@ export const mergeSlice = mutation({
       keptCancelledReceipts,
       // Server-only cash rows (the perfect-day award) a browser tried to add or rewrite.
       refusedSystemCash,
+      // Cash Settings' writes from a role it is not for (2026-10-16).
+      refusedResetCash,
+      refusedBehaviorEdits,
       // The close guard's per-row decisions (all zero while it is off).
       refusedNotYours,
       keptCloseFields,
@@ -878,7 +916,7 @@ export const saveSlice = mutation({
     rows: v.array(v.object({ key: v.optional(v.string()), payload: v.any() })),
   },
   handler: async (ctx, { doc, collection, rows }) => {
-    await requireStaff(ctx);
+    const me = await requireStaff(ctx);
 
     // REFERRALS ARE NEVER REPLACED (2026-10-07). This handler deletes every
     // stored row of the slice and writes the caller's list, so
@@ -887,6 +925,15 @@ export const saveSlice = mutation({
     // never replaces referrals -- it merges them through mergeSlice, the one
     // call in saveData -- so refusing the doc outright costs nothing.
     if (doc === "referrals") throw new ConvexError("Referrals are merged, never replaced.");
+
+    // THE BEHAVIOUR LIST IS NEVER REPLACED BY A ROLE THAT MAY NOT CHANGE IT
+    // (2026-10-16). The app merges it through mergeSlice and never sends it
+    // here, so this costs no real tab anything; without it, the refusal there
+    // would be one door of two, and this one deletes every behaviour in one
+    // call. Admins keep the call as they had it.
+    if (doc === "secondary" && collection === "wildcatCashBehaviors" && !canChangeCashSettings((me as any)?.role)) {
+      throw new ConvexError("The Wildcat Cash behaviour list is changed by an administrator, from Cash Settings.");
+    }
 
     if (rows.length > MAX_ROWS_PER_SLICE) {
       throw new Error(
@@ -921,6 +968,11 @@ export const saveSlice = mutation({
       // see appDataShape.isSystemCashRow. Its stored copy is already in `old`.
       const unioned = unionCashRows(old, rows);
       const fresh = unioned.filter((r) => !isSystemCashRow(r.payload));
+      // A RESET ALL CASH row is added only by a role that may reset: the same
+      // rule as mergeSlice and appData:save (appDataShape.ts CASH_RESET_BEHAVIOR).
+      if (!canChangeCashSettings((me as any)?.role)) {
+        for (let i = fresh.length - 1; i >= 0; i--) if (isCashResetRow(fresh[i].payload)) fresh.splice(i, 1);
+      }
       const mirroredAt = new Date().toISOString();
       for (const r of fresh) {
         await ctx.db.insert("legacyMirror", {

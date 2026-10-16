@@ -8,6 +8,7 @@ import {
   planSave,
   STUDENT_WRITABLE,
   TEACHER_WRITABLE,
+  canChangeCashSettings,
 } from "./appDataShape";
 
 /**
@@ -490,10 +491,14 @@ export const save = mutation({
       const parsed = typeof cutoffIso === "string" ? Date.parse(cutoffIso) : NaN;
       const historyCutoff = Number.isFinite(parsed) ? parsed : null;
 
+      // WHO MAY RESET, from the verified caller's own role, never from the
+      // payload: RESET ALL CASH movements and rows from anyone else are
+      // refused one by one (appDataShape.ts CASH_RESET_BEHAVIOR), and the rest
+      // of the same save lands as before.
       const plan = planSave(rows, args.students, STUDENT_WRITABLE, (r) => [
         r.legacyId,
         r.studentNumber,
-      ], historyCutoff);
+      ], historyCutoff, { mayReset: canChangeCashSettings((me as any)?.role) });
       for (const { rowId, patch } of plan.patches) {
         await ctx.db.patch(rowId as any, patch);
         studentsChanged++;

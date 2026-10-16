@@ -142,7 +142,7 @@ const runNew = new Function("RULES", "ConvexError", "SHAPE",
   // is row-for-row what it always was; cash-arrival-alerts.test.mjs runs the
   // real one.
   "const noteArrivedCash = async () => null;\n" +
-  "const { isSystemCashRow } = SHAPE;\n" +
+  "const { isSystemCashRow, isCashResetRow, canChangeCashSettings } = SHAPE;\n" +
   "const { pinOwnerFields, planReferralUpdate, planReferralInsert, canCloseReferrals, seesAllReferrals,\n" +
   "  switchAllows, normalizeSwitch, REFERRAL_CLOSE_GUARD_KEY } = RULES;\n" +
   // The close-guard switch (2026-10-07) is an appState row, read through
