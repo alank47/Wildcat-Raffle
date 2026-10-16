@@ -677,6 +677,15 @@ export function planCashMovements(
       for (const h of rows) if (isCashResetRow(h) && h.id !== undefined && h.id !== null) resetIds.add(String(h.id));
     }
   }
+  // AND A RESET WITH NO HISTORY ROW BESIDE IT (review, 2026-10-16): a former
+  // student, or anyone when a cash week failed to load, because saveData
+  // rebuilds history for the enrolled only and only when every week was read.
+  // Such a record is still recognisable: the reset pins earned, spent and
+  // deducted at 0 on it. Each of those only grows with a movement and none
+  // starts below 0, so no coherent record can show all three at 0 while it
+  // lists a deduction of any size.
+  const pinnedAtZero = resetBarred &&
+    ["wildcatCashEarned", "wildcatCashSpent", "wildcatCashDeducted"].every((f) => record?.[f] === 0);
 
   // --- accept the list -------------------------------------------------
   const raw = Array.isArray(record?.cashMovements) ? record.cashMovements : [];
@@ -700,7 +709,10 @@ export function planCashMovements(
     // RESET ALL CASH from a role that may not reset (see CASH_RESET_BEHAVIOR).
     // Refused before it can be claimed, exactly like the line above, and under
     // the same reason, so every live tab drops it rather than re-sending it.
-    if (resetBarred && (resetIds.has(id) || isCashResetRow(m))) { refused.push({ id, why: "reserved_kind" }); continue; }
+    if (resetBarred && (resetIds.has(id) || isCashResetRow(m) || (pinnedAtZero && String(m.kind) === "deduct" && amount !== 0))) {
+      refused.push({ id, why: "reserved_kind" });
+      continue;
+    }
     accepted.push({ id, at: String((m && m.at) || ""), amount, kind: String(m.kind) });
   }
 

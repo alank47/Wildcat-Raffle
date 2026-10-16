@@ -73,6 +73,18 @@ const resetRecord = (sn, balance, id) => ({
   wildcatCashTransactions: [{ id, timestamp: AT, studentId: sn, amount: -balance, kind: "deduct", type: "negative",
     behaviorId: "system_reset", behaviorName: "System Reset to $0", teacherId: "T1", notes: "All student accounts reset by administrator" }],
 });
+/**
+ * The same reset for a FORMER student, or for anyone when a cash week failed
+ * to load: saveData rebuilds history for the enrolled only, and only when every
+ * week was read, so this record carries NO history row beside the movement. It
+ * does carry the student's own totals, which the reset pinned at zero.
+ */
+const bareResetRecord = (sn, balance, id) => ({
+  id: sn,
+  wildcatCashBalance: 0, wildcatCashEarned: 0, wildcatCashSpent: 0, wildcatCashDeducted: 0,
+  cashMovements: [{ id, at: AT, amount: -balance, kind: "deduct" }],
+  cashDelta: { wildcatCashBalance: -balance, wildcatCashEarned: -balance },
+});
 const awardRecord = (sn, amount, id, kind = "award", behaviorId = "wc1") => ({
   id: sn,
   cashMovements: [{ id, at: AT, amount, kind }],
@@ -100,6 +112,43 @@ for (const role of ROLES) {
   }
   check(`...while the ${role}'s ordinary award in the same save lands (+$100)`,
     s2.wildcatCashBalance === 400 && (s2.wildcatCashTransactions || []).some((r) => r.id === award), String(s2.wildcatCashBalance));
+}
+for (const role of ROLES) {
+  // A FORMER STUDENT'S RESET (review, 2026-10-16): no history row travels with
+  // it, so the history-row test alone took it as a plain deduction and zeroed
+  // the balance for any role.
+  const w = await makeWorld();
+  const id = "txn_1792519200006_rst04";
+  const res = await w.as(role, "appData.save", { students: [bareResetRecord("30002", 300, id)] });
+  const s2 = w.hub("30002");
+  const held = (res.cashMovementsHeldWhy || []).find((h) => h.id === id);
+  if (ADMINS.has(role)) {
+    check(`${role === "admin" ? "an admin" : "a superadmin"}'s reset of a former student applies: $300 to $0`,
+      s2.wildcatCashBalance === 0 && !held, J({ bal: s2.wildcatCashBalance, held }));
+  } else {
+    check(`A ${role.toUpperCase()}'S RESET OF A FORMER STUDENT (NO HISTORY ROW) IS REFUSED: $300 stays, held as reserved_kind`,
+      s2.wildcatCashBalance === 300 && s2.wildcatCashEarned === 300 && held && held.why === "reserved_kind", J({ bal: s2.wildcatCashBalance, held }));
+  }
+}
+{
+  // Controls: a record whose running totals were zero BEFORE a teacher's own
+  // movement. Totals only grow with a movement, so it never reads as pinned.
+  const w = await makeWorld();
+  await w.store.db.insert("students", { legacyId: "30004", studentNumber: "30004", firstName: "F30004", lastName: "Test", grade: "7",
+    pbisTickets: 0, attendanceTickets: 0, academicTickets: 0, bigRaffleQualified: [],
+    wildcatCashBalance: 200, wildcatCashEarned: 0, wildcatCashSpent: 0, wildcatCashDeducted: 0, wildcatCashTransactions: [] });
+  const d = "txn_1792519200007_ddc02", a = "txn_1792519200008_awd03";
+  const res = await w.as("teacher", "appData.save", { students: [
+    { id: "30004", wildcatCashBalance: 150, wildcatCashEarned: 0, wildcatCashSpent: 0, wildcatCashDeducted: 50,
+      cashMovements: [{ id: d, at: AT, amount: -50, kind: "deduct" }], cashDelta: { wildcatCashBalance: -50, wildcatCashDeducted: 50 } },
+  ] });
+  check("a teacher's deduction from a student whose totals were all zero still lands ($200 to $150)",
+    w.hub("30004").wildcatCashBalance === 150 && (res.cashMovementsHeld || []).length === 0, J(res.cashMovementsHeldWhy));
+  const res2 = await w.as("teacher", "appData.save", { students: [
+    { id: "30004", wildcatCashBalance: 250, wildcatCashEarned: 100, wildcatCashSpent: 0, wildcatCashDeducted: 50,
+      cashMovements: [{ id: a, at: AT, amount: 100, kind: "award" }], cashDelta: { wildcatCashBalance: 100, wildcatCashEarned: 100 } },
+  ] });
+  check("...and so does an award", w.hub("30004").wildcatCashBalance === 250 && (res2.cashMovementsHeld || []).length === 0, J(res2.cashMovementsHeldWhy));
 }
 {
   const w = await makeWorld();
