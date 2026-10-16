@@ -761,12 +761,12 @@ answer was always yes. That was most of what `appData:load` cost.
 | | |
 |---|---|
 | Who | Staff tabs only. A student tab never runs it (it used to ask every 30 seconds and be refused) |
-| When | After 5 minutes with no mouse or keys (`AUTO_REFRESH_DELAY`), at most once per **the dial's minutes** (10 unless set) since the tab last loaded the roster by any route, or last tried to |
+| When | After 5 minutes with no mouse or keys (`AUTO_REFRESH_DELAY`), once per **the dial's minutes** (10 unless set) since the tab last loaded the roster by any route, or last tried to. The tab checks every 30 seconds and counts a load as due up to 15 seconds early, so loads land on the dial rather than one check late |
 | Background tabs | Same rule. They are not skipped: a teacher who flips to Gmail and back would otherwise see balances from hours ago |
 | A failing load | Counts as a try, so it is retried once per interval, not every 30 seconds |
 | Every idle tick, before the cap | The behaviour price list pull (itself at most every 5 minutes) and the attendance-screen cache drops |
 | No longer asked | `appData:freshness` from the idle tick (the week watchdog keeps its own) |
-| The noon and 6 am roster sync | A load that shows more than 5% fewer enrolled students than the tab holds is thrown away unused and read again a minute later; that second answer is kept, whatever it says |
+| The noon and 6 am roster sync | A load that shows more than 5% fewer enrolled students than the tab holds is thrown away unused and read again a minute later; that second answer is kept, whatever it says. The re-read only happens within about a minute of being due: a tab that was used in between goes back to the normal interval, checked the same way, and any other roster load in between cancels it |
 | Return to the tab | Nothing reloads on return. A tab back after five minutes away holds data at most one interval old |
 
 ### The dial (no site push, no refresh)
@@ -781,6 +781,10 @@ npx convex run --prod appData:setIdleRefresh '{"minutes":10,"actorName":"Your Na
 # Unset it: tabs go back to their built-in 10 minutes
 npx convex run --prod appData:setIdleRefresh '{"minutes":null,"actorName":"Your Name"}'
 ```
+
+The dial is one `appState` row (`key: "idleRefresh"`). Set it with the command,
+not by hand; a second row added in the dashboard does no harm (the server reads
+the first) and the next `setIdleRefresh` removes it.
 
 Every `appData:load` answer carries the number (`idleRefreshMinutes`), so an
 open tab takes a new setting at its next roster load: within one OLD interval,
@@ -830,7 +834,9 @@ and superadmins are never refused):
 | What | Path | What a non-admin gets |
 |---|---|---|
 | A RESET ALL CASH movement | `appData:save` | Held as `reserved_kind`, which every tab drops for good, so its save queue is never stuck. The rest of the same save lands |
-| A reset's history row (`behaviorId: "system_reset"`) | `appData:save` (student history), `legacyData:mergeSlice` and `saveSlice` (`cash_tx_*`) | Not added; a stored one is never rewritten by their copy. `mergeSlice` answers `refusedResetCash` |
+| A reset with no history row beside it (a former student, or anyone when a cash week did not load) | `appData:save` | Held as `reserved_kind` too: the record pins earned, spent and deducted at 0 while listing a deduction, which no real record can |
+| A reset's history row (any `behaviorId` starting `system_reset`, any case: the arrival check reads all of them as a reset) | `appData:save` (student history), `legacyData:mergeSlice` and `saveSlice` (`cash_tx_*`) | Not added; a stored one is never rewritten by their copy. `mergeSlice` answers `refusedResetCash` |
+| The reset's or Close the year's audit entry | `auditLog:append` | Stored, but as `action: "cash_reset_refused"` with `refusedAction` and `refusedRole`, so no tab takes it for a reset and the zero point does not move |
 | A new or changed behaviour (every award's amount) | `legacyData:mergeSlice`, doc `secondary`, `wildcatCashBehaviors` | Skipped and counted (`refusedBehaviorEdits`), never thrown |
 | Replacing the behaviour list | `legacyData:saveSlice` | Refused with an error. No real tab calls this |
 
@@ -839,9 +845,9 @@ says it is out of date and reloads itself, and shows the real balances.
 
 **Where to look.** `cashRefusalLog` rows with `kind: "held"` and a sample
 starting `reserved_kind:` are refused resets (or forged perfect-day
-movements). The reset's audit entry ("Reset all N student Wildcat Cash
-accounts to $0") is still written by an old tab that tried, so read it beside
-the balances.
+movements). An old tab that tried still sends its audit entry ("Reset all N
+student Wildcat Cash accounts to $0"); it is stored as `cash_reset_refused`,
+with the role that sent it, and is not listed in the Cash Audit Log.
 
 **Close the year** sends nothing the server applies: its zeroed totals are a
 change no movement explains (never applied, for anyone), its emptied
