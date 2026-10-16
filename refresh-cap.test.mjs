@@ -89,6 +89,16 @@ function makeTab(opts = {}, src = script) {
     const i = src.indexOf("autoRefreshInterval = setInterval(");
     return src.slice(i, src.indexOf("\n", i));
   })();
+  // loadData's own install block, cut verbatim. The week watchdog, the
+  // stale-save reload and a reversal's reload load through it, and no
+  // refreshRosterFromConvex follows them.
+  const loadDataInstall = (() => {
+    const head = "                        if (rosterLoad) {\n                            const rows = rosterLoad.install();";
+    const i = src.indexOf(head);
+    if (i < 0 || src.indexOf(head, i + 1) >= 0) throw new Error("loadData's install block not found exactly once");
+    const end = "\n                        }\n";
+    return src.slice(i, src.indexOf(end, i) + end.length);
+  })();
   const clock = { now: o.now ?? T0 };
   const calls = [];                 // every convexQuery, by name
   const server = {
@@ -168,8 +178,14 @@ function makeTab(opts = {}, src = script) {
     };
     ${FNS.map(lift).join("\n")}
     ${interval}
+    async function loadDataRoster() {
+      const rosterLoad = await loadRosterFromConvex();
+      const mainData = {};
+      ${loadDataInstall}
+      students = mainData.students;
+    }
     return {
-      idleRefreshTick, refreshRosterFromConvex, refreshCashFromServer, resetAllStudentCash,
+      idleRefreshTick, refreshRosterFromConvex, refreshCashFromServer, resetAllStudentCash, loadDataRoster,
       idleReloadMinutesFrom, noteIdleRefreshDial,
       get students() { return students; }, set students(v) { students = v; },
       get dial() { return _idleReloadMinutes; },
@@ -240,6 +256,21 @@ console.log("\nA. AN IDLE STAFF TAB RE-READS THE ROSTER ONCE PER INTERVAL, NOT E
   t.clock.now = T0 + 4 * MIN;
   await t.api.refreshCashFromServer("a movement the server held");
   check("refreshCashFromServer records that it loaded", t.api.lastLoad === T0 + 4 * MIN, String(t.api.lastLoad - T0));
+}
+{
+  // loadData's own load holds the idle reload off too: the week watchdog, a
+  // stale-save reload and a reversal's reload run it with no
+  // refreshRosterFromConvex after it. Here one lands at 8:09.
+  const t = makeTab();
+  await t.boot();
+  await t.runTo(9 * MIN);
+  await t.api.loadDataRoster();
+  check("A loadData LOAD COUNTS: it records the moment the roster went on screen", t.api.lastLoad === T0 + 9 * MIN,
+    String((t.api.lastLoad - T0) / MIN));
+  await t.runTo(18.5 * MIN);
+  check("...so the idle reload waits ten minutes from it, not from the boot", t.loads() === 2, String(t.loads()));
+  await t.runTo(19 * MIN);
+  check("...and comes at 19:00", t.loads() === 3, String(t.loads()));
 }
 
 // ===========================================================================
