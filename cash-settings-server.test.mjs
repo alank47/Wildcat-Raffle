@@ -430,9 +430,9 @@ console.log("\nF. A REFUSED RESET'S AUDIT ENTRY IS NOT A RESET\n");
           && r2.action === "cash_reset_refused" && r2.refusedAction === "school_year_rollover" && !zero,
         J({ r1, r2, zero: !!zero }));
       check(`...with a plain reason an admin can read, naming the ${role} role and saying no balances changed`,
-        typeof r1.reason === "string" && r1.reason.includes("Reset All Cash") && r1.reason.includes(role) && /No balances changed\.$/.test(r1.reason)
-          && typeof r2.reason === "string" && r2.reason.includes("Close the year"),
-        J({ r1: r1.reason, r2: r2.reason }));
+        typeof r1?.reason === "string" && r1.reason.includes("Reset All Cash") && r1.reason.includes(role) && /No balances changed\.$/.test(r1.reason)
+          && typeof r2?.reason === "string" && r2.reason.includes("Close the year"),
+        J({ r1: r1?.reason, r2: r2?.reason }));
       check(`...still counted as stored, so a ${role}'s tab lets it go and no save reads as failed`, allStored, J(res));
       check(`...so no tab takes a ${role}'s entry for a reset (lastCashResetAt finds none)`, lastCashResetAt(stored) === "", lastCashResetAt(stored));
     }
