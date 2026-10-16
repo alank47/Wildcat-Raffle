@@ -151,6 +151,21 @@ for (const role of ROLES) {
   check("...and so does an award", w.hub("30004").wildcatCashBalance === 250 && (res2.cashMovementsHeld || []).length === 0, J(res2.cashMovementsHeldWhy));
 }
 {
+  // ONLY THE DEDUCTION IS THE RESET (re-review, 2026-10-16). An old teacher
+  // tab holding an unsaved award for a former student, then pressing Reset
+  // All, sends one record carrying both, its totals pinned at zero. The award
+  // is the teacher's real work and must land; only the deduction is held.
+  const w = await makeWorld();
+  const a = "txn_1792519200009_awd04", r = "txn_1792519200010_rst05";
+  const rec = bareResetRecord("30002", 400, r);
+  rec.cashMovements.unshift({ id: a, at: AT, amount: 100, kind: "award" });
+  const res = await w.as("teacher", "appData.save", { students: [rec] });
+  const heldIds = (res.cashMovementsHeldWhy || []).map((h) => h.id);
+  check("ON A RECORD PINNED AT ZERO, A TEACHER'S AWARD LANDS (+$100) AND ONLY THE RESET DEDUCTION IS HELD",
+    w.hub("30002").wildcatCashBalance === 400 && !heldIds.includes(a) && heldIds.includes(r),
+    J({ bal: w.hub("30002").wildcatCashBalance, held: res.cashMovementsHeldWhy }));
+}
+{
   const w = await makeWorld();
   const d = "txn_1792519200002_ddc01";
   const res = await w.as("teacher", "appData.save", { students: [awardRecord("30003", -100, d, "deduct", "wc5")] });
