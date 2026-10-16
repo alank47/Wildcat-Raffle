@@ -747,3 +747,109 @@ the cash history moves off the student row).
 
 **For a code rollback, keep the `leaderboardSnapshots` table in the schema**
 and switch the copy off instead: the switch is the rollback.
+
+## The idle refresh: how often a quiet staff tab re-reads the roster
+
+Added 2026-10-16, server and site. Until then an idle staff tab re-read every
+student (about 5 MB, `appData:load`) every 30 seconds, every 60 in a
+background tab, until the 30-minute logout: the tab asked "is the server
+newer?" and, because the server's stamp moves on every save by anyone, the
+answer was always yes. That was most of what `appData:load` cost.
+
+### What runs, and when
+
+| | |
+|---|---|
+| Who | Staff tabs only. A student tab never runs it (it used to ask every 30 seconds and be refused) |
+| When | After 5 minutes with no mouse or keys (`AUTO_REFRESH_DELAY`), at most once per **the dial's minutes** (10 unless set) since the tab last loaded the roster by any route, or last tried to |
+| Background tabs | Same rule. They are not skipped: a teacher who flips to Gmail and back would otherwise see balances from hours ago |
+| A failing load | Counts as a try, so it is retried once per interval, not every 30 seconds |
+| Every idle tick, before the cap | The behaviour price list pull (itself at most every 5 minutes) and the attendance-screen cache drops |
+| No longer asked | `appData:freshness` from the idle tick (the week watchdog keeps its own) |
+| The noon and 6 am roster sync | A load that shows more than 5% fewer enrolled students than the tab holds is thrown away unused and read again a minute later; that second answer is kept, whatever it says |
+| Return to the tab | Nothing reloads on return. A tab back after five minutes away holds data at most one interval old |
+
+### The dial (no site push, no refresh)
+
+```
+# What it is now (null = unset; tabs use 10)
+npx convex run --prod appData:idleRefreshStatus '{}'
+
+# Set it: minutes, held to 0.5-60. Smaller is fresher and costs more reads.
+npx convex run --prod appData:setIdleRefresh '{"minutes":10,"actorName":"Your Name"}'
+
+# Unset it: tabs go back to their built-in 10 minutes
+npx convex run --prod appData:setIdleRefresh '{"minutes":null,"actorName":"Your Name"}'
+```
+
+Every `appData:load` answer carries the number (`idleRefreshMinutes`), so an
+open tab takes a new setting at its next roster load: within one OLD interval,
+with nobody refreshing anything. A tab running a site from before 10/16 ignores
+the field and keeps refreshing the old way until it updates itself.
+
+To see whether it worked: the Convex Usage page, `appData:load` calls and
+database I/O per day, over two or three school days, against the days before.
+Also look at the cache hit rate for `appData:load` there.
+
+### Publishing it
+
+Convex first, then the site (all 26 `?v=` stamps move together). Not near
+06:00 or 12:00 Pacific (13:00 and 19:00 UTC, an hour earlier in local time
+after November 1): every open tab reloads itself after a site push, and a
+reload's full load has no collapse guard.
+
+### RESET ALL CASH now reads before it resets
+
+After the typed `RESET ALL CASH`, the tab re-reads the roster and charges each
+student the balance the server holds now, not the one the tab remembered. If
+that read fails, it stops with "Balances were NOT reset ... Nothing was
+changed." Try again in a minute.
+
+## Cash Settings: who may use it (2026-10-16)
+
+**What was wrong.** Cash Settings and Sync PowerSchool are admin buttons, but
+the class that hides them only works with a role pass that ran once. After any
+reload (including the silent self-update after every push), and every time
+anyone went to another mode and back to Cash, the buttons were rebuilt after
+that pass, so every teacher, campus aide and PBIS lead could see them. Cash
+Settings opened the whole Settings pane: add and remove behaviours, Save
+Settings, Close the year, Reset all student cash, Corrections, Raffle
+Categories, the sync panel.
+
+**Who has it now.** Admins and superadmins, exactly as the Settings button
+always intended. The buttons are gated as they are built and again when a
+role changes on the server (a demoted admin loses them at the next roster
+refresh). Settings itself, Cash Settings, the sync panel, Reset All, Close the
+year, Save Settings and adding or removing a behaviour each check the role
+when used. Nothing changed for teachers' awards, deductions, store fulfilment,
+receipts, or reward editing (rewards stay open to staff).
+
+**What the server refuses** (the caller's own role, from their sign-in; admins
+and superadmins are never refused):
+
+| What | Path | What a non-admin gets |
+|---|---|---|
+| A RESET ALL CASH movement | `appData:save` | Held as `reserved_kind`, which every tab drops for good, so its save queue is never stuck. The rest of the same save lands |
+| A reset's history row (`behaviorId: "system_reset"`) | `appData:save` (student history), `legacyData:mergeSlice` and `saveSlice` (`cash_tx_*`) | Not added; a stored one is never rewritten by their copy. `mergeSlice` answers `refusedResetCash` |
+| A new or changed behaviour (every award's amount) | `legacyData:mergeSlice`, doc `secondary`, `wildcatCashBehaviors` | Skipped and counted (`refusedBehaviorEdits`), never thrown |
+| Replacing the behaviour list | `legacyData:saveSlice` | Refused with an error. No real tab calls this |
+
+A tab still on an old build that presses Reset: the server refuses it, the tab
+says it is out of date and reloads itself, and shows the real balances.
+
+**Where to look.** `cashRefusalLog` rows with `kind: "held"` and a sample
+starting `reserved_kind:` are refused resets (or forged perfect-day
+movements). The reset's audit entry ("Reset all N student Wildcat Cash
+accounts to $0") is still written by an old tab that tried, so read it beside
+the balances.
+
+**Close the year** sends nothing the server applies: its zeroed totals are a
+change no movement explains (never applied, for anyone), its emptied
+histories and ledger cannot shrink stored ones, and its year archive is kept
+only in that browser and its backup file (never sent to Convex). It is still marked do-not-run until it is rebuilt as a
+server command (`legacyPurge:zeroAllStudentCash` is the shape).
+
+**Still open for staff on the server** (the separate lockdown task, not
+changed here): any staff sign-in can still send a plain deduction of any
+student up to $5,000, write the settings row (`appData:save` settings), and
+replace other whole-value slices through `saveSlice`.
