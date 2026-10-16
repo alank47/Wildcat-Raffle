@@ -35,7 +35,7 @@ const J = (x) => JSON.stringify(x);
 
 const STAFF_ISSUER = "https://login.microsoftonline.com/tenant-1/v2.0";
 Object.assign(process.env, { STAFF_DOMAIN: "school.test", ENTRA_TENANT_ID: "tenant-1" });
-const loaded = await loadConvex(new URL("./", import.meta.url), ["appData", "legacyData", "appDataShape"]);
+const loaded = await loadConvex(new URL("./", import.meta.url), ["appData", "legacyData", "appDataShape", "auditLog"]);
 const { mods } = loaded;
 const ROLES = ["teacher", "campusaide", "pbis", "admin", "superadmin"];
 const ADMINS = new Set(["admin", "superadmin"]);
@@ -373,6 +373,52 @@ console.log("\nE. THE IDLE REFRESH'S DIAL\n");
   check("...a refused change writes nothing, duplicates included", bad.ok && bad.v.ok === false && dialRows().length === 2, J({ bad, rows: dialRows().length }));
   const unset = await tryRun(() => w.rt.run("appData.setIdleRefresh", { minutes: null, actorName: "Test Admin" }));
   check("...and unsetting removes every copy", unset.ok && dialRows().length === 0, J({ unset, rows: dialRows().length }));
+}
+
+// ===========================================================================
+console.log("\nF. A REFUSED RESET'S AUDIT ENTRY IS NOT A RESET\n");
+{
+  // A non-admin's old tab has its Reset All (or Close the year) refused, but
+  // still sends the audit entry. Stored as sent, every tab took it for a real
+  // reset: it is the cut-off for recovering a tab's unsaved cash
+  // (script.js lastCashResetAt), and the Cash Audit Log showed a "System Reset"
+  // that never happened. It is filed under its own action instead, and still
+  // counted as stored: a skipped entry would stay pending in the tab's outbox
+  // and every later save would read as failed.
+  const script = read("./script.js");
+  const at = script.indexOf("\n        function lastCashResetAt(");
+  const lastCashResetAt = new Function("auditLog", script.slice(at, script.indexOf("\n        }\n", at + 1) + 10) + "\nreturn lastCashResetAt();");
+  const T = "2026-10-15T18:00:00.000Z";
+  for (const role of ROLES) {
+    const w = await makeWorld();
+    const entry = (n, action, details) => ({ entryId: "aud_" + role + "_" + n, timestamp: T,
+      payload: { timestamp: T, teacherId: "T-" + role, teacherName: "Staff " + role, action, details, studentId: "all" } });
+    const res = await w.as(role, "auditLog.append", { entries: [
+      entry(1, "reset_all_student_cash", "Reset all 3 student Wildcat Cash accounts to $0"),
+      entry(2, "school_year_rollover", "Closed 2026-27: 3 students zeroed"),
+      entry(3, "cash_award", "Awarded $100"),
+    ] });
+    const stored = w.store.rows("appAuditLog").map((r) => r.payload);
+    const zero = w.store.rows("appState").find((r) => r.key === "cashZeroPoint");
+    const allStored = J([...res.storedIds].sort()) === J([1, 2, 3].map((n) => "aud_" + role + "_" + n)) && res.skippedIds.length === 0;
+    const award = stored.find((p) => p.details === "Awarded $100");
+    if (ADMINS.has(role)) {
+      check(`${role === "admin" ? "an admin" : "a superadmin"}'s reset and year-close entries are stored as sent, and move the zero point`,
+        J(stored.map((p) => p.action)) === J(["reset_all_student_cash", "school_year_rollover", "cash_award"]) && !!zero && allStored,
+        J({ actions: stored.map((p) => p.action), zero: !!zero }));
+      check(`...and every tab reads ${role === "admin" ? "the admin" : "the superadmin"}'s as the reset it was`, lastCashResetAt(stored) === T);
+    } else {
+      const [r1, r2] = stored;
+      check(`A ${role.toUpperCase()}'S REFUSED RESET IS FILED AS cash_reset_refused, saying what it claimed and who sent it`,
+        r1.action === "cash_reset_refused" && r1.refusedAction === "reset_all_student_cash" && r1.refusedRole === role
+          && r1.details === "Reset all 3 student Wildcat Cash accounts to $0"
+          && r2.action === "cash_reset_refused" && r2.refusedAction === "school_year_rollover" && !zero,
+        J({ r1, r2, zero: !!zero }));
+      check(`...still counted as stored, so a ${role}'s tab lets it go and no save reads as failed`, allStored, J(res));
+      check(`...so no tab takes a ${role}'s entry for a reset (lastCashResetAt finds none)`, lastCashResetAt(stored) === "", lastCashResetAt(stored));
+    }
+    check(`...and the ${role}'s ordinary entry beside it is stored exactly as sent`, award && award.action === "cash_award" && !("refusedAction" in award));
+  }
 }
 
 loaded.cleanup();

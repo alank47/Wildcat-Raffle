@@ -26,7 +26,8 @@ import { raiseZeroPoint } from "./cashArrival";
  * exact shape the app has written since the Firestore era. Every analytics
  * screen, export and PBIS report reads that shape. Moving the transport and
  * rewriting the records at the same time would mean a wrong number afterwards
- * could not be attributed to either.
+ * could not be attributed to either. (One exception since 2026-10-16: a
+ * non-admin's reset or year-close entry is re-filed; see append.)
  */
 
 /** One append may carry this many entries. The client chunks to match. */
@@ -34,6 +35,9 @@ const MAX_APPEND = 500;
 
 /** A window may return this many entries per page, well under the read limit. */
 const PAGE = 1000;
+
+/** What a non-admin's reset or year-close entry is filed as. See append. */
+const REFUSED_RESET_ACTION = "cash_reset_refused";
 
 /**
  * Append entries, skipping any already stored.
@@ -104,20 +108,33 @@ export const append = mutation({
       // is the only question the caller is asking.
       if (existing) { alreadyStored++; storedIds.push(id); continue; }
 
+      const action = String((e.payload as any)?.action ?? "");
+      // An admin's only: any staff token can append an entry with any action.
+      const role = String((me as any)?.role ?? "");
+      const isAdmin = role === "admin" || role === "superadmin";
+      const isCashReset = action === "reset_all_student_cash" || action === "school_year_rollover";
+      // A NON-ADMIN'S RESET OR YEAR CLOSE DID NOT HAPPEN (review, 2026-10-16).
+      // The server refuses the money an old tab sends for either, but the tab
+      // still sends this entry, and stored as sent every tab took it for a
+      // real reset: it is the cut-off for recovering a tab's unsaved cash
+      // (script.js lastCashResetAt), and the Cash Audit Log showed a "System
+      // Reset" nobody made. So it is filed under its own action, keeping what
+      // it claimed and who sent it. Still inserted and still in storedIds: a
+      // skipped entry stays pending in the tab's outbox, and every later save
+      // there would read as failed. Every other entry is stored verbatim.
+      const payload = (isCashReset && !isAdmin)
+        ? { ...(e.payload as Record<string, unknown>), action: REFUSED_RESET_ACTION, refusedAction: action, refusedRole: role }
+        : e.payload;
       await ctx.db.insert("appAuditLog", {
         entryId: id,
         timestamp: String(e.timestamp ?? ""),
-        payload: e.payload,
+        payload,
       });
       // A RESET or a YEAR ROLLOVER moves the arrival credit's zero point, so a
       // late award row from before it is never paid into the new balances
       // (cashArrivalRules.ts). By the entry's own time, so an old entry
       // re-sent by a stale tab cannot drag it forward; raised, never lowered.
-      const action = String((e.payload as any)?.action ?? "");
-      // An admin's only: any staff token can append an entry with any action.
-      const role = String((me as any)?.role ?? "");
-      if ((role === "admin" || role === "superadmin") &&
-          (action === "reset_all_student_cash" || action === "school_year_rollover")) {
+      if (isAdmin && isCashReset) {
         await raiseZeroPoint(ctx, String(e.timestamp ?? ""), action);
       }
       inserted++;

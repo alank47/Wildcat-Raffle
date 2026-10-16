@@ -22,6 +22,7 @@ const SITE = "script.js";
 const SHAPE = "convex/appDataShape.ts";
 const LEGACY = "convex/legacyData.ts";
 const APPDATA = "convex/appData.ts";
+const AUDIT = "convex/auditLog.ts";
 const CAP = "refresh-cap.test.mjs";
 const GATE = "cash-settings-gate.test.mjs";
 const SERVER = "cash-settings-server.test.mjs";
@@ -183,6 +184,16 @@ const CASES = [
   { guard: "saveSlice inserts a teacher's reset row", file: LEGACY, test: SERVER,
     from: "      if (!canChangeCashSettings((me as any)?.role)) {\n        for (let i = fresh.length - 1;", to: "      if (false) {\n        for (let i = fresh.length - 1;",
     mustFail: "SAVESLICE REFUSES A TEACHER'S RESET ROW too, and takes the award" },
+  { guard: "a non-admin's refused reset is audited as a real reset", file: AUDIT, test: SERVER,
+    from: "      const payload = (isCashReset && !isAdmin)", to: "      const payload = (false)",
+    mustFail: "A TEACHER'S REFUSED RESET IS FILED AS cash_reset_refused, saying what it claimed and who sent it" },
+  { guard: "a non-admin's reset entry is skipped (its tab would report every later save as failed)", file: AUDIT, test: SERVER,
+    from: "      await ctx.db.insert(\"appAuditLog\", {\n        entryId: id,\n        timestamp: String(e.timestamp ?? \"\"),\n        payload,\n",
+    to: "      if (isCashReset && !isAdmin) { skipped++; skippedIds.push(id); continue; }\n      await ctx.db.insert(\"appAuditLog\", {\n        entryId: id,\n        timestamp: String(e.timestamp ?? \"\"),\n        payload,\n",
+    mustFail: "...still counted as stored, so a teacher's tab lets it go and no save reads as failed" },
+  { guard: "a non-admin's entry moves the zero point", file: AUDIT, test: SERVER,
+    from: "      if (isAdmin && isCashReset) {", to: "      if (isCashReset) {",
+    mustFail: "A PBIS'S REFUSED RESET IS FILED AS cash_reset_refused, saying what it claimed and who sent it" },
   { guard: "appData:load does not hand out the dial", file: APPDATA, test: SERVER,
     from: "      idleRefreshMinutes: idleRefreshMinutesOf(idleRow?.value),", to: "      idleRefreshMinutes: null,",
     mustFail: "setIdleRefresh sets it, and appData:load returns it" },
