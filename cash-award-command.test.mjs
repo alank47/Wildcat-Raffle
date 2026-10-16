@@ -1077,8 +1077,10 @@ console.log("\nEVERY ORDERING OF AN AWARD, A SAVE AND A RELOAD KEEPS THE MONEY R
   // each child once.
   check("loadData's merge treats a student in the fresh FORMER rows as known, not local-only",
     /const formerIds = new Set\(\(nonEnrolledStudents \|\| \[\]\)\.map\(s => String\(s && s\.id\)\)\);[\s\S]{0,300}&& !formerIds\.has\(String\(localStudent\.id\)\)\) \{\s*mergedStudents\.push\(localStudent\);/.test(script));
+  // (The window widened 2026-10-16: the reset now checks the role and reads
+  // fresh balances before this loop, which refresh-cap.test.mjs runs.)
   check("RESET ALL CASH visits each child once, on the record on screen",
-    /async function _resetAllStudentCash\(\)[\s\S]{0,3000}if \(!s \|\| seenIds\.has\(id\)\) return;\s*seenIds\.add\(id\);\s*everyStudent\.push\(liveStudentRecord\(s\)\);/.test(script));
+    /async function _resetAllStudentCash\(\)[\s\S]{0,6000}if \(!s \|\| seenIds\.has\(id\)\) return;\s*seenIds\.add\(id\);\s*everyStudent\.push\(liveStudentRecord\(s\)\);/.test(script));
   // THE MERGE, RUN. Cut from loadData verbatim: install, the enrolled/former
   // split, and the merge of local records. Each child must be held ONCE.
   {

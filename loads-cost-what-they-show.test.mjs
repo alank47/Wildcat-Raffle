@@ -77,7 +77,9 @@ console.log("\nThe staleness guard no longer reloads the world before a save");
 console.log("\nThe idle refresh reads the roster, not everything");
 {
   const idle = between("Auto-refreshing data in background", "Background data sync complete");
-  check("it refreshes the roster through appData:load", /await refreshRosterFromConvex\('idle refresh', \{ redraw: false \}\);/.test(idle));
+  // RE-POINTED 2026-10-16: the idle call also hands the loader the
+  // enrolment-collapse guard (accept), and still never redraws.
+  check("it refreshes the roster through appData:load", /await refreshRosterFromConvex\('idle refresh', \{ redraw: false, accept: accept \}\);/.test(idle));
   check("and not through a full loadData()", !/await loadData\(\)/.test(idle));
   // THIS TAB'S UNCONFIRMED CASH SURVIVES THE IDLE REFRESH -- guaranteed by the
   // loader now, not by this caller remembering to ask.

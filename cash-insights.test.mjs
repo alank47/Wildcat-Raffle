@@ -1162,15 +1162,20 @@ async function ratioScreens(src) {
 }
 
 // ---- The named list's marks are dropped by the idle refresh, with the other attendance caches.
+// RE-POINTED 2026-10-16: the drops moved out of the reload branch into
+// dropSisCaches(), which the idle tick runs on EVERY idle tick, before the
+// ten-minute cap (refresh-cap.test.mjs runs that on a fake clock).
 {
   const s = strip(scriptSrc);
-  const start = s.indexOf("autoRefreshInterval = setInterval(");
-  const block = s.slice(start, s.indexOf("pullLiveActivity('idle')", start));
+  const start = s.indexOf("function dropSisCaches() {");
+  const block = s.slice(start, s.indexOf("\n        }\n", start));
+  const tick = s.slice(s.indexOf("async function idleRefreshTick() {"), s.indexOf("if (!idleReloadDue(now)) return;"));
   check("the idle refresh drops the named list's marks beside Perfect Attendance's (_paCache)",
-    start > 0 && /_paCache = null;\s*_cashNoticeMarks = null;/.test(block));
-  const kept = strip(breakOnce(scriptSrc, "                            _cashNoticeMarks = null;\n", "", "idle"));
-  const keptBlock = kept.slice(kept.indexOf("autoRefreshInterval = setInterval("), kept.indexOf("pullLiveActivity('idle')", kept.indexOf("autoRefreshInterval = setInterval(")));
-  check("TEETH: without that line the marks outlive every refresh", !/_cashNoticeMarks = null;/.test(keptBlock));
+    start > 0 && /_paCache = null;\s*_cashNoticeMarks = null;/.test(block) && /dropSisCaches\(\);/.test(tick));
+  const kept = strip(breakOnce(scriptSrc, "            _cashNoticeMarks = null;\n            _sgCache = null;\n", "            _sgCache = null;\n", "idle"));
+  const kStart = kept.indexOf("function dropSisCaches() {");
+  const keptBlock = kept.slice(kStart, kept.indexOf("\n        }\n", kStart));
+  check("TEETH: without that line the marks outlive every refresh", kStart > 0 && !/_cashNoticeMarks = null;/.test(keptBlock));
 }
 
 // ---- The one-to-one ratio's bottom is individual deductions only.

@@ -94,6 +94,59 @@
         const DATA_WRITE = 'convex';
 
         /**
+         * HOW OFTEN AN IDLE STAFF TAB RE-READS THE ROSTER (2026-10-16), and
+         * when it last did. idleRefreshTick reads these; nothing else does.
+         *
+         * Declared up here, beside the loader, because a roster load runs at
+         * boot, long before the tick's own block further down this file is
+         * reached, and a `let` read before its line has run throws.
+         *
+         * THE MINUTES ARE THE SERVER'S. appData:load returns
+         * `idleRefreshMinutes` (an appState row set by appData:setIdleRefresh,
+         * a deploy-key command), so the interval can be turned up or down with
+         * no site push and nobody refreshing anything. A tab that has not yet
+         * heard from a server that sends it, or hears null or nonsense, uses
+         * IDLE_RELOAD_DEFAULT_MINUTES.
+         */
+        const IDLE_RELOAD_DEFAULT_MINUTES = 10;
+        const IDLE_RELOAD_MIN_MINUTES = 0.5;
+        const IDLE_RELOAD_MAX_MINUTES = 60;
+        let _idleReloadMinutes = IDLE_RELOAD_DEFAULT_MINUTES;
+        /** When a roster load was last INSTALLED here, by any path. */
+        let _lastRosterLoadAt = 0;
+        /** When the idle tick last TRIED one, whether it worked or not. */
+        let _lastIdleReloadAttemptAt = 0;
+        /** When the idle tick may retry a roster it refused as too short (0: none due). */
+        let _idleCollapseRetryAt = 0;
+
+        /**
+         * The dial as a number of minutes the tick can use.
+         *
+         * Only a real positive number counts, so a missing row (null), an old
+         * server (undefined) or a stored typo reads as the default rather than
+         * as "reload every tick". A real number is held to 0.5-60 minutes, the
+         * same bounds the server's setter enforces.
+         */
+        function idleReloadMinutesFrom(value) {
+            if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) return IDLE_RELOAD_DEFAULT_MINUTES;
+            return Math.min(IDLE_RELOAD_MAX_MINUTES, Math.max(IDLE_RELOAD_MIN_MINUTES, value));
+        }
+
+        /** Every appData:load answer carries the dial; this is where the tab takes it. */
+        function noteIdleRefreshDial(value) {
+            _idleReloadMinutes = idleReloadMinutesFrom(value);
+        }
+
+        /**
+         * A roster load was put on screen. Called by each installer after
+         * install(), never before: a load that failed or was thrown away has
+         * not made this tab current, so it must not hold the next one off.
+         */
+        function noteRosterLoaded() {
+            _lastRosterLoadAt = Date.now();
+        }
+
+        /**
          * Students and staff from Convex, in the shape this file already uses.
          *
          * Why this exists: the SIS syncs the real roster into Convex twice a
@@ -129,6 +182,11 @@
             }
             // Before anything merges: the merge below depends on it.
             noteHistoryCutoff(data.historyCutoff);
+            // THE IDLE REFRESH'S DIAL rides on every load, used or not: the
+            // minutes are the server's whether these rows are installed or
+            // released. Asked with typeof because the test harnesses lift this
+            // loader on its own.
+            if (typeof noteIdleRefreshDial === 'function') noteIdleRefreshDial(data.idleRefreshMinutes);
 
             // THE ROWS ARE HANDED OVER ONLY THROUGH install(), which makes them
             // this tab's cash truth (commitRosterCash) at the moment the caller
@@ -147,6 +205,13 @@
             let installed = false;
             return {
                 count: data.students.length,
+                // HOW MANY OF THEM ARE ENROLLED, for the idle refresh's
+                // collapse guard: a load read while the twice-daily sync has
+                // the enrolment table half empty shows most of the school as
+                // former students, and the guard compares this against the
+                // enrolled count the tab already holds before it lets the rows
+                // in. The same test the installers split on.
+                enrolledCount: data.students.filter((s) => s && s.enrolled !== false).length,
                 install() {
                     if (installed) throw new Error('A roster load can be installed once.');
                     installed = true;
@@ -1104,6 +1169,9 @@
             try {
                 const fresh = await loadRosterFromConvex();
                 const rows = fresh.install();
+                // A whole appData:load was just paid for, so the idle refresh
+                // need not pay for another one straight after it.
+                if (typeof noteRosterLoaded === 'function') noteRosterLoaded();
                 const byId = new Map(rows.map(r => [String(r.id), r]));
                 let touched = 0;
                 (students || []).concat(nonEnrolledStudents || []).forEach(st => {
@@ -3991,6 +4059,9 @@
                         // the teacher sees change together.
                         if (rosterLoad) {
                             const rows = rosterLoad.install();
+                            // The idle refresh counts its ten minutes from here.
+                            // (typeof: the merge tests run this block on its own.)
+                            if (typeof noteRosterLoaded === 'function') noteRosterLoaded();
                             // Enrolled feeds the app; the rest are set aside
                             // for saveData to stitch back on.
                             mainData.students = rows.filter(s => s.enrolled !== false);
@@ -6579,104 +6650,183 @@
         // moment it would throw. Storage is Convex now and has been for weeks.
 
         // Auto-refresh data from cloud only when inactive
-        autoRefreshInterval = setInterval(async () => {
+        //
+        // ONCE EVERY FEW MINUTES, NOT EVERY THIRTY SECONDS (2026-10-16).
+        //
+        // THE BUG. This asked appData:freshness "is the server newer?" and,
+        // if so, re-read the whole roster. The server's lastSaveTimestamp moves
+        // on every save by anyone, and since feb0d42 (9/9) the refresh no
+        // longer moved this tab's own copy of it, so the answer was yes on
+        // every tick: each idle staff tab re-read every student (about 5 MB)
+        // every 30 seconds, about every 60 in a background tab, until the
+        // 30-minute logout. Up to fifty full reads nobody looked at, from every
+        // quiet tab in the school -- most of what appData:load cost.
+        //
+        // THE RULE NOW, staff tabs only: once a tab has been idle five minutes
+        // (AUTO_REFRESH_DELAY), it re-reads the roster when the dial's minutes
+        // (ten by default, the server's to change) have passed since the last
+        // roster load of any kind AND since its own last idle attempt. Failed
+        // attempts count, so a load that keeps failing (the 16 MiB read limit)
+        // is retried at that pace, not every tick. A background tab follows the
+        // same rule: skipping hidden tabs would leave a teacher who flips to
+        // Gmail and back looking at balances and prices from hours ago, because
+        // the mouse moving on return counts as activity and ends the idle
+        // stretch for good.
+        //
+        // NO "IS THE SERVER NEWER?" PEEK. That stamp only moves on a browser
+        // save; store purchases, perfect-day pay and the PowerSchool sync are
+        // written by the server and never move it, so a gate on it would miss
+        // exactly the changes a teacher cannot see coming. A plain timer
+        // cannot miss anything, and the week watchdog keeps its own peek.
+        //
+        // NO REFRESH ON RETURN TO THE TAB. A tab back after more than five
+        // minutes away already holds data at most one interval old, and a
+        // reload landing as a teacher starts clicking can undo a ticket award
+        // made in the same seconds (cash is protected by install(), tickets
+        // are not).
+        //
+        // NOT THE SHARED LOADERS' BUSINESS. The cap lives only here. loadData,
+        // refreshRosterFromConvex and refreshCashFromServer record that they
+        // loaded (noteRosterLoaded) and never return early because of it: a
+        // sign-in, a reset or a held movement must always get its fresh read.
+
+        /**
+         * THE SIS-BACKED SCREENS GO STALE OTHERWISE, so their caches are
+         * dropped on every idle tick, hidden or not, before the cap is even
+         * asked. Dropping costs nothing: the screens re-fetch lazily when they
+         * are next drawn, and an idle tab draws nothing.
+         */
+        function dropSisCaches() {
+            // AND THE SIS-BACKED SCREENS GO STALE OTHERWISE.
+            //
+            // _attCache, _runCache and _ewCache are filled once
+            // and never invalidated, so a tab opened at 8am
+            // still showed 8am's numbers at 2pm -- and 8am's
+            // numbers were the 6am sync, which runs before
+            // school and therefore carries YESTERDAY. Today's
+            // absences would not appear at all until somebody
+            // pressed Refresh.
+            //
+            // A fix that needs forty people to remember to
+            // press a button is not a fix. Dropped here, on the
+            // idle timer that already exists, so the next time
+            // a teacher opens Attendance Watch or Early Warning
+            // it fetches.
+            _attCache = null;
+            _runCache = null;
+            _ewCache = null;
+            // The marks rollup is rewritten by the same twice
+            // daily rebuild the other two read, so it goes
+            // stale on exactly the same schedule.
+            _paCache = null;
+            // Cash Analytics > Trends' named list carries the
+            // same marks beside its names, fetched once per
+            // session otherwise (review, 2026-10-06): a tab
+            // left open past the 12:30 rebuild, or overnight,
+            // showed old absences against a newer day count.
+            _cashNoticeMarks = null;
+            _sgCache = null;
+            // The week/month split reads the same per-date
+            // rows, rebuilt on the same schedule.
+            if (typeof _attWinCache !== 'undefined') _attWinCache.clear();
+            // The attendance-rate chart is rebuilt nightly.
+            _arCache = null;
+            // ...and so are the group lines beside it.
+            if (typeof dropAttendanceGroupCache === 'function') dropAttendanceGroupCache();
+        }
+
+        /** How long a roster refused as too short waits before it is read again, and then believed. */
+        const IDLE_COLLAPSE_RETRY_MS = 60 * 1000;
+        /** A load showing this much less of the school enrolled than the tab holds is not believed the first time. */
+        const IDLE_COLLAPSE_FALL = 0.05;
+
+        /** Is an idle roster load due? Read only by idleRefreshTick. */
+        function idleReloadDue(now) {
+            if (_idleCollapseRetryAt > 0) return now >= _idleCollapseRetryAt;
+            const capMs = idleReloadMinutesFrom(_idleReloadMinutes) * 60 * 1000;
+            return now - Math.max(_lastRosterLoadAt, _lastIdleReloadAttemptAt) >= capMs;
+        }
+
+        async function idleRefreshTick() {
             // AUTO-WEEK RESET DISABLED - removed to prevent accidental ticket deletion
             // checkAndRunAutoWeekReset();
-            
-            // Only refresh if user has been inactive for 60+ seconds
-            const timeSinceActivity = Date.now() - lastUserActivity;
-            
-            // SAFETY: Don't refresh if user is on the tickets tab (actively awarding)
+
+            const now = Date.now();
+            const timeSinceActivity = now - lastUserActivity;
+
+            // LEFT EXACTLY AS IT IS, ON PURPOSE. There is no #ticketsContent
+            // (the tab is #tickets), so this never fires. Do not "fix" the id:
+            // the tabs switch with .active and never carry .hidden, so the
+            // corrected test would be true on EVERY tab and the idle refresh
+            // would stop everywhere, not just on Award Tickets.
             const ticketsTab = document.getElementById('ticketsContent');
             const isOnTicketsTab = ticketsTab && !ticketsTab.classList.contains('hidden');
-            
-            if (binId && !isSyncing && (currentUser || currentStudent) && timeSinceActivity > AUTO_REFRESH_DELAY && !isOnTicketsTab) {
-                // The behaviour list does not ride the roster refresh below,
-                // and does not wait for "the server has newer data": a
-                // behaviour saves into its own list without moving that stamp.
-                pullCashBehaviors();
-                // SAFETY CHECK: Only refresh if Firebase has NEWER data than local
-                try {
-                    // MOVED OFF FIRESTORE 2026-08-31. Same rule: only pull a
-                    // fresh load when the server is genuinely newer.
-                    const mainSnap = await peekServerState();
 
-                    if (mainSnap.exists()) {
-                        const serverTimestampValue = mainSnap.data().lastSaveTimestamp;
-                        const localTimestamp = lastSaveTimestamp;
-                        
-                        // Only load if Firebase is newer
-                        if (serverTimestampValue > localTimestamp) {
-                            console.log('🔄 Auto-refreshing data in background (the server has newer data)');
-                            // THE ROSTER, NOT THE WORLD. This was a full
-                            // loadData(): 145 documents and the whole audit
-                            // table, from every idle tab in the school, several
-                            // times a day. What another teacher's save changes
-                            // on this tab is balances and tickets on the
-                            // roster, which appData:load carries in one read;
-                            // the audit and cash panels are kept current by the
-                            // live pull. This tab's own unconfirmed cash is put
-                            // back on top, as the stale-guard rebase does.
-                            // The rebase is inside loadRosterFromConvex now, so
-                            // this tab's unconfirmed cash survives the refresh
-                            // without the caller having to remember. Repeating
-                            // it here would apply the movement twice.
-                            await refreshRosterFromConvex('idle refresh', { redraw: false });
+            // STAFF TABS ONLY. A student tab's roster read is refused by the
+            // server (appData:load is staff only), so asking was a refused
+            // request every thirty seconds from every idle Chromebook.
+            if (!binId || isSyncing || !currentUser || timeSinceActivity <= AUTO_REFRESH_DELAY || isOnTicketsTab) return;
 
-                            // AND THE SIS-BACKED SCREENS GO STALE OTHERWISE.
-                            //
-                            // _attCache, _runCache and _ewCache are filled once
-                            // and never invalidated, so a tab opened at 8am
-                            // still showed 8am's numbers at 2pm -- and 8am's
-                            // numbers were the 6am sync, which runs before
-                            // school and therefore carries YESTERDAY. Today's
-                            // absences would not appear at all until somebody
-                            // pressed Refresh.
-                            //
-                            // A fix that needs forty people to remember to
-                            // press a button is not a fix. Dropped here, on the
-                            // idle timer that already exists, so the next time
-                            // a teacher opens Attendance Watch or Early Warning
-                            // it fetches. Dropping the cache costs nothing: the
-                            // screens re-fetch lazily when they are next drawn,
-                            // and an idle tab draws nothing.
-                            _attCache = null;
-                            _runCache = null;
-                            _ewCache = null;
-                            // The marks rollup is rewritten by the same twice
-                            // daily rebuild the other two read, so it goes
-                            // stale on exactly the same schedule.
-                            _paCache = null;
-                            // Cash Analytics > Trends' named list carries the
-                            // same marks beside its names, fetched once per
-                            // session otherwise (review, 2026-10-06): a tab
-                            // left open past the 12:30 rebuild, or overnight,
-                            // showed old absences against a newer day count.
-                            _cashNoticeMarks = null;
-                            _sgCache = null;
-                            // The week/month split reads the same per-date
-                            // rows, rebuilt on the same schedule.
-                            if (typeof _attWinCache !== 'undefined') _attWinCache.clear();
-                            // The attendance-rate chart is rebuilt nightly.
-                            _arCache = null;
-                            // ...and so are the group lines beside it.
-                            if (typeof dropAttendanceGroupCache === 'function') dropAttendanceGroupCache();
-                            if (typeof pullLiveActivity === 'function') pullLiveActivity('idle');
-                            
-                            // DON'T call updateAllDisplays() - it redraws everything and is disruptive
-                            // The data is updated in memory, and will show when teacher naturally navigates
-                            // This prevents interrupting teachers mid-workflow
-                            console.log('✅ Background data sync complete (displays unchanged)');
-                        } else {
-                            // Silently skip - don't log unless debugging
-                            // console.log('⏭️ Skipping auto-refresh (local data is current)');
-                        }
-                    }
-                } catch (error) {
-                    console.error('Auto-refresh check failed:', error);
-                }
+            // EVERY IDLE TICK, HIDDEN OR NOT, BEFORE THE CAP. The behaviour
+            // list does not ride the roster load, and the server takes an award
+            // at whatever amount the tab sends, so a price changed this morning
+            // must reach a background tab too. pullCashBehaviors keeps its own
+            // five-minute limit.
+            // A throw here must not escape the timer every 30 seconds, as the
+            // old block's try/catch made sure of; the roster load below
+            // catches its own failures.
+            try { pullCashBehaviors(); } catch (error) { console.error('Auto-refresh price pull failed:', error); }
+            try { dropSisCaches(); } catch (error) { console.error('Auto-refresh cache drop failed:', error); }
+
+            if (!idleReloadDue(now)) return;
+            const isRetry = _idleCollapseRetryAt > 0;
+            _idleCollapseRetryAt = 0;
+            _lastIdleReloadAttemptAt = now;
+
+            // THE ENROLMENT-COLLAPSE GUARD, idle path only. The PowerSchool
+            // sync empties the enrolment table and refills it in about thirty
+            // steps (13:00 and 19:00 UTC), and a load in that window shows
+            // most of the school as former students. At a ten-minute pace a
+            // tab that catches it would keep the short list for ten minutes, or
+            // for the afternoon once the teacher is back and active. So a load
+            // showing more than 5% fewer enrolled than this tab holds is
+            // released unused (no row kept, none edited) and read again a
+            // minute later, and that second answer is believed: a real drop
+            // must not be refused for ever.
+            let collapsed = null;
+            const accept = isRetry ? null : (fresh) => {
+                const held = students.length;
+                if (!rosterIsAuthoritative() || held === 0) return true;
+                const got = Number(fresh && fresh.enrolledCount);
+                if (!Number.isFinite(got) || got >= held * (1 - IDLE_COLLAPSE_FALL)) return true;
+                collapsed = { held, got };
+                return false;
+            };
+
+            console.log('🔄 Auto-refreshing data in background (idle ' + _idleReloadMinutes + '-minute refresh)');
+            // THE ROSTER, NOT THE WORLD. What another teacher's save changes on
+            // this tab is balances and tickets on the roster, which
+            // appData:load carries in one read; the audit and cash panels are
+            // kept current by the live pull. This tab's own unconfirmed cash
+            // survives: the rebase is inside the loader (install()), so it is
+            // not repeated here, which would apply the movement twice.
+            const ok = await refreshRosterFromConvex('idle refresh', { redraw: false, accept: accept });
+            if (collapsed) {
+                _idleCollapseRetryAt = Date.now() + IDLE_COLLAPSE_RETRY_MS;
+                console.warn('[roster] idle refresh read ' + collapsed.got + ' enrolled against ' + collapsed.held +
+                    ' on this tab; kept the current roster and will read again in a minute');
+                return;
             }
-        }, 30000); // Check every 30 seconds, but only refresh if inactive
+            if (!ok) return;
+            if (typeof pullLiveActivity === 'function') pullLiveActivity('idle');
+
+            // DON'T call updateAllDisplays() - it redraws everything and is disruptive
+            // The data is updated in memory, and will show when teacher naturally navigates
+            // This prevents interrupting teachers mid-workflow
+            console.log('✅ Background data sync complete (displays unchanged)');
+        }
+
+        autoRefreshInterval = setInterval(idleRefreshTick, 30000); // Check every 30 seconds, but only refresh if inactive
 
         // Analytics Functions
         let gradeChartInstance = null;
@@ -19171,13 +19321,39 @@
          * their own Firestore documents and were attached during loadData. They
          * are carried across by id here, otherwise signing in would silently
          * empty every student's history.
+         *
+         * SAYS WHETHER IT WORKED (2026-10-16): true once the fresh roster is on
+         * screen, false for anything else -- not a Convex source, a load that
+         * failed, or rows a caller declined. It used to return nothing either
+         * way, so RESET ALL CASH could not tell "I have current balances" from
+         * "I am still holding whatever I had", and that is the difference
+         * between zeroing a balance and leaving an award behind. Callers that
+         * ignore the answer behave exactly as before.
+         *
+         * `opts.accept(fresh)`, when given, is asked BEFORE the rows go on
+         * screen; false (or a throw) releases the load unused and leaves the
+         * tab's rows as they were. Only the idle refresh passes it, for its
+         * enrolment-collapse guard.
          */
         async function refreshRosterFromConvex(reason, opts) {
-            if (DATA_SOURCE !== 'convex') return;
+            if (DATA_SOURCE !== 'convex') return false;
             try {
                 const fresh = await loadRosterFromConvex();
+                // DECLINED, NOT HALF-USED. Nothing is installed and no row is
+                // kept or edited: install() would move this tab's cash base to
+                // the new read, and old rows over a new base are an unexplained
+                // difference the server refuses with a forced reload.
+                let wanted = true;
+                if (opts && typeof opts.accept === 'function') {
+                    try { wanted = opts.accept(fresh) !== false; } catch (e) { wanted = false; }
+                }
+                if (!wanted) {
+                    fresh.release();
+                    return false;
+                }
                 // On screen now, so its cash is made this tab's truth now.
                 const rows = fresh.install();
+                noteRosterLoaded();
 
                 const previous = new Map(students.map((s) => [String(s.id), s]));
                 nonEnrolledStudents = rows.filter((s) => s.enrolled === false);
@@ -19264,8 +19440,10 @@
                     const named = handler.match(/switchTab\('([^']+)'\)/);
                     if (typeof switchTab === 'function') switchTab(named ? named[1] : 'tickets');
                 }
+                return true;
             } catch (err) {
                 console.error(`[roster] Convex refresh after ${reason} failed:`, err.message);
+                return false;
             }
         }
 
@@ -33376,14 +33554,27 @@
                 throw new Error('Only an administrator can reset every balance.');
             }
             const confirmation = await showPrompt('⚠️ WARNING: This will reset ALL student Wildcat Cash balances to $0.\n\nType "RESET ALL CASH" to confirm:');
-            
+
             if (confirmation !== 'RESET ALL CASH') {
                 if (confirmation !== null) {
                     alert('❌ Reset cancelled. You must type "RESET ALL CASH" exactly to confirm.');
                 }
                 return;
             }
-            
+
+            // CURRENT BALANCES, OR NO RESET (2026-10-16). Each student is
+            // charged minus the balance THIS TAB holds, and an idle tab now
+            // re-reads the roster every ten minutes rather than every thirty
+            // seconds -- so an award that landed since would be left behind
+            // after the "reset to $0". Read fresh after the typed confirmation
+            // (the confirmation can sit open for minutes), and if that read
+            // fails, stop: the wrapper says "Balances were NOT reset", which is
+            // true. NOTHING AWAITS between this read and the movements below,
+            // so no other load can slip in between.
+            if (!(await refreshRosterFromConvex('reset', { redraw: false }))) {
+                throw new Error('Could not read the current balances from the server, so nothing was reset. Try again in a minute.');
+            }
+
             let resetCount = 0;
 
             // EVERY STUDENT, NOT JUST THE ENROLLED ONES.

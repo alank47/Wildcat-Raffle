@@ -105,7 +105,17 @@ console.log("\n-- the list is saved, restored, and cached --");
   check("the manual backup carries it", /wildcatCashRewards,\s*wildcatCashBehaviors,\s*cashYearArchives,/.test(script));
   check("the core defaults stay as the seed, copied rather than shared",
     /const CORE_CASH_BEHAVIORS = \[/.test(script) && /let wildcatCashBehaviors = CORE_CASH_BEHAVIORS\.map\(b => Object\.assign\(\{\}, b\)\);/.test(script));
-  check("legacyData needed no behaviour-specific merge code (mergeSlice is generic)", !/mergeSlice[\s\S]{0,4000}wildcatCashBehaviors/.test(legacy.slice(legacy.indexOf("export const mergeSlice"))));
+  // RE-POINTED 2026-10-16. The list still MERGES by the generic rule (by id,
+  // newer wins, retired rather than deleted). What mergeSlice now knows about
+  // it is only WHO may change it: one line, the admin-role check, which skips
+  // rows and never edits one (refresh-cap.test.mjs runs it on the server).
+  {
+    const merge = legacy.slice(legacy.indexOf("export const mergeSlice"), legacy.indexOf("export const saveSlice"));
+    const mentions = merge.split("\n").filter((l) => /wildcatCashBehaviors/.test(l) && !/^\s*\/\//.test(l));
+    check("legacyData needs no behaviour-specific MERGE code: its one mention in mergeSlice is the role check",
+      mentions.length === 1 && /const behaviorsBarred = doc === "secondary" && collection === "wildcatCashBehaviors" && !mayChangeCash;/.test(mentions[0]),
+      mentions.join(" | "));
+  }
 }
 
 console.log("\n-- second review (2026-09-24): the timing, the clock, the cap --");
@@ -205,8 +215,15 @@ console.log("\n-- names are text, never markup --");
 
 console.log("\n-- the other forty tabs, without anyone reloading --");
 {
-  check("the idle timer pulls the list", /pullCashBehaviors\(\);/.test(script.slice(script.indexOf("autoRefreshInterval = setInterval")))
-  );
+  // RE-POINTED 2026-10-16: the pull sits in idleRefreshTick, BEFORE the
+  // ten-minute cap, so it runs on every idle tick, hidden tab or not.
+  // refresh-cap.test.mjs runs that on a fake clock with document.hidden set.
+  {
+    const tick = script.slice(script.indexOf("async function idleRefreshTick() {"), script.indexOf("\n        }\n", script.indexOf("async function idleRefreshTick() {")));
+    check("the idle timer pulls the list, before the cap",
+      /pullCashBehaviors\(\);/.test(tick) && tick.indexOf("pullCashBehaviors();") < tick.indexOf("if (!idleReloadDue(now)) return;")
+        && /autoRefreshInterval = setInterval\(idleRefreshTick, 30000\);/.test(script));
+  }
   const pull = script.slice(script.indexOf("async function pullCashBehaviors"), script.indexOf("async function pullCashBehaviors") + 1600);
   check("at most every five minutes, staff only", /Date\.now\(\) - _behaviorsPulledAt < 5 \* 60 \* 1000/.test(pull) && /!currentUser/.test(pull));
   check("merged by the same rule, never replaced", /mergeBehaviorLists\(\s*wildcatCashBehaviors, server, CORE_CASH_BEHAVIORS/.test(pull));
