@@ -10255,8 +10255,13 @@
             if (!d || (d.ok !== false && wrong === 0)) { host.innerHTML = ''; return; }
 
             const when = String((d && d.at) || '').slice(0, 16).replace('T', ' ');
-            const recheck = '<button type="button" class="wc-uv-mini admin-only" ' +
-                'onclick="recheckCashDrift()">Re-check now</button>';
+            // BUILT ONLY FOR ADMINS (2026-10-16). This is drawn long after the
+            // role pass, so its class alone showed it to every role; the
+            // server refused the click (cashDriftCheck:recheckNow is
+            // requireAdmin), but a button that always fails is not a button.
+            const recheck = canOpenSettings()
+                ? '<button type="button" class="wc-uv-mini admin-only" onclick="recheckCashDrift()">Re-check now</button>'
+                : '';
 
             if (d.ok === false) {
                 host.innerHTML = '<div class="wc-card panel-card wc-drift wc-drift-failed">' +
@@ -18844,6 +18849,18 @@
         });
 
         function switchTab(tabName) {
+            // SETTINGS IS FOR ADMINS, asked at the door (2026-10-16). Every way
+            // in -- the Settings button, Cash Settings, Sync PowerSchool, the
+            // NFC and rebuild shortcuts -- is meant for admins and superadmins
+            // only, and the pane itself carries no role class: Corrections,
+            // Raffle Categories, the cash behaviours, Reset All and Close the
+            // Year all sit behind this one call. Before anything moves, so a
+            // refused call changes nothing on screen and is not remembered.
+            if (tabName === 'settings' && !canOpenSettings()) {
+                console.warn('[settings] Settings are for administrators; not opened for role ' +
+                    (currentUser && currentUser.role));
+                return;
+            }
             wcRememberTab(tabName);
             // After the tab is shown, so the on-screen check sees it.
             setTimeout(function () { pullLiveActivity('tab:' + tabName); }, 0);
@@ -19209,6 +19226,10 @@
                         if (before !== fresh.role) {
                             console.log(`✅ Your access level changed: ${before} -> ${fresh.role}. Reload to apply it everywhere.`);
                             rescopeDisciplineForRole(before).catch(() => {});
+                            // The admin-only buttons follow the new role now,
+                            // not at the next sign-in: a demoted admin must not
+                            // keep Cash Settings for the rest of the day.
+                            if (typeof applyRoleGates === 'function') applyRoleGates();
                         }
                     }
                 }
@@ -29726,9 +29747,48 @@
             }
         }
 
+        /**
+         * May this person open Settings, Cash Settings and Sync PowerSchool?
+         *
+         * Admins and superadmins: the roles every role pass in this file shows
+         * `.admin-only` to, and the roles the Settings tab button has always
+         * been for. A function, not a list in a const, because the boot restore
+         * can reach it before a const further down this file has been set.
+         *
+         * NOT THE AUTHORIZATION BOUNDARY. The server refuses a reset and a
+         * behaviour edit from anyone else on its own (appDataShape.ts
+         * canChangeCashSettings, used by appData:save and legacyData.ts
+         * mergeSlice and saveSlice); this keeps the screens matching it.
+         */
+        function canOpenSettings(user) {
+            const u = (user === undefined) ? currentUser : user;
+            const role = String((u && u.role) || '');
+            return role === 'admin' || role === 'superadmin';
+        }
+
+        /**
+         * THE ROLE PASS, for whatever exists now. Same rule as the passes at
+         * sign-in, at the session restore and in the teacher preview:
+         * `.admin-only` for admins and superadmins, `.super-admin-only` for
+         * superadmins, by the role of `currentUser` (the previewed person
+         * during a preview, as those passes do).
+         *
+         * Those passes run once. Anything built after them was shown to
+         * everyone, because `.admin-only` hides nothing on its own: only
+         * `.admin-only.disabled` does (styles.css). So whatever builds a gated
+         * element runs this over it, and a role change runs it over the page.
+         */
+        function applyRoleGates(root) {
+            const scope = root || document;
+            const role = String((currentUser && currentUser.role) || '');
+            const admin = canOpenSettings(currentUser);
+            scope.querySelectorAll('.admin-only').forEach(el => el.classList.toggle('disabled', !admin));
+            scope.querySelectorAll('.super-admin-only').forEach(el => el.classList.toggle('disabled', role !== 'superadmin'));
+        }
+
         function updateTabVisibility() {
             const tabsContainer = document.querySelector('.tabs');
-            
+
             if (wildcatCashEnabled) {
                 // Add cash tabs if not already added
                 if (!document.getElementById('awardCashTabBtn')) {
@@ -29752,6 +29812,15 @@
                     const modeNavEl = document.getElementById('modeNav');
                     if (modeNavEl) {
                         modeNavEl.insertAdjacentHTML('beforeend', cashTabsHTML);
+                        // GATED AS THEY ARE MADE (2026-10-16). The role pass
+                        // runs once, at sign-in or at the session restore, and
+                        // on a restore it runs BEFORE this mode is entered --
+                        // so on every reload (each silent update after a push
+                        // is one), and every time anyone came back to Cash
+                        // from another mode, these two were built after the
+                        // only pass that hides them and every teacher, aide
+                        // and PBIS lead saw Cash Settings and Sync PowerSchool.
+                        applyRoleGates(modeNavEl);
                     }
                 }
                 // Switch to first cash tab
@@ -30253,9 +30322,16 @@
          * removeCashTabButtons has always listed 'cashSettingsTabBtn' for
          * cleanup, so a button was intended here and never built. This is it.
          *
-         * Admin only, matching the Settings tab it opens.
+         * Admin only, matching the Settings tab it opens -- and asked here, not
+         * only by the button's class: that class was the whole gate, and the
+         * button was being built after the pass that applies it (2026-10-16).
          */
         function openCashSettings() {
+            if (!canOpenSettings()) {
+                console.warn('[settings] Cash Settings are for administrators; not opened for role ' +
+                    (currentUser && currentUser.role));
+                return;
+            }
             switchTab('settings');
             switchSettingsSubtab('cash');
         }
@@ -30271,6 +30347,13 @@
          * says "I just flagged it" cannot be behind that.
          */
         function openSisSyncPanel() {
+            // Admin only, like the Settings it opens (the sync itself is
+            // refused on the server for anyone else: sisManual.claim).
+            if (!canOpenSettings()) {
+                console.warn('[settings] the sync panel is for administrators; not opened for role ' +
+                    (currentUser && currentUser.role));
+                return;
+            }
             switchTab('settings');
             switchSettingsSubtab('integrations');
             const panel = document.getElementById('sisSyncNowBtn');
@@ -31145,7 +31228,20 @@
         }
 
         // Behavior Management
+        //
+        // ADMINS ONLY, the roles Cash Settings is for (2026-10-16). Each action
+        // asks for itself, because the screen was reachable by every role after
+        // a reload; and the server refuses a behaviour edit from anyone else on
+        // its own (legacyData.ts mergeSlice), since an award takes its amount
+        // from this list.
+        function behaviorEditsAllowed() {
+            if (canOpenSettings()) return true;
+            showAlert('Only an administrator can change the behaviour list. Nothing was changed.');
+            return false;
+        }
+
         function showAddBehaviorModal() {
+            if (!behaviorEditsAllowed()) return;
             document.getElementById('addBehaviorModal').classList.remove('hidden');
         }
 
@@ -31206,6 +31302,7 @@
 
         async function addNewBehavior() {
             if (_behaviorSaving) return;              // a double click saves once
+            if (!behaviorEditsAllowed()) return;
             const S = window.WildcatStore;
             const name = document.getElementById('newBehaviorName').value.trim();
             const type = document.getElementById('newBehaviorType').value;
@@ -31294,6 +31391,7 @@
          */
         async function deleteBehavior(behaviorId) {
             if (_behaviorSaving) return;
+            if (!behaviorEditsAllowed()) return;
             const index = wildcatCashBehaviors.findIndex(b => b.id === behaviorId);
             if (index === -1 || !wildcatCashBehaviors[index].custom) return;
             const name = wildcatCashBehaviors[index].name;
@@ -33022,6 +33120,11 @@
         }
 
         function saveCashSettings() {
+            // Part of Cash Settings, so admins only (2026-10-16).
+            if (!canOpenSettings()) {
+                showAlert('Only an administrator can change the Wildcat Cash settings. Nothing was changed.');
+                return;
+            }
             STARTING_BALANCE = parseInt(document.getElementById('startingBalance').value) || 0;
             // Save other settings as needed
             saveData();
@@ -33091,6 +33194,12 @@
         }
 
         async function _startNewSchoolYear() {
+            // ADMINS ONLY, asked by the action itself (2026-10-16), for the same
+            // reason as the reset: its button is on Cash Settings, which every
+            // role was being shown after a reload.
+            if (!canOpenSettings()) {
+                throw new Error('Only an administrator can close the school year.');
+            }
             if (!window.WildcatStore || typeof window.WildcatStore.buildYearEndRollover !== 'function') {
                 // The specific shape of a stale tab: index.html is current but
                 // wildcat-store.js was answered from cache from before the
@@ -33258,6 +33367,14 @@
         }
 
         async function _resetAllStudentCash() {
+            // ADMINS ONLY, asked by the action itself (2026-10-16). The button
+            // sits on Cash Settings, which was being shown to every role after
+            // a reload. Thrown, so the wrapper's "Balances were NOT reset ...
+            // Nothing was changed" is what the person reads. The server
+            // refuses a reset from anyone else on its own (canChangeCashSettings).
+            if (!canOpenSettings()) {
+                throw new Error('Only an administrator can reset every balance.');
+            }
             const confirmation = await showPrompt('⚠️ WARNING: This will reset ALL student Wildcat Cash balances to $0.\n\nType "RESET ALL CASH" to confirm:');
             
             if (confirmation !== 'RESET ALL CASH') {
