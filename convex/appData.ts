@@ -1,4 +1,4 @@
-import { query, mutation, internalQuery } from "./_generated/server";
+import { query, mutation, internalQuery, internalMutation } from "./_generated/server";
 import type { MutationCtx } from "./_generated/server";
 import { v } from "convex/values";
 import { requireStaff } from "./identity";
@@ -48,6 +48,25 @@ const SETTINGS_KEY = "liveSettings";
  * than adding a second near-identical table. Its timestamp column is named
  * `mirroredAt` for historical reasons; for this key it means "last written".
  */
+
+/**
+ * THE IDLE REFRESH'S DIAL (2026-10-16), one appState row: { minutes, setBy,
+ * setAt }. An idle staff tab re-reads the roster at most once per this many
+ * minutes (script.js idleRefreshTick); every appData:load hands the number to
+ * the tab. Set only from the command line (setIdleRefresh, deploy key), so
+ * turning the cost up or down needs no site push and no staff refreshing
+ * anything: open tabs take the new number at their next load.
+ */
+const IDLE_REFRESH_KEY = "idleRefresh";
+const IDLE_REFRESH_MIN = 0.5;
+const IDLE_REFRESH_MAX = 60;
+
+/** The stored dial as minutes, or null when unset or unreadable (the tab then uses its default). */
+function idleRefreshMinutesOf(value: unknown): number | null {
+  const n = (value as { minutes?: unknown } | null | undefined)?.minutes;
+  if (typeof n !== "number" || !Number.isFinite(n) || n <= 0) return null;
+  return Math.min(IDLE_REFRESH_MAX, Math.max(IDLE_REFRESH_MIN, n));
+}
 
 /** How many enrolment lookups run at once. See enrolledByIndex. */
 const ENROLMENT_LOOKUPS_AT_ONCE = 50;
@@ -104,7 +123,7 @@ export const load = query({
   handler: async (ctx) => {
     await requireStaff(ctx);
 
-    const [studentRows, teacherRows, settingsRow, cutoffRow] = await Promise.all([
+    const [studentRows, teacherRows, settingsRow, cutoffRow, idleRow] = await Promise.all([
       ctx.db.query("students").collect(),
       ctx.db.query("teachers").collect(),
       ctx.db
@@ -114,6 +133,10 @@ export const load = query({
       ctx.db
         .query("appState")
         .withIndex("by_key", (q) => q.eq("key", "historyCutoff"))
+        .unique(),
+      ctx.db
+        .query("appState")
+        .withIndex("by_key", (q) => q.eq("key", IDLE_REFRESH_KEY))
         .unique(),
     ]);
 
@@ -148,6 +171,11 @@ export const load = query({
       // number with the same rule and the same hour of slack, so both ends
       // agree about what counts as history.
       historyCutoff: (cutoffRow?.value as Record<string, unknown> | undefined)?.iso ?? null,
+      // THE IDLE REFRESH'S DIAL (2026-10-16): how many minutes an idle staff
+      // tab waits between roster re-reads. Null when nobody has set it, and the
+      // tab then uses its own default (ten). A tab from before this field
+      // ignores it. See setIdleRefresh below.
+      idleRefreshMinutes: idleRefreshMinutesOf(idleRow?.value),
     };
   },
 });
@@ -613,6 +641,67 @@ export const save = mutation({
       cashMovementsHeldWhy: movementsRefused.map((r) => ({ id: r.id, why: r.why })),
       cashUnkeyedResidual: unkeyedResidual.length,
       cashUnkeyedResidualSample: unkeyedResidual.slice(0, 5),
+    };
+  },
+});
+
+/**
+ * SET THE IDLE REFRESH'S DIAL, from the command line only (2026-10-16).
+ *
+ *   npx convex run --prod appData:setIdleRefresh '{"minutes":10,"actorName":"Your Name"}'
+ *   npx convex run --prod appData:setIdleRefresh '{"minutes":null,"actorName":"Your Name"}'   <- back to the tabs' default
+ *
+ * internalMutation, so it needs the deploy key: no browser can reach it, which
+ * is what makes it an admin's dial and not a teacher's. Minutes are held to
+ * 0.5-60, the same bounds the tab applies to what it reads; anything that is
+ * not a positive number is refused rather than guessed at. Open tabs pick the
+ * new number up at their next roster load -- within one old interval -- with
+ * no site push and nobody asked to refresh.
+ */
+export const setIdleRefresh = internalMutation({
+  args: {
+    minutes: v.union(v.number(), v.null()),
+    actorName: v.string(),
+  },
+  handler: async (ctx, a) => {
+    const actor = a.actorName.trim();
+    if (!actor) return { ok: false as const, code: "no-actor", why: "Say who is changing it: actorName." };
+    const row = await ctx.db
+      .query("appState")
+      .withIndex("by_key", (q) => q.eq("key", IDLE_REFRESH_KEY))
+      .unique();
+    const before = idleRefreshMinutesOf(row?.value);
+    const at = new Date().toISOString();
+
+    if (a.minutes === null) {
+      if (row) await ctx.db.delete(row._id);
+      return { ok: true as const, minutes: null, before, note: "Unset: tabs use their default of 10 minutes." };
+    }
+    if (!Number.isFinite(a.minutes) || a.minutes <= 0) {
+      return { ok: false as const, code: "bad-minutes", why: `minutes must be a number from ${IDLE_REFRESH_MIN} to ${IDLE_REFRESH_MAX}, or null.` };
+    }
+    const minutes = Math.min(IDLE_REFRESH_MAX, Math.max(IDLE_REFRESH_MIN, a.minutes));
+    const value = { minutes, setBy: actor, setAt: at };
+    if (row) await ctx.db.patch(row._id, { value, mirroredAt: at });
+    else await ctx.db.insert("appState", { key: IDLE_REFRESH_KEY, value, mirroredAt: at });
+    return { ok: true as const, minutes, before, clamped: minutes !== a.minutes };
+  },
+});
+
+/** What the dial says now, and who set it. Command line only. */
+export const idleRefreshStatus = internalQuery({
+  args: {},
+  handler: async (ctx) => {
+    const row = await ctx.db
+      .query("appState")
+      .withIndex("by_key", (q) => q.eq("key", IDLE_REFRESH_KEY))
+      .unique();
+    const value = (row?.value ?? null) as { setBy?: unknown; setAt?: unknown } | null;
+    return {
+      minutes: idleRefreshMinutesOf(value),
+      setBy: value && typeof value.setBy === "string" ? value.setBy : null,
+      setAt: value && typeof value.setAt === "string" ? value.setAt : null,
+      tabsUseWhenUnset: 10,
     };
   },
 });
