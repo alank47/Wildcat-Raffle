@@ -144,6 +144,9 @@
          */
         function noteRosterLoaded() {
             _lastRosterLoadAt = Date.now();
+            // A newer roster is on screen, so a collapse retry still pending
+            // has nothing left to re-check (a released load never gets here).
+            _idleCollapseRetryAt = 0;
         }
 
         /**
@@ -6742,6 +6745,11 @@
 
         /** Is an idle roster load due? Read only by idleRefreshTick. */
         function idleReloadDue(now) {
+            // THE RETRY COUNTS ONLY INSIDE ITS OWN MINUTE. A tick that comes
+            // later (the teacher came back, the lid was shut) goes the normal
+            // way, with the interval and the collapse guard, rather than
+            // installing whatever it reads, unchecked, hours later.
+            if (_idleCollapseRetryAt > 0 && now - _idleCollapseRetryAt > IDLE_COLLAPSE_RETRY_MS) _idleCollapseRetryAt = 0;
             if (_idleCollapseRetryAt > 0) return now >= _idleCollapseRetryAt;
             const capMs = idleReloadMinutesFrom(_idleReloadMinutes) * 60 * 1000;
             return now - Math.max(_lastRosterLoadAt, _lastIdleReloadAttemptAt) >= capMs;

@@ -327,6 +327,38 @@ console.log("\nD. THE ENROLMENT-COLLAPSE GUARD: RELEASE, RETRY A MINUTE LATER, B
   await t.boot();
   check("...and a sign-in load is never second-guessed by it", t.api.students.length === 20);
 }
+{
+  // THE RETRY COUNTS ONLY INSIDE ITS OWN MINUTE (review, 2026-10-16). The
+  // teacher comes back inside the retry's minute and works until 50:00, so the
+  // retry is never reached while it means anything. At the first idle tick
+  // after that, the sync (or an admin's Sync now) has the table half empty
+  // again: that read must be guarded like any other, not installed unchecked.
+  const t = makeTab({ enrolled: 100 });
+  await t.boot();
+  t.server.enrolled = 30;
+  await t.runTo(10 * MIN);                       // released at 10:00; the retry was due at 11:00
+  t.server.enrolled = 100;
+  for (let m = 10.5; m <= 50; m += 0.5) { t.api.active(); await t.runTo(m * MIN); }
+  t.server.enrolled = 30;
+  await t.runTo(55.5 * MIN);                     // idle again from 55:00
+  check("A LATE RETRY IS GUARDED: idle again 45 minutes on, a short read is released, not installed unchecked",
+    t.loads() === 3 && t.api.students.length === 100, `loads ${t.loads()}, enrolled ${t.api.students.length}`);
+}
+{
+  // A roster put on screen by another route after the release leaves the
+  // retry nothing to re-check: here a sign-in at 10:00, straight after it.
+  const t = makeTab({ enrolled: 100 });
+  await t.boot();
+  t.server.enrolled = 30;
+  await t.runTo(10 * MIN);
+  t.server.enrolled = 100;
+  await t.boot();
+  await t.runTo(19.5 * MIN);
+  check("A NEWER ROSTER CANCELS A PENDING RETRY: after a sign-in load, nothing is read again a minute later",
+    t.loads() === 3, String(t.loads()));
+  await t.runTo(20 * MIN);
+  check("...the next idle reload is ten minutes after the sign-in", t.loads() === 4, String(t.loads()));
+}
 
 // ===========================================================================
 console.log("\nE. THE DIAL IS THE SERVER'S\n");
