@@ -122,8 +122,15 @@ export const append = mutation({
       // it claimed and who sent it. Still inserted and still in storedIds: a
       // skipped entry stays pending in the tab's outbox, and every later save
       // there would read as failed. Every other entry is stored verbatim.
+      // It carries a plain `reason`, the field the dashboard feed renders, so
+      // an admin reads what happened rather than the machine name; the feed
+      // shows it to admins only (script.js dashFeedEntriesFor).
       const payload = (isCashReset && !isAdmin)
-        ? { ...(e.payload as Record<string, unknown>), action: REFUSED_RESET_ACTION, refusedAction: action, refusedRole: role }
+        ? {
+            ...(e.payload as Record<string, unknown>),
+            action: REFUSED_RESET_ACTION, refusedAction: action, refusedRole: role,
+            reason: `Refused: ${action === "school_year_rollover" ? "Close the year" : "Reset All Cash"} was sent by a ${role || "non-admin"} account, which may not use it. No balances changed.`,
+          }
         : e.payload;
       await ctx.db.insert("appAuditLog", {
         entryId: id,

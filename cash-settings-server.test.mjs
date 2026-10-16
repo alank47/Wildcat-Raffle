@@ -429,11 +429,45 @@ console.log("\nF. A REFUSED RESET'S AUDIT ENTRY IS NOT A RESET\n");
           && r1.details === "Reset all 3 student Wildcat Cash accounts to $0"
           && r2.action === "cash_reset_refused" && r2.refusedAction === "school_year_rollover" && !zero,
         J({ r1, r2, zero: !!zero }));
+      check(`...with a plain reason an admin can read, naming the ${role} role and saying no balances changed`,
+        typeof r1.reason === "string" && r1.reason.includes("Reset All Cash") && r1.reason.includes(role) && /No balances changed\.$/.test(r1.reason)
+          && typeof r2.reason === "string" && r2.reason.includes("Close the year"),
+        J({ r1: r1.reason, r2: r2.reason }));
       check(`...still counted as stored, so a ${role}'s tab lets it go and no save reads as failed`, allStored, J(res));
       check(`...so no tab takes a ${role}'s entry for a reset (lastCashResetAt finds none)`, lastCashResetAt(stored) === "", lastCashResetAt(stored));
     }
     check(`...and the ${role}'s ordinary entry beside it is stored exactly as sent`, award && award.action === "cash_award" && !("refusedAction" in award));
   }
+}
+
+{
+  // A REFUSED RESET IS AN ADMIN'S ALARM, NOT EVERYONE'S NEWS (re-review,
+  // 2026-10-16). cash_reset_refused is not a cash action, so the home feed's
+  // cash scoping never hid it: every teacher and aide saw it. The feed's own
+  // filter keeps it to admins and superadmins, like the attendance alarm.
+  const script = read("./script.js");
+  const grabFn = (src, name) => {
+    const a = src.indexOf("function " + name + "(");
+    if (a < 0) return null;
+    let depth = 0, i = src.indexOf("{", a);
+    for (; i < src.length; i++) { if (src[i] === "{") depth++; else if (src[i] === "}" && --depth === 0) break; }
+    return src.slice(a, i + 1);
+  };
+  const sandbox = {};
+  new Function("globalThis", read("./wildcat-cashaudit.js")).call(sandbox, sandbox);
+  const feedFor = new Function("window", "currentUser", "CASH_STAFF_VIEW_ROLES",
+    ["cashStaffViewsAllowed", "cashAuditEntriesFor", "dashFeedEntriesFor"].map((n) => grabFn(script, n)).join("\n") +
+    "\nreturn dashFeedEntriesFor;")({ WildcatCashAudit: sandbox.WildcatCashAudit }, null, ["admin", "superadmin", "pbis"]);
+  const T = "2026-10-15T18:00:00.000Z";
+  const refusedEntry = { entryId: "aud_x", timestamp: T, action: "cash_reset_refused", refusedAction: "reset_all_student_cash",
+    refusedRole: "teacher", teacherId: "T-other", teacherName: "Staff other", reason: "Refused: Reset All Cash was sent by a teacher account, which may not use it. No balances changed." };
+  const other = { entryId: "o", action: "Awarded Tickets", teacher: "Ms. Lee", teacherId: "t1", studentId: "s6",
+    studentName: "Kid S6", reason: "Raffle entry", ticketCount: 1, timestamp: T };
+  const shown = (role) => feedFor([refusedEntry, other], { id: "u1", role }).map((e) => e.action);
+  check("A REFUSED RESET IS KEPT OFF THE HOME FEED OF TEACHERS, CAMPUS AIDES AND PBIS; everything else is left as it was",
+    ["teacher", "campusaide", "pbis"].every((r) => !shown(r).includes("cash_reset_refused") && shown(r).includes("Awarded Tickets")),
+    J(["teacher", "campusaide", "pbis"].map((r) => shown(r))));
+  check("...and admins and superadmins see it", shown("admin").includes("cash_reset_refused") && shown("superadmin").includes("cash_reset_refused"));
 }
 
 loaded.cleanup();

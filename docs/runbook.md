@@ -836,7 +836,7 @@ and superadmins are never refused):
 | A RESET ALL CASH movement | `appData:save` | Held as `reserved_kind`, which every tab drops for good, so its save queue is never stuck. The rest of the same save lands |
 | A reset with no history row beside it (a former student, or anyone when a cash week did not load) | `appData:save` | Held as `reserved_kind` too: the record pins earned, spent and deducted at 0 while listing a deduction, which no real record can |
 | A reset's history row (any `behaviorId` starting `system_reset`, any case: the arrival check reads all of them as a reset) | `appData:save` (student history), `legacyData:mergeSlice` and `saveSlice` (`cash_tx_*`) | Not added; a stored one is never rewritten by their copy. `mergeSlice` answers `refusedResetCash` |
-| The reset's or Close the year's audit entry | `auditLog:append` | Stored, but as `action: "cash_reset_refused"` with `refusedAction` and `refusedRole`, so no tab takes it for a reset and the zero point does not move |
+| The reset's or Close the year's audit entry | `auditLog:append` | Stored, but as `action: "cash_reset_refused"` with `refusedAction`, `refusedRole` and a plain `reason`, so no tab takes it for a reset and the zero point does not move. It shows on admins' and superadmins' home feed only |
 | A new or changed behaviour (every award's amount) | `legacyData:mergeSlice`, doc `secondary`, `wildcatCashBehaviors` | Skipped and counted (`refusedBehaviorEdits`), never thrown |
 | Replacing the behaviour list | `legacyData:saveSlice` | Refused with an error. No real tab calls this |
 
@@ -847,7 +847,9 @@ says it is out of date and reloads itself, and shows the real balances.
 starting `reserved_kind:` are refused resets (or forged perfect-day
 movements). An old tab that tried still sends its audit entry ("Reset all N
 student Wildcat Cash accounts to $0"); it is stored as `cash_reset_refused`,
-with the role that sent it, and is not listed in the Cash Audit Log.
+with the role that sent it and a plain reason ("Refused: Reset All Cash was
+sent by a teacher account ... No balances changed."). It is not listed in the
+Cash Audit Log, and only admins and superadmins see it on the home feed.
 
 **Close the year** sends nothing the server applies: its zeroed totals are a
 change no movement explains (never applied, for anyone), its emptied

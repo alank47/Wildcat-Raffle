@@ -10536,11 +10536,15 @@
             // THE ATTENDANCE REBUILD'S ALARM IS FOR ADMINS (review, 2026-10-02),
             // like its tile and its card: "attendance screens are not being
             // refreshed" on every teacher's first screen is an alarm they
-            // cannot act on.
+            // cannot act on. So is a REFUSED RESET (re-review, 2026-10-16):
+            // the server files a non-admin's Reset All or Close the year as
+            // cash_reset_refused, which is not a cash action, so without this
+            // it reached every teacher's and aide's feed.
+            const ADMIN_ONLY_ALARMS = ['attendance_rebuild_refused', 'cash_reset_refused'];
             const u = (user === undefined) ? currentUser : user;
             const admin = !!(u && (u.role === 'admin' || u.role === 'superadmin'));
             const list = (Array.isArray(entries) ? entries : [])
-                .filter(e => admin || !e || e.action !== 'attendance_rebuild_refused');
+                .filter(e => admin || !e || !ADMIN_ONLY_ALARMS.includes(e.action));
             if (cashStaffViewsAllowed(user)) return list;
             const CA = window.WildcatCashAudit;
             // No cash module, no way to tell cash from anything else: show
