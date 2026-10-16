@@ -6742,6 +6742,8 @@
         const IDLE_COLLAPSE_RETRY_MS = 60 * 1000;
         /** A load showing this much less of the school enrolled than the tab holds is not believed the first time. */
         const IDLE_COLLAPSE_FALL = 0.05;
+        /** Half the 30-second tick: an idle reload is due this much early. See idleReloadDue. */
+        const IDLE_TICK_SLACK_MS = 15 * 1000;
 
         /** Is an idle roster load due? Read only by idleRefreshTick. */
         function idleReloadDue(now) {
@@ -6752,7 +6754,12 @@
             if (_idleCollapseRetryAt > 0 && now - _idleCollapseRetryAt > IDLE_COLLAPSE_RETRY_MS) _idleCollapseRetryAt = 0;
             if (_idleCollapseRetryAt > 0) return now >= _idleCollapseRetryAt;
             const capMs = idleReloadMinutesFrom(_idleReloadMinutes) * 60 * 1000;
-            return now - Math.max(_lastRosterLoadAt, _lastIdleReloadAttemptAt) >= capMs;
+            // HALF A TICK OF SLACK. A load is recorded when it goes on screen,
+            // seconds after the tick that asked for it, and the ticks come
+            // every 30 seconds, so measured strictly every interval came out
+            // one tick long (0.5 minutes behaved as 1, 10 as 10.5). A failed
+            // try is stamped at its own tick, so it still waits the interval.
+            return now - Math.max(_lastRosterLoadAt, _lastIdleReloadAttemptAt) >= capMs - IDLE_TICK_SLACK_MS;
         }
 
         async function idleRefreshTick() {

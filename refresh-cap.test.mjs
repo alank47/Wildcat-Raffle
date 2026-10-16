@@ -36,6 +36,7 @@ let pass = 0, fail = 0;
 const check = (n, c, why) => {
   c ? (pass++, console.log(`  PASS  ${n}`)) : (fail++, console.log(`  FAIL  ${n}${why ? "  (" + why + ")" : ""}`));
 };
+const J = (x) => JSON.stringify(x);
 
 function liftFn(name) {
   const m = new RegExp("\\n        (?:async )?function " + name + "\\(").exec(script);
@@ -61,7 +62,7 @@ const T0 = Date.parse("2026-10-19T15:00:00Z");   // 8:00 am in Los Angeles, a Mo
 
 const STATE = ["IDLE_RELOAD_DEFAULT_MINUTES", "IDLE_RELOAD_MIN_MINUTES", "IDLE_RELOAD_MAX_MINUTES",
   "_idleReloadMinutes", "_lastRosterLoadAt", "_lastIdleReloadAttemptAt", "_idleCollapseRetryAt",
-  "AUTO_REFRESH_DELAY", "IDLE_COLLAPSE_RETRY_MS", "IDLE_COLLAPSE_FALL"].map(liftDecl).join("\n");
+  "AUTO_REFRESH_DELAY", "IDLE_COLLAPSE_RETRY_MS", "IDLE_COLLAPSE_FALL", "IDLE_TICK_SLACK_MS"].map(liftDecl).join("\n");
 const FNS = ["idleReloadMinutesFrom", "noteIdleRefreshDial", "noteRosterLoaded", "loadRosterFromConvex",
   "refreshRosterFromConvex", "refreshCashFromServer", "dropSisCaches", "idleReloadDue", "idleRefreshTick",
   "canOpenSettings", "resetAllStudentCash", "_resetAllStudentCash", "liveStudentRecord"];
@@ -96,6 +97,8 @@ function makeTab(opts = {}, src = script) {
     balance: o.balance ?? 600,       // what the server holds for every student
     dial: o.dial,                    // idleRefreshMinutes on the answer (undefined: an old server)
     fail: false,
+    latency: 0,                      // how long each appData:load takes, in fake milliseconds
+    starts: [],                      // when each appData:load was asked for
   };
   const rowsFor = () => {
     const rows = [];
@@ -111,7 +114,9 @@ function makeTab(opts = {}, src = script) {
       convexQuery: async (name) => {
         calls.push(name);
         if (name !== "appData:load") throw new Error("unexpected query " + name);
+        server.starts.push(clock.now);
         if (server.fail) throw new Error("Server Error (the 16 MiB read limit)");
+        clock.now += server.latency;
         const answer = { students: rowsFor(), teachers: [], settings: {}, historyCutoff: null };
         if (server.dial !== undefined) answer.idleRefreshMinutes = server.dial;
         return answer;
@@ -189,6 +194,8 @@ function makeTab(opts = {}, src = script) {
         await reg.tick();
       }
     },
+    /** Fire the page's own interval once, at `ms` after T0 (for loads that move the clock). */
+    async tickAt(ms) { clock.now = T0 + ms; await reg.tick(); },
     /** A boot or sign-in load at the current time, as loadData / the sign-in listener do. */
     async boot() { return api.refreshRosterFromConvex("sign-in"); },
   };
@@ -223,8 +230,8 @@ console.log("\nA. AN IDLE STAFF TAB RE-READS THE ROSTER ONCE PER INTERVAL, NOT E
   t.clock.now = T0 + 7 * MIN;
   await t.runTo(16.5 * MIN);
   check("a sign-in load counts: the idle reload waits ten minutes from it, not from the boot", t.loads() === 2, String(t.loads()));
-  await t.runTo(17.5 * MIN);
-  check("...and comes at 17:30, ten minutes after it", t.loads() === 3, String(t.loads()));
+  await t.runTo(17 * MIN);
+  check("...and comes at 17:00, the first check within half a tick of ten minutes after it", t.loads() === 3, String(t.loads()));
 }
 {
   // A held movement's cash-only re-read is a whole appData:load too.
@@ -375,6 +382,27 @@ console.log("\nE. THE DIAL IS THE SERVER'S\n");
   await t2.boot();
   await t2.runTo(30 * MIN);
   check("...and at 30 minutes, one", t2.loads() - 1 === 1, String(t2.loads() - 1));
+}
+{
+  // THE DIAL MEANS WHAT IT SAYS when a load takes a few seconds (review,
+  // 2026-10-16). A load is recorded when it goes on screen, seconds after the
+  // tick that asked for it, and the ticks come every 30 seconds, so every
+  // interval came out one tick long: 0.5 minutes behaved as 1, 2 as 2.5 and
+  // 10 as 10.5. Here every appData:load takes three seconds.
+  const gapsAt = async (dial) => {
+    const t = makeTab({ dial });
+    await t.boot();
+    t.server.latency = 3000;
+    t.server.starts = [];
+    for (let k = 1; k <= 80; k++) await t.tickAt(k * 30000);
+    const at = t.server.starts.map((ms) => (ms - T0) / MIN);
+    return { gaps: [...new Set(at.slice(1).map((m, i) => +(m - at[i]).toFixed(3)))], n: at.length };
+  };
+  const ten = await gapsAt(undefined), two = await gapsAt(2), half = await gapsAt(0.5);
+  check("THE DIAL MEANS WHAT IT SAYS WHEN A LOAD TAKES SECONDS: unset, loads start exactly 10 minutes apart",
+    ten.n >= 3 && J(ten.gaps) === J([10]), J(ten));
+  check("...set to 2, exactly 2 minutes apart", two.n >= 10 && J(two.gaps) === J([2]), J(two));
+  check("...and set to 0.5, at every check (it behaved as 1)", half.n >= 60 && J(half.gaps) === J([0.5]), J(half));
 }
 {
   const t = makeTab();
