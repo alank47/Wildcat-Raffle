@@ -269,6 +269,31 @@ console.log("\nE. THE IDLE REFRESH'S DIAL\n");
   try { await w.rt.run("appData.load", {}); } catch (e) { refused = e; }
   check("...and appData:load still refuses anyone who is not staff", refused !== null);
 }
+{
+  // A SECOND DIAL ROW (review, 2026-10-16), say one added by hand in the
+  // dashboard instead of with the command. A cost dial must never be able to
+  // stop every staff roster load, and the documented command must repair it.
+  const w = await makeWorld();
+  const dialRows = () => w.store.rows("appState").filter((r) => r.key === "idleRefresh");
+  const tryRun = async (fn) => { try { return { ok: true, v: await fn() }; } catch (e) { return { ok: false, why: String(e && e.message) }; } };
+  await w.rt.run("appData.setIdleRefresh", { minutes: 4, actorName: "Test Admin" });
+  await w.store.db.insert("appState", { key: "idleRefresh", value: { minutes: 7 }, mirroredAt: AT });
+  const loaded = await tryRun(async () => (await w.as("teacher", "appData.load", {})).idleRefreshMinutes);
+  check("A DUPLICATE DIAL ROW DOES NOT STOP THE ROSTER: appData:load still answers, with the first row's number",
+    loaded.ok && loaded.v === 4, J(loaded));
+  const st = await tryRun(() => w.rt.run("appData.idleRefreshStatus", {}));
+  check("...the status command still answers", st.ok && st.v.minutes === 4, J(st));
+  const set = await tryRun(() => w.rt.run("appData.setIdleRefresh", { minutes: 5, actorName: "Test Admin" }));
+  const after = await tryRun(async () => (await w.as("teacher", "appData.load", {})).idleRefreshMinutes);
+  check("...and setIdleRefresh repairs it: one row left, holding the new number",
+    set.ok && set.v.ok === true && dialRows().length === 1 && dialRows()[0].value.minutes === 5 && after.v === 5,
+    J({ set, rows: dialRows().length, after }));
+  await w.store.db.insert("appState", { key: "idleRefresh", value: { minutes: 9 }, mirroredAt: AT });
+  const bad = await tryRun(() => w.rt.run("appData.setIdleRefresh", { minutes: -1, actorName: "Test Admin" }));
+  check("...a refused change writes nothing, duplicates included", bad.ok && bad.v.ok === false && dialRows().length === 2, J({ bad, rows: dialRows().length }));
+  const unset = await tryRun(() => w.rt.run("appData.setIdleRefresh", { minutes: null, actorName: "Test Admin" }));
+  check("...and unsetting removes every copy", unset.ok && dialRows().length === 0, J({ unset, rows: dialRows().length }));
+}
 
 loaded.cleanup();
 console.log(`\n${pass} passed, ${fail} failed\n`);

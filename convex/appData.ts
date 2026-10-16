@@ -135,10 +135,12 @@ export const load = query({
         .query("appState")
         .withIndex("by_key", (q) => q.eq("key", "historyCutoff"))
         .unique(),
+      // .first(), NEVER .unique(): a second row (added by hand) must not
+      // make every staff roster load throw. setIdleRefresh removes extras.
       ctx.db
         .query("appState")
         .withIndex("by_key", (q) => q.eq("key", IDLE_REFRESH_KEY))
-        .unique(),
+        .first(),
     ]);
 
     // Who is enrolled: see enrolledByIndex for the definition and the cost.
@@ -671,15 +673,19 @@ export const setIdleRefresh = internalMutation({
   handler: async (ctx, a) => {
     const actor = a.actorName.trim();
     if (!actor) return { ok: false as const, code: "no-actor", why: "Say who is changing it: actorName." };
-    const row = await ctx.db
+    // Every copy, not .unique(): a second row added by hand would make this
+    // command throw too, and then nothing could repair it. A change keeps the
+    // first row and removes the rest; an unset removes them all.
+    const rows = await ctx.db
       .query("appState")
       .withIndex("by_key", (q) => q.eq("key", IDLE_REFRESH_KEY))
-      .unique();
+      .collect();
+    const row = rows[0] ?? null;
     const before = idleRefreshMinutesOf(row?.value);
     const at = new Date().toISOString();
 
     if (a.minutes === null) {
-      if (row) await ctx.db.delete(row._id);
+      for (const r of rows) await ctx.db.delete(r._id);
       return { ok: true as const, minutes: null, before, note: "Unset: tabs use their default of 10 minutes." };
     }
     if (!Number.isFinite(a.minutes) || a.minutes <= 0) {
@@ -687,6 +693,7 @@ export const setIdleRefresh = internalMutation({
     }
     const minutes = Math.min(IDLE_REFRESH_MAX, Math.max(IDLE_REFRESH_MIN, a.minutes));
     const value = { minutes, setBy: actor, setAt: at };
+    for (const extra of rows.slice(1)) await ctx.db.delete(extra._id);
     if (row) await ctx.db.patch(row._id, { value, mirroredAt: at });
     else await ctx.db.insert("appState", { key: IDLE_REFRESH_KEY, value, mirroredAt: at });
     return { ok: true as const, minutes, before, clamped: minutes !== a.minutes };
@@ -700,7 +707,7 @@ export const idleRefreshStatus = internalQuery({
     const row = await ctx.db
       .query("appState")
       .withIndex("by_key", (q) => q.eq("key", IDLE_REFRESH_KEY))
-      .unique();
+      .first();
     const value = (row?.value ?? null) as { setBy?: unknown; setAt?: unknown } | null;
     return {
       minutes: idleRefreshMinutesOf(value),
