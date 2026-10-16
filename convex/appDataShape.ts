@@ -343,10 +343,20 @@ export function canChangeCashSettings(role: unknown): boolean {
   return (CASH_SETTINGS_ROLES as readonly string[]).includes(r);
 }
 
-/** A row or movement RESET ALL CASH wrote: behaviour "system_reset". */
+/**
+ * A row or movement RESET ALL CASH wrote: behaviour "system_reset".
+ *
+ * A PREFIX, IN ANY CASE (review, 2026-10-16), so the lock refuses at least
+ * everything any reader takes for a reset: cashArrivalRules.isResetRow reads
+ * any behaviour STARTING with "system_reset" as the child's zero point (and
+ * holds back every late award before it), and the award command's
+ * RESERVED_BEHAVIOR refuses the same prefix from everyone. An exact match let
+ * "system_reset_x" past the lock while the arrival check still believed it.
+ * No real writer uses such an id. Only ever asked for a non-admin's rows.
+ */
 export function isCashResetRow(row: unknown): boolean {
   if (!row || typeof row !== "object") return false;
-  return String((row as Record<string, unknown>).behaviorId ?? "").trim().toLowerCase() === CASH_RESET_BEHAVIOR;
+  return /^system_reset/i.test(String((row as Record<string, unknown>).behaviorId ?? "").trim());
 }
 
 /**

@@ -230,6 +230,37 @@ for (const role of ROLES) {
   check("...but an admin's lands", w.ledger("cash_tx_2026_W43").some((r) => r.payload.id === "txn_1792519200015_r4") && res2.wrote === 1);
 }
 
+{
+  // EVERY ROW THE ARRIVAL CHECK TAKES FOR A RESET (review, 2026-10-16).
+  // cashArrivalRules.isResetRow reads any behaviour that merely STARTS with
+  // "system_reset" as that child's zero point, and holds back every late award
+  // dated before it. An exact match let "system_reset_x" through every lock
+  // while the arrival check still believed it, so the lock is the prefix too,
+  // in any case (the award command's own RESERVED_BEHAVIOR).
+  const odd = ["system_reset_x", "SYSTEM_RESET", "system_resetX"];
+  for (const role of ["teacher", "admin"]) {
+    const w = await makeWorld();
+    const ids = odd.map((_, i) => "txn_17925192000" + (30 + i) + "_x" + i);
+    const res = await w.as(role, "legacyData.mergeSlice", { doc: "cash_tx_2026_W43", collection: "transactions", dedupeField: "id",
+      rows: odd.map((b, i) => ledgerRow(ids[i], "30001", -1, b)) });
+    const stored = w.ledger("cash_tx_2026_W43").map((r) => r.payload.id);
+    const rec = awardRecord("30002", 100, "txn_1792519200040_awd09");
+    odd.forEach((b, i) => rec.wildcatCashTransactions.push({ id: ids[i], timestamp: AT, studentId: "30002", amount: -1, kind: "deduct", behaviorId: b, teacherId: "T1" }));
+    await w.as(role, "appData.save", { students: [rec] });
+    const hist = (w.hub("30002").wildcatCashTransactions || []).map((r) => r.id);
+    if (role === "admin") {
+      check("an admin's rows that start with system_reset are kept, in the ledger and in the history",
+        ids.every((id) => stored.includes(id) && hist.includes(id)), J({ stored, hist }));
+    } else {
+      check("A TEACHER'S ROW THAT ONLY STARTS WITH system_reset (OR IN CAPITALS) IS REFUSED TOO, in the ledger and in the history",
+        ids.every((id) => !stored.includes(id) && !hist.includes(id)) && res.refusedResetCash === odd.length
+          && hist.includes("txn_1792519200040_awd09"), J({ stored, hist, refused: res.refusedResetCash }));
+    }
+  }
+  check("...the same rows the arrival check reads as a reset (cashArrivalRules.isResetRow is a prefix match)",
+    /\/\^system_reset\/\.test\(/.test(read("./convex/cashArrivalRules.ts")));
+}
+
 // ===========================================================================
 console.log("\nC. THE BEHAVIOUR LIST (EVERY AWARD'S AMOUNT)\n");
 const beh = (id, points, updatedAt = "2026-10-01T00:00:00Z", extra = {}) =>
